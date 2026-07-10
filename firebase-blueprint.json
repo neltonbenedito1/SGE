@@ -1,0 +1,209 @@
+{
+  "entities": {
+    "SuperUser": {
+      "title": "SuperUser",
+      "description": "Super Admin administrator of the SaaS portal",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "nome": { "type": "string" },
+        "role": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "email", "nome", "role"]
+    },
+    "Tenant": {
+      "title": "Tenant",
+      "description": "Educational institution tenant subscription",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "nome": { "type": "string" },
+        "slug": { "type": "string" },
+        "plano_id": { "type": "string" },
+        "status": { "type": "string", "enum": ["ativo", "suspenso", "cancelado"] },
+        "data_vencimento": { "type": "string" },
+        "data_renovacao": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "nome", "slug", "plano_id", "status", "data_vencimento"]
+    },
+    "Plano": {
+      "title": "Plano",
+      "description": "SaaS Subscription plan limits and price",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "nome": { "type": "string" },
+        "descricao": { "type": "string" },
+        "preco": { "type": "number" },
+        "periodicidade": { "type": "string" },
+        "modulos_permitidos": { "type": "array" },
+        "limits": { "type": "object" }
+      },
+      "required": ["id", "nome", "preco", "periodicidade", "modulos_permitidos"]
+    },
+    "Pagamento": {
+      "title": "Pagamento",
+      "description": "Invoice/Payment records of tenants",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "valor": { "type": "number" },
+        "data_vencimento": { "type": "string" },
+        "data_pagamento": { "type": "string" },
+        "status": { "type": "string" },
+        "metodo": { "type": "string" }
+      },
+      "required": ["id", "tenant_id", "valor", "data_vencimento", "status"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Tenant-specific user record with role permissions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "email": { "type": "string" },
+        "nome": { "type": "string" },
+        "tipo": { "type": "string", "enum": ["admin", "director", "docente", "pai", "estudante"] },
+        "permissoes": { "type": "array" },
+        "ativo": { "type": "boolean" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "tenant_id", "email", "nome", "tipo", "ativo"]
+    },
+    "Escola": {
+      "title": "Escola",
+      "description": "School within a tenant",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "provincia_id": { "type": "string" },
+        "nome": { "type": "string" },
+        "endereco": { "type": "string" },
+        "telefone": { "type": "string" },
+        "email": { "type": "string" },
+        "diretor_id": { "type": "string" },
+        "ativo": { "type": "boolean" }
+      },
+      "required": ["id", "tenant_id", "provincia_id", "nome", "ativo"]
+    },
+    "Notificacao": {
+      "title": "Notificacao",
+      "description": "System notification records for tenants and super admin",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "destinatario_id": { "type": "string" },
+        "titulo": { "type": "string" },
+        "mensagem": { "type": "string" },
+        "lido": { "type": "boolean" },
+        "tipo": { "type": "string", "enum": ["info", "alerta", "limite", "sistema", "sucesso"] },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "destinatario_id", "titulo", "mensagem", "lido", "tipo", "created_at"]
+    },
+    "Livro": {
+      "title": "Livro",
+      "description": "Educational library book",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "titulo": { "type": "string" },
+        "autor": { "type": "string" },
+        "editora": { "type": "string" },
+        "numero_paginas": { "type": "number" },
+        "capa_url": { "type": "string" },
+        "categoria": { "type": "string" },
+        "sinopse": { "type": "string" },
+        "idioma": { "type": "string" },
+        "isbn": { "type": "string" },
+        "criado_por": { "type": "string" },
+        "escola_origem": { "type": "string" },
+        "criado_em": { "type": "string" },
+        "atualizado_em": { "type": "string" },
+        "destaque": { "type": "boolean" }
+      },
+      "required": ["id", "tenant_id", "titulo", "autor", "editora", "numero_paginas", "criado_por", "escola_origem", "criado_em"]
+    },
+    "Edicao": {
+      "title": "Edicao",
+      "description": "PDF book edition/version",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "livro_id": { "type": "string" },
+        "numero_edicao": { "type": "number" },
+        "pdf_url": { "type": "string" },
+        "tamanho_ficheiro": { "type": "number" },
+        "notas_da_edicao": { "type": "string" },
+        "adicionado_por": { "type": "string" },
+        "adicionado_em": { "type": "string" },
+        "ativa": { "type": "boolean" }
+      },
+      "required": ["id", "livro_id", "numero_edicao", "pdf_url", "tamanho_ficheiro", "adicionado_por", "adicionado_em", "ativa"]
+    },
+    "HistoricoLeitura": {
+      "title": "HistoricoLeitura",
+      "description": "Reading progress history of a user on a book edition",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "utilizador_id": { "type": "string" },
+        "livro_id": { "type": "string" },
+        "edicao_id": { "type": "string" },
+        "ultima_pagina_lida": { "type": "number" },
+        "percentual_concluido": { "type": "number" },
+        "ultima_leitura_em": { "type": "string" }
+      },
+      "required": ["id", "utilizador_id", "livro_id", "edicao_id", "ultima_pagina_lida", "percentual_concluido", "ultima_leitura_em"]
+    }
+  },
+  "firestore": {
+    "/notificacoes/{id}": {
+      "schema": { "$ref": "#/entities/Notificacao" },
+      "description": "System-wide notifications"
+    },
+    "/superusers/{id}": {
+      "schema": { "$ref": "#/entities/SuperUser" },
+      "description": "Super admin metadata"
+    },
+    "/tenants/{id}": {
+      "schema": { "$ref": "#/entities/Tenant" },
+      "description": "Educational SaaS customer tenants"
+    },
+    "/planos/{id}": {
+      "schema": { "$ref": "#/entities/Plano" },
+      "description": "SaaS plan types and limitations"
+    },
+    "/pagamentos/{id}": {
+      "schema": { "$ref": "#/entities/Pagamento" },
+      "description": "SaaS tenant payment records"
+    },
+    "/tenants/{tenantId}/users/{id}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Users inside a tenant scope"
+    },
+    "/tenants/{tenantId}/escolas/{id}": {
+      "schema": { "$ref": "#/entities/Escola" },
+      "description": "Schools in a tenant scope"
+    },
+    "/tenants/{tenantId}/livros/{id}": {
+      "schema": { "$ref": "#/entities/Livro" },
+      "description": "Transversal books available in the institution"
+    },
+    "/tenants/{tenantId}/livros/{livroId}/edicoes/{id}": {
+      "schema": { "$ref": "#/entities/Edicao" },
+      "description": "Editions/versions of a book"
+    },
+    "/tenants/{tenantId}/historicoLeitura/{id}": {
+      "schema": { "$ref": "#/entities/HistoricoLeitura" },
+      "description": "User reading history records"
+    }
+  }
+}
