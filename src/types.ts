@@ -314,6 +314,7 @@ export interface Livro {
   atualizado_em: string;
   tags?: string[];
   destaque?: boolean;
+  disciplina_associada?: string;
 }
 
 export interface Edicao {

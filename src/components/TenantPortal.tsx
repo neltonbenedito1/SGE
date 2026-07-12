@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { motion } from 'motion/react';
 import { 
   collection, 
   getDocs, 
@@ -48,6 +49,7 @@ import {
   MapPin, 
   Sliders, 
   Plus, 
+  Copy,
   Library,
   Star,
   UploadCloud,
@@ -138,6 +140,20 @@ function getDiaSemanaFromDate(dateStr: string): string {
   const date = new Date(dateStr + 'T12:00:00');
   const days = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
   return days[date.getDay()];
+}
+
+function getLocalYYYYMMDD(d: Date): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getMonday(d: Date): Date {
+  const date = new Date(d);
+  const day = date.getDay();
+  const diff = date.getDate() - day + (day === 0 ? -6 : 1);
+  return new Date(date.setDate(diff));
 }
 
 const DEFAULT_MODULO_ACESSOS: Record<string, { habilitado: boolean; funcionalidades: Record<string, boolean> }> = {
@@ -276,6 +292,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [rawStudents, setStudents] = useState<Estudante[]>([]);
   const [rawTurmas, setTurmas] = useState<Turma[]>([]);
   const [rawClasses, setClasses] = useState<Classe[]>([]);
+  const [rawVacations, setVacations] = useState<any[]>([]);
   const [rawSalas, setSalas] = useState<Sala[]>([]);
   const [rawClassesEscolares, setClassesEscolares] = useState<ClasseEscolar[]>([]);
   const [rawPautas, setPautas] = useState<Pauta[]>([]);
@@ -304,7 +321,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       icon = '📝';
     }
 
-    popup.className = `fixed bottom-5 right-5 ${bgClass} font-sans font-bold text-xs px-5 py-4 rounded-2xl shadow-2xl border z-[9999] flex items-center gap-3 animate-in slide-in-from-bottom-5 duration-300 max-w-sm`;
+    popup.className = `fixed bottom-5 right-5 ${bgClass} font-sans font-bold text-xs px-5 py-4 rounded-2xl shadow-2xl border z-[1000000] flex items-center gap-3 animate-in slide-in-from-bottom-5 duration-300 max-w-sm`;
     popup.style.boxShadow = '0 25px 50px -12px rgba(0, 0, 0, 0.5)';
     popup.innerHTML = `
       <span class="text-lg">${icon}</span>
@@ -558,6 +575,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [selectedSchoolFilter, setSelectedSchoolFilter] = useState('todos');
   const [selectedTurmaFilter, setSelectedTurmaFilter] = useState('todos');
 
+  // Custom Calendar State variables
+  const [calendarSelectedDate, setCalendarSelectedDate] = useState<Date>(() => new Date('2026-07-11'));
+  const [selectedClassPopup, setSelectedClassPopup] = useState<any | null>(null);
+  const [isCopyDropdownOpen, setIsCopyDropdownOpen] = useState(false);
+
   // Modals
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalType, setModalType] = useState<string>('');
@@ -597,6 +619,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   // Notifications State
   const [notifications, setNotifications] = useState<Notificacao[]>([]);
   const [isNotifDropdownOpen, setIsNotifDropdownOpen] = useState(false);
+  const [isDesktopNotifOpen, setIsDesktopNotifOpen] = useState(false);
 
   // Layer 2 Notification configurations
   interface AdminNotificationRule {
@@ -673,6 +696,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   }));
   const [classeEscolarForm, setClasseEscolarForm] = useState(() => getSavedFormDraft('draft_classe_escolar', { nome: '', nivel: 'Primário' as 'Primário' | 'Secundário' | 'Médio' | 'Pré-escolar', descricao: '' }));
   const [salaForm, setSalaForm] = useState(() => getSavedFormDraft('draft_sala', { nome: '', capacidade: 30, tipo: 'Normal', descricao: '' }));
+  const [feriasForm, setFeriasForm] = useState(() => getSavedFormDraft('draft_ferias', { descricao: '', data_inicio: new Date().toISOString().split('T')[0], data_fim: new Date().toISOString().split('T')[0] }));
+
+  useEffect(() => {
+    saveSettingIfAllowed('draft_ferias', JSON.stringify(feriasForm), 'formData', 24);
+  }, [feriasForm]);
 
   useEffect(() => {
     saveSettingIfAllowed('draft_sala', JSON.stringify(salaForm), 'formData', 24);
@@ -790,6 +818,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       const clsList: Classe[] = [];
       clsSnap.forEach(d => clsList.push({ ...d.data() as Classe, id: d.id }));
       setClasses(clsList);
+
+      // 8. Férias
+      const ferSnap = await getDocs(query(collection(db, 'ferias'), ...qParams));
+      const ferList: any[] = [];
+      ferSnap.forEach(d => ferList.push({ ...d.data(), id: d.id }));
+      setVacations(ferList);
 
       // Fetch Salas & Auto-Seed if empty
       const salasSnap = await getDocs(query(collection(db, 'salas'), ...qParams));
@@ -1224,6 +1258,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   }
 
   function hasPermission(moduleKey: string, featureKey?: 'visualizar' | 'criar' | 'editar' | 'excluir'): boolean {
+    if (moduleKey === 'analytics') {
+      const isAllowedRole = currentUserRole === 'admin' || currentUserRole === 'director' || currentUserRole === 'docente' ||
+                            loggedInUser?.tipo === 'admin' || loggedInUser?.tipo === 'director' || loggedInUser?.tipo === 'docente';
+      if (!isAllowedRole) return false;
+      if (loggedInUser && loggedInUser.modulo_acessos && loggedInUser.modulo_acessos.analytics) {
+        return !!loggedInUser.modulo_acessos.analytics.habilitado;
+      }
+      return true;
+    }
+
     // Check if the subscription plan allows this module key.
     // This affects everyone, including administrators!
     const planKeyMap: Record<string, string> = {
@@ -1413,10 +1457,47 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     const q = query(collection(db, 'notificacoes'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list: Notificacao[] = [];
+      const userRole = currentUserRole || loggedInUser?.tipo || 'estudante';
+      
       snapshot.forEach((doc) => {
         const data = doc.data();
-        if (data.destinatario_id === currentTenantId || data.destinatario_id === 'todos') {
-          list.push({ ...data, id: doc.id } as Notificacao);
+        
+        // Match if notification is globally for all, or matches current tenant
+        const isBelongToTenant = data.destinatario_id === currentTenantId || data.tenant_id === currentTenantId || data.destinatario_id === 'todos';
+        
+        if (isBelongToTenant) {
+          // Direct target checking: if a notification is sent directly to this specific user ID
+          const isDirectMessage = loggedInUser?.id && (data.destinatario_id === loggedInUser.id || data.usuario_id === loggedInUser.id);
+          
+          if (isDirectMessage) {
+            list.push({ ...data, id: doc.id } as Notificacao);
+          } else {
+            // General notification role filtering:
+            // Default destination role is 'admin' unless explicitly specified or destinatario_id is 'todos'
+            const destRole = data.destinatario_role || (data.destinatario_id === 'todos' ? 'todos' : 'admin');
+            
+            if (userRole === 'admin' || userRole === 'super_admin' || userRole === 'director') {
+              // Administrators see admin-level and global notification events
+              if (destRole === 'admin' || destRole === 'todos') {
+                list.push({ ...data, id: doc.id } as Notificacao);
+              }
+            } else if (userRole === 'docente') {
+              // Docentes see only docente-level notifications or general alerts
+              if (destRole === 'docente' || destRole === 'todos') {
+                list.push({ ...data, id: doc.id } as Notificacao);
+              }
+            } else if (userRole === 'estudante') {
+              // Estudantes see only student-level notifications or general alerts
+              if (destRole === 'estudante' || destRole === 'todos') {
+                list.push({ ...data, id: doc.id } as Notificacao);
+              }
+            } else {
+              // Other specific roles (financeiro, encarregado, etc.) see their matching roles or todos
+              if (destRole === userRole || destRole === 'todos') {
+                list.push({ ...data, id: doc.id } as Notificacao);
+              }
+            }
+          }
         }
       });
       list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
@@ -1425,7 +1506,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       console.error("Error listening to notifications:", error);
     });
     return () => unsubscribe();
-  }, [currentTenantId]);
+  }, [currentTenantId, currentUserRole, loggedInUser]);
 
   async function markNotificationAsRead(id: string) {
     try {
@@ -1588,6 +1669,151 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     return true;
   }
 
+  const handleCopySchedule = async (period: 'mes' | 'trimestre' | 'semestre' | 'ano') => {
+    const activeCalendarTurma = selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter;
+    if (!activeCalendarTurma) {
+      showSystemNotification("Erro: Selecione uma turma para copiar a agenda.", "erro");
+      return;
+    }
+
+    const activeTurmaObj = turmas.find(t => t.id === activeCalendarTurma);
+    const turmaName = activeTurmaObj?.nome || "Turma";
+
+    // 1. Find all classes of the selected turma on the currently displayed 7 days starting from calendarSelectedDate
+    const baseDate = calendarSelectedDate;
+    const currentWeekClasses: any[] = [];
+    
+    for (let dayIdx = 0; dayIdx < 7; dayIdx++) {
+      const currentDayDate = new Date(baseDate);
+      currentDayDate.setDate(baseDate.getDate() + dayIdx);
+      const targetDayDateStr = getLocalYYYYMMDD(currentDayDate);
+      
+      const dayClasses = rawClasses.filter(c => c.turma_id === activeCalendarTurma && c.data === targetDayDateStr);
+      currentWeekClasses.push(...dayClasses);
+    }
+
+    if (currentWeekClasses.length === 0) {
+      showSystemNotification("Erro: Não há disciplinas agendadas nesta semana para copiar.", "erro");
+      return;
+    }
+
+    // Define weeks based on period
+    let numWeeks = 3; // default for month (total 4 weeks, copy next 3)
+    let periodName = "Mês";
+    if (period === 'trimestre') {
+      numWeeks = 11; // total 12 weeks, copy next 11
+      periodName = "Trimestre";
+    } else if (period === 'semestre') {
+      numWeeks = 23; // total 24 weeks, copy next 23
+      periodName = "Semestre";
+    } else if (period === 'ano') {
+      numWeeks = 51; // total 52 weeks, copy next 51
+      periodName = "Ano";
+    }
+
+    // Check plan limits
+    const totalNewClassesEstimate = currentWeekClasses.length * numWeeks;
+    if (!checkLimit('max_disciplinas', rawClasses.length + totalNewClassesEstimate)) {
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      let copiedCount = 0;
+      let skippedCount = 0;
+      let overwrittenCount = 0;
+
+      // Loop through each class and copy to future weeks
+      for (const c of currentWeekClasses) {
+        if (!c.data) continue;
+        const [year, month, day] = c.data.split('-').map(Number);
+        const sourceDate = new Date(year, month - 1, day);
+
+        for (let w = 1; w <= numWeeks; w++) {
+          const targetDate = new Date(sourceDate);
+          targetDate.setDate(sourceDate.getDate() + w * 7);
+          const targetDateStr = getLocalYYYYMMDD(targetDate);
+          const targetDayName = c.dia_semana || getDiaSemanaFromDate(targetDateStr);
+
+          // Check room overlap with OTHER turmas
+          const isOverlapWithOther = rawClasses.some(cls => {
+            return cls.turma_id !== activeCalendarTurma && 
+                   cls.sala === c.sala && 
+                   cls.horario === c.horario && 
+                   cls.data === targetDateStr;
+          });
+
+          if (isOverlapWithOther) {
+            skippedCount++;
+            continue;
+          }
+
+          // Check if there is already a class of THIS selected turma in this slot, and delete/overwrite it
+          const existingClassOfTurma = rawClasses.find(cls => {
+            return cls.turma_id === activeCalendarTurma && 
+                   cls.horario === c.horario && 
+                   cls.data === targetDateStr;
+          });
+
+          if (existingClassOfTurma) {
+            await deleteDoc(doc(db, 'classes', existingClassOfTurma.id));
+            overwrittenCount++;
+          }
+
+          // Add the new copied class with approval status based on weekend
+          const targetDay = targetDate.getDay();
+          const targetIsWeekend = targetDay === 0 || targetDay === 6;
+
+          const newClass = {
+            nome: c.nome,
+            turma_id: activeCalendarTurma,
+            docente_id: c.docente_id,
+            horario: c.horario,
+            sala: c.sala,
+            data: targetDateStr,
+            dia_semana: targetDayName,
+            tenant_id: currentTenantId,
+            status_aprovacao: targetIsWeekend ? 'pendente' : 'aprovado'
+          };
+
+          await addDoc(collection(db, 'classes'), newClass);
+          copiedCount++;
+        }
+      }
+
+      await loadTenantContext();
+
+      // Show a success message detailing what happened
+      let successMessage = `Agenda da turma "${turmaName}" copiada com sucesso para o ${periodName}! `;
+      successMessage += `Foram geradas ${copiedCount} aulas.`;
+      if (overwrittenCount > 0) {
+        successMessage += ` (${overwrittenCount} aulas anteriores substituídas).`;
+      }
+      if (skippedCount > 0) {
+        successMessage += ` [Aviso: ${skippedCount} aulas não foram copiadas por conflito de sala com outras turmas].`;
+      }
+
+      showSystemNotification(successMessage, 'sucesso');
+      
+      // Physical overlay popup
+      const popup = document.createElement('div');
+      popup.className = 'fixed bottom-5 right-5 bg-indigo-600 text-white font-bold text-xs px-5 py-4 rounded-xl shadow-2xl border border-indigo-500 z-[1000000] flex flex-col gap-1 max-w-sm animate-bounce';
+      popup.innerHTML = `
+        <div class="font-bold flex items-center gap-1.5 text-sm">📅 Agenda Copiada (${periodName})</div>
+        <div class="text-[10px] opacity-90">${copiedCount} aulas geradas para a turma ${turmaName}.</div>
+        ${skippedCount > 0 ? `<div class="text-[9px] text-amber-300">⚠️ ${skippedCount} conflitos de sala evitados.</div>` : ''}
+      `;
+      document.body.appendChild(popup);
+      setTimeout(() => popup.remove(), 7000);
+
+    } catch (err: any) {
+      console.error("Error copying schedule:", err);
+      showSystemNotification(`Erro ao copiar agenda: ${err.message || err}`, "erro");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   // General CRUD Submit router
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -1598,17 +1824,53 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       if (modalType === 'provincia') {
         if (editingItem) {
           await updateDoc(doc(db, 'provincias', editingItem.id), provinciaForm);
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'admin',
+            titulo: '🌍 Província Atualizada',
+            mensagem: `A província "${provinciaForm.nome}" foi atualizada no sistema.`,
+            tipo: 'info',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
         } else {
           await addDoc(collection(db, 'provincias'), { ...provinciaForm, ...qParams });
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'admin',
+            titulo: '🌍 Nova Província Adicionada',
+            mensagem: `A província "${provinciaForm.nome}" foi cadastrada com sucesso no sistema.`,
+            tipo: 'sucesso',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
         }
       } 
       
       else if (modalType === 'escola') {
         if (editingItem) {
           await updateDoc(doc(db, 'escolas', editingItem.id), escolaForm);
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'admin',
+            titulo: '🏫 Escola Atualizada',
+            mensagem: `Os dados da escola "${escolaForm.nome}" foram alterados.`,
+            tipo: 'info',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
         } else {
           if (!checkLimit('max_escolas', schools.length)) return;
           await addDoc(collection(db, 'escolas'), { ...escolaForm, ...qParams });
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'admin',
+            titulo: '🏫 Nova Escola Adicionada',
+            mensagem: `A escola "${escolaForm.nome}" foi cadastrada com sucesso.`,
+            tipo: 'sucesso',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
         }
       } 
       
@@ -1620,6 +1882,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             escola_id: teacherForm.escola_id,
             especialidade: teacherForm.especialidade,
             numero_registro: teacherForm.numero_registro
+          });
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'admin',
+            titulo: '⚙️ Cadastro de Docente Atualizado',
+            mensagem: `O cadastro do docente "${teacherForm.nome || 'Docente'}" foi atualizado com sucesso.`,
+            tipo: 'info',
+            lido: false,
+            created_at: new Date().toISOString()
           });
         } else {
           if (!checkLimit('max_docentes', teachers.length)) return;
@@ -1649,6 +1920,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             data_contratacao: new Date().toISOString().split('T')[0]
           };
           await setDoc(doc(db, 'docentes', docGenId), newDocente);
+
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'admin',
+            titulo: '🧑‍🏫 Novo Docente Cadastrado',
+            mensagem: `O docente "${teacherForm.nome}" foi cadastrado no sistema (Especialidade: ${teacherForm.especialidade}).`,
+            tipo: 'sucesso',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
         }
       } 
       
@@ -1663,6 +1944,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             pai_id: studentForm.pai_id,
             faturado: !!studentForm.faturado,
             periodo_facturacao: studentForm.faturado ? (studentForm.periodo_facturacao || 'Mensal') : null,
+          });
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'admin',
+            titulo: '✏️ Cadastro de Estudante Atualizado',
+            mensagem: `Os dados de matrícula do estudante com ID "${editingItem.id}" foram atualizados com sucesso.`,
+            tipo: 'info',
+            lido: false,
+            created_at: new Date().toISOString()
           });
         } else {
           if (!checkLimit('max_estudantes', students.length)) return;
@@ -1700,6 +1990,26 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           };
           await setDoc(doc(db, 'estudantes', estGenId), newEstudante);
 
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'admin',
+            titulo: '🎓 Novo Estudante Matriculado',
+            mensagem: `O estudante "${studentForm.nome}" foi matriculado com sucesso (Nº Matrícula: ${studentForm.numero_matricula}).`,
+            tipo: 'sucesso',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
+
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: userGenId,
+            destinatario_role: 'estudante',
+            titulo: '🎉 Bem-vindo ao Portal do Estudante!',
+            mensagem: `Olá ${studentForm.nome}! O seu acesso ao Portal do Estudante está pronto. Nº Matrícula: ${studentForm.numero_matricula}.`,
+            tipo: 'sucesso',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
+
           if (studentForm.faturado) {
             await addDoc(collection(db, 'faturas_estudantes'), {
               tenant_id: currentTenantId,
@@ -1719,9 +2029,27 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       else if (modalType === 'turma') {
         if (editingItem) {
           await updateDoc(doc(db, 'turmas', editingItem.id), turmaForm);
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'admin',
+            titulo: '⚙️ Turma Atualizada',
+            mensagem: `A turma "${turmaForm.nome}" foi modificada com sucesso.`,
+            tipo: 'info',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
         } else {
           if (!checkLimit('max_turmas', turmas.length)) return;
           await addDoc(collection(db, 'turmas'), { ...turmaForm, ...qParams });
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'admin',
+            titulo: '🏫 Nova Turma Criada',
+            mensagem: `A turma "${turmaForm.nome}" foi criada com sucesso no sistema.`,
+            tipo: 'sucesso',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
         }
       } 
       
@@ -1738,28 +2066,143 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           return;
         }
 
+        const checkIsWeekend = (dataStr: string, diaSemana: string) => {
+          if (dataStr) {
+            const d = new Date(dataStr + 'T12:00:00');
+            if (d.getDay() === 0 || d.getDay() === 6) return true;
+          }
+          if (diaSemana) {
+            const ds = diaSemana.toLowerCase();
+            if (ds.includes('sáb') || ds.includes('dom') || ds.includes('sábado') || ds.includes('domingo')) return true;
+          }
+          return false;
+        };
+
         if (editingItem) {
-          await updateDoc(doc(db, 'classes', editingItem.id), classeForm);
+          const isWknd = checkIsWeekend(classeForm.data, classeForm.dia_semana);
+          const updatedForm = {
+            ...classeForm,
+            status_aprovacao: editingItem.status_aprovacao || (isWknd ? 'pendente' : 'aprovado')
+          };
+          await updateDoc(doc(db, 'classes', editingItem.id), updatedForm);
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'admin',
+            titulo: '📅 Aula/Disciplina Atualizada',
+            mensagem: `A disciplina "${classeForm.nome}" foi alterada para ${classeForm.data || classeForm.dia_semana} às ${classeForm.horario}.`,
+            tipo: 'info',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
         } else {
           if (!checkLimit('max_disciplinas', classes.length)) return;
-          await addDoc(collection(db, 'classes'), { ...classeForm, ...qParams });
+          const isWknd = checkIsWeekend(classeForm.data, classeForm.dia_semana);
+          await addDoc(collection(db, 'classes'), { 
+            ...classeForm, 
+            status_aprovacao: isWknd ? 'pendente' : 'aprovado',
+            ...qParams 
+          });
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'admin',
+            titulo: '📅 Nova Aula Agendada',
+            mensagem: `Agendada a disciplina "${classeForm.nome}" para ${classeForm.data || classeForm.dia_semana} às ${classeForm.horario}.`,
+            tipo: 'sucesso',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
+        }
+      } 
+
+      else if (modalType === 'ferias') {
+        if (!feriasForm.descricao || !feriasForm.data_inicio || !feriasForm.data_fim) {
+          showSystemNotification("Erro: Preencha todos os campos da férias!", "erro");
+          setIsSaving(false);
+          return;
+        }
+        if (new Date(feriasForm.data_inicio) > new Date(feriasForm.data_fim)) {
+          showSystemNotification("Erro: A data de início não pode ser posterior à data de fim!", "erro");
+          setIsSaving(false);
+          return;
+        }
+
+        if (editingItem) {
+          await updateDoc(doc(db, 'ferias', editingItem.id), feriasForm);
+          showSystemNotification("Férias atualizadas com sucesso!", "sucesso");
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'todos',
+            titulo: '🏝️ Período de Férias Alterado',
+            mensagem: `Aviso: O período de férias "${feriasForm.descricao}" foi reagendado de ${new Date(feriasForm.data_inicio).toLocaleDateString('pt-PT')} a ${new Date(feriasForm.data_fim).toLocaleDateString('pt-PT')}.`,
+            tipo: 'sistema',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
+        } else {
+          await addDoc(collection(db, 'ferias'), { ...feriasForm, ...qParams });
+          showSystemNotification("Férias cadastradas com sucesso!", "sucesso");
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'todos',
+            titulo: '🏝️ Novo Período de Férias Cadastrado',
+            mensagem: `Aviso geral: Período de Férias "${feriasForm.descricao}" agendado de ${new Date(feriasForm.data_inicio).toLocaleDateString('pt-PT')} a ${new Date(feriasForm.data_fim).toLocaleDateString('pt-PT')}.`,
+            tipo: 'sistema',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
         }
       } 
       
       else if (modalType === 'classe_escolar') {
         if (editingItem) {
           await updateDoc(doc(db, 'classes_escolares', editingItem.id), classeEscolarForm);
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'admin',
+            titulo: '⚙️ Classe Acadêmica Atualizada',
+            mensagem: `A classe acadêmica "${classeEscolarForm.nome}" foi alterada no sistema.`,
+            tipo: 'info',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
         } else {
           if (!checkLimit('max_classes', classesEscolares.length)) return;
           await addDoc(collection(db, 'classes_escolares'), { ...classeEscolarForm, ...qParams });
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'admin',
+            titulo: '🏫 Nova Classe Acadêmica Criada',
+            mensagem: `A classe acadêmica "${classeEscolarForm.nome}" foi registrada com sucesso.`,
+            tipo: 'sucesso',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
         }
       }
 
       else if (modalType === 'sala') {
         if (editingItem) {
           await updateDoc(doc(db, 'salas', editingItem.id), salaForm);
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'admin',
+            titulo: '🚪 Sala de Aula Atualizada',
+            mensagem: `Os dados da sala "${salaForm.nome}" foram alterados.`,
+            tipo: 'info',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
         } else {
           await addDoc(collection(db, 'salas'), { ...salaForm, ...qParams });
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'admin',
+            titulo: '🚪 Nova Sala de Aula Registrada',
+            mensagem: `A sala "${salaForm.nome}" (Capacidade: ${salaForm.capacidade}) foi criada com sucesso.`,
+            tipo: 'sucesso',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
         }
       } 
       
@@ -1798,8 +2241,58 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
         if (editingItem) {
           await updateDoc(doc(db, 'pautas', editingItem.id), calculatedPauta);
+          
+          const targetStud = students.find(s => s.id === calculatedPauta.estudante_id);
+          const studUser = tenantUsers.find(u => u.id === targetStud?.user_id);
+          
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'admin',
+            titulo: '⚙️ Nota de Pauta Editada',
+            mensagem: `Atualizada a nota para ${studUser?.nome || 'Estudante'} na disciplina "${calculatedPauta.disciplina_id}". Nova média: ${calculatedPauta.nota_media} valores (${calculatedPauta.situacao}).`,
+            tipo: 'info',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
+
+          if (targetStud?.user_id) {
+            await addDoc(collection(db, 'notificacoes'), {
+              destinatario_id: targetStud.user_id,
+              destinatario_role: 'estudante',
+              titulo: '📊 Nota de Pauta Retificada',
+              mensagem: `A sua nota final para a disciplina "${calculatedPauta.disciplina_id}" foi retificada. Nova Média: ${calculatedPauta.nota_media} valores (${calculatedPauta.situacao}).`,
+              tipo: 'info',
+              lido: false,
+              created_at: new Date().toISOString()
+            });
+          }
         } else {
           await addDoc(collection(db, 'pautas'), { ...calculatedPauta, ...qParams });
+          
+          const targetStud = students.find(s => s.id === calculatedPauta.estudante_id);
+          const studUser = tenantUsers.find(u => u.id === targetStud?.user_id);
+          
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'admin',
+            titulo: '📊 Nova Nota de Pauta Lançada',
+            mensagem: `Lançada nota para ${studUser?.nome || 'Estudante'} na disciplina "${calculatedPauta.disciplina_id}". Média Final: ${calculatedPauta.nota_media} valores (${calculatedPauta.situacao}).`,
+            tipo: 'sucesso',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
+
+          if (targetStud?.user_id) {
+            await addDoc(collection(db, 'notificacoes'), {
+              destinatario_id: targetStud.user_id,
+              destinatario_role: 'estudante',
+              titulo: '📊 Nova Nota de Pauta Disponível',
+              mensagem: `A sua nota final para a disciplina "${calculatedPauta.disciplina_id}" foi publicada. Média: ${calculatedPauta.nota_media} valores (${calculatedPauta.situacao}).`,
+              tipo: 'sucesso',
+              lido: false,
+              created_at: new Date().toISOString()
+            });
+          }
         }
       } 
       
@@ -1811,8 +2304,58 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         };
         if (editingItem) {
           await updateDoc(doc(db, 'processos_aluno', editingItem.id), payload);
+          
+          const targetStud = students.find(s => s.id === payload.estudante_id);
+          const studUser = tenantUsers.find(u => u.id === targetStud?.user_id);
+
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'admin',
+            titulo: '⚙️ Dossier/Processo Retificado',
+            mensagem: `Os dados do processo "${payload.titulo}" do estudante ${studUser?.nome || 'Estudante'} foram retificados.`,
+            tipo: 'info',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
+
+          if (targetStud?.user_id) {
+            await addDoc(collection(db, 'notificacoes'), {
+              destinatario_id: targetStud.user_id,
+              destinatario_role: 'estudante',
+              titulo: '📂 Atualização no seu Dossier Escolar',
+              mensagem: `O seu processo "${payload.titulo}" foi retificado pela secretaria.`,
+              tipo: 'info',
+              lido: false,
+              created_at: new Date().toISOString()
+            });
+          }
         } else {
           await addDoc(collection(db, 'processos_aluno'), { ...payload, ...qParams });
+          
+          const targetStud = students.find(s => s.id === payload.estudante_id);
+          const studUser = tenantUsers.find(u => u.id === targetStud?.user_id);
+
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'admin',
+            titulo: '📂 Novo Dossier/Processo Registrado',
+            mensagem: `Registrado processo "${payload.titulo}" para o estudante ${studUser?.nome || 'Estudante'}.`,
+            tipo: 'sucesso',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
+
+          if (targetStud?.user_id) {
+            await addDoc(collection(db, 'notificacoes'), {
+              destinatario_id: targetStud.user_id,
+              destinatario_role: 'estudante',
+              titulo: '📂 Nova Atualização no seu Dossier',
+              mensagem: `Foi adicionado um novo registo ao seu dossier escolar: "${payload.titulo}".`,
+              tipo: 'info',
+              lido: false,
+              created_at: new Date().toISOString()
+            });
+          }
         }
       } 
       
@@ -1983,7 +2526,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   };
 
   return (
-    <div id="tenant_client_portal" className={`bg-slate-50 min-h-screen flex flex-col md:flex-row relative ${isMobile ? 'pb-16' : ''}`}>
+    <div id="tenant_client_portal" className="bg-slate-50 min-h-screen flex flex-col md:flex-row relative">
       {/* Backdrop overlay for hover expansion */}
       {isSidebarHovered && isSidebarCollapsed && (
         <div 
@@ -2113,55 +2656,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             )}
           </div>
 
-          {/* 3. Temas canto direito */}
-          <div className="relative">
-            <button
-              onClick={() => setIsThemeDropdownOpen(!isThemeDropdownOpen)}
-              className="w-8 h-8 rounded-full border border-slate-700 bg-slate-950 flex items-center justify-center cursor-pointer transition-transform active:scale-90 text-white hover:text-indigo-400"
-              title="Mudar Tema"
-            >
-              <Palette className="w-4 h-4" />
-            </button>
 
-            {isThemeDropdownOpen && (
-              <>
-                <div className="fixed inset-0 z-40 bg-transparent" onClick={() => setIsThemeDropdownOpen(false)} />
-                <div className="absolute right-0 mt-3 w-48 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl z-50 p-2.5 animate-in fade-in slide-in-from-top-2 duration-200">
-                  <div className="px-2 pb-1.5 mb-1.5 border-b border-slate-100 dark:border-slate-800">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Mudar Tema</p>
-                  </div>
-                  <div className="space-y-1">
-                    {[
-                      { id: 'theme-slate', name: 'Claro (Classic)', color: 'bg-slate-200 border-slate-400' },
-                      { id: 'theme-dark', name: 'Escuro (Midnight)', color: 'bg-slate-900 border-slate-700' },
-                      { id: 'theme-emerald', name: 'Verde (Emerald)', color: 'bg-emerald-500 border-emerald-600' },
-                      { id: 'theme-amber', name: 'Amber (Cozy)', color: 'bg-amber-500 border-amber-600' }
-                    ].map((t) => {
-                      const isSelected = activeTheme === t.id;
-                      return (
-                        <button
-                          key={t.id}
-                          type="button"
-                          onClick={() => {
-                            onChangeTheme?.(t.id);
-                            setIsThemeDropdownOpen(false);
-                          }}
-                          className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-left text-xs font-semibold cursor-pointer transition-colors ${
-                            isSelected 
-                              ? 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400' 
-                              : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
-                          }`}
-                        >
-                          <span className={`w-4 h-4 rounded-full border border-slate-300 dark:border-slate-600 ${t.color.split(' ')[0]}`} />
-                          <span className="truncate">{t.name}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
         </div>
       </div>
 
@@ -2297,33 +2792,33 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           <div className="max-w-6xl mx-auto space-y-8">
             
             {/* Header section with context alert */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-5">
+            <div className="hidden md:flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
               <div>
-                <h1 className="text-2xl font-bold font-sans text-slate-900">
-                  {activeTab.toUpperCase()}
+                <h1 className="text-2xl font-extrabold font-sans text-slate-900 dark:text-white uppercase tracking-wider">
+                  {activeTab}
                 </h1>
-                <p className="text-sm text-slate-500 mt-1">
-                  Ambiente isolado da instituição. Todos os dados permanecem estritamente seguros.
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-semibold">
+                  Ambiente isolado e seguro da instituição escolar.
                 </p>
               </div>
-              <div className="flex gap-4 items-center">
+              <div className="flex items-center gap-4 flex-wrap">
                 {/* Theme Toggle Switch */}
                 <div className="flex items-center gap-2.5">
-                  <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">Modo escuro</span>
+                  <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Modo escuro</span>
                   <button
                     type="button"
                     onClick={() => onChangeTheme?.(activeTheme === 'theme-dark' ? 'theme-slate' : 'theme-dark')}
-                    className={`relative inline-flex h-5 w-10 shrink-0 cursor-pointer rounded-full border border-slate-300 dark:border-slate-700 transition-colors duration-200 ease-in-out focus:outline-none ${
-                      activeTheme === 'theme-dark' ? 'bg-sky-500' : 'bg-slate-200 dark:bg-slate-800'
+                    className={`relative inline-flex h-5.5 w-11 shrink-0 cursor-pointer rounded-full border border-slate-300 dark:border-slate-700 transition-colors duration-200 ease-in-out focus:outline-none ${
+                      activeTheme === 'theme-dark' ? 'bg-sky-500 border-sky-400' : 'bg-slate-200 dark:bg-slate-800'
                     }`}
                     role="switch"
                     aria-checked={activeTheme === 'theme-dark'}
                   >
                     <span
                       aria-hidden="true"
-                      className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
-                        activeTheme === 'theme-dark' ? 'translate-x-5' : 'translate-x-0.5'
-                      } mt-[1px]`}
+                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                        activeTheme === 'theme-dark' ? 'translate-x-5.5' : 'translate-x-0.5'
+                      } mt-[2px]`}
                     />
                   </button>
                 </div>
@@ -2331,39 +2826,39 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 {/* Notification Bell Dropdown */}
                 <div className="relative">
                   <button
-                    onClick={() => setIsNotifDropdownOpen(!isNotifDropdownOpen)}
-                    className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-indigo-600 rounded-lg relative cursor-pointer transition-colors flex items-center justify-center"
+                    onClick={() => setIsDesktopNotifOpen(!isDesktopNotifOpen)}
+                    className="p-2 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-indigo-600 rounded-xl relative cursor-pointer transition-all flex items-center justify-center shadow-3xs active:scale-95"
                     title="Notificações"
                   >
                     <Bell className="w-4 h-4" />
                     {notifications.filter(n => !n.lido).length > 0 && (
-                      <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white font-sans text-[10px] font-bold rounded-full flex items-center justify-center animate-bounce">
+                      <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white font-sans text-[9px] font-bold rounded-full flex items-center justify-center animate-bounce shadow-xs">
                         {notifications.filter(n => !n.lido).length}
                       </span>
                     )}
                   </button>
 
-                  {isNotifDropdownOpen && (
+                  {isDesktopNotifOpen && (
                     <>
-                      <div className="fixed inset-0 z-40" onClick={() => setIsNotifDropdownOpen(false)} />
-                      <div className="absolute right-0 mt-2 w-80 bg-white rounded-xl border border-slate-200 shadow-xl z-50 py-3 text-slate-800 animate-in fade-in slide-in-from-top-2 duration-200">
-                        <div className="px-4 pb-2 border-b border-slate-100 flex justify-between items-center">
-                          <span className="font-sans font-extrabold text-sm text-slate-800">Notificações</span>
+                      <div className="fixed inset-0 z-40 bg-transparent" onClick={() => setIsDesktopNotifOpen(false)} />
+                      <div className="absolute right-0 mt-2.5 w-80 bg-white dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl z-50 py-3 text-slate-800 dark:text-slate-100 animate-in fade-in slide-in-from-top-2 duration-250">
+                        <div className="px-4 pb-2 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+                          <span className="font-sans font-extrabold text-xs text-slate-800 dark:text-white uppercase tracking-wider">Notificações</span>
                           {notifications.some(n => !n.lido) && (
                             <button
                               onClick={() => {
                                 markAllNotificationsAsRead();
-                                setIsNotifDropdownOpen(false);
+                                setIsDesktopNotifOpen(false);
                               }}
-                              className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold font-sans cursor-pointer"
+                              className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold cursor-pointer"
                             >
                               Ler tudo
                             </button>
                           )}
                         </div>
-                        <div className="max-h-64 overflow-y-auto divide-y divide-slate-50">
+                        <div className="max-h-64 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
                           {notifications.length === 0 ? (
-                            <div className="px-4 py-6 text-center text-xs text-slate-400">
+                            <div className="px-4 py-6 text-center text-xs text-slate-400 dark:text-slate-500">
                               Nenhuma notificação por enquanto
                             </div>
                           ) : (
@@ -2372,21 +2867,22 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 key={n.id} 
                                 onClick={() => {
                                   markNotificationAsRead(n.id);
+                                  setIsDesktopNotifOpen(false);
                                 }}
-                                className={`p-3 text-left cursor-pointer hover:bg-slate-50 transition-colors ${!n.lido ? 'bg-indigo-50/30' : ''}`}
+                                className={`p-3 text-left cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900/60 transition-colors ${!n.lido ? 'bg-indigo-50/30 dark:bg-indigo-950/20' : ''}`}
                               >
                                 <div className="flex justify-between items-start gap-1">
-                                  <span className={`text-xs font-bold font-sans ${!n.lido ? 'text-indigo-900' : 'text-slate-700'}`}>{n.titulo}</span>
-                                  <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded shrink-0 ${
-                                    n.tipo === 'limite' ? 'bg-amber-100 text-amber-800' :
-                                    n.tipo === 'alerta' ? 'bg-rose-100 text-rose-800' :
-                                    n.tipo === 'sucesso' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-800'
+                                  <span className={`text-xs font-bold leading-tight ${!n.lido ? 'text-indigo-900 dark:text-indigo-350' : 'text-slate-700 dark:text-slate-300'}`}>{n.titulo}</span>
+                                  <span className={`text-[8px] uppercase font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                                    n.tipo === 'limite' ? 'bg-amber-100 dark:bg-amber-950/45 text-amber-800 dark:text-amber-350 border border-amber-200/50' :
+                                    n.tipo === 'alerta' ? 'bg-rose-100 dark:bg-rose-950/45 text-rose-800 dark:text-rose-350 border border-rose-200/50' :
+                                    n.tipo === 'sucesso' ? 'bg-emerald-100 dark:bg-emerald-950/45 text-emerald-800 dark:text-emerald-350 border border-emerald-200/50' : 'bg-slate-100 dark:bg-slate-900 text-slate-800 dark:text-slate-300 border border-slate-250'
                                   }`}>
                                     {n.tipo}
                                   </span>
                                 </div>
-                                <p className="text-slate-500 text-xs mt-1 leading-relaxed">{n.mensagem}</p>
-                                <span className="text-[10px] text-slate-400 font-mono mt-2 block">{new Date(n.created_at).toLocaleString('pt-PT')}</span>
+                                <p className="text-slate-500 dark:text-slate-400 text-[11px] mt-1 leading-relaxed">{n.mensagem}</p>
+                                <span className="text-[9px] text-slate-400 dark:text-slate-500 font-mono mt-2 block">{new Date(n.created_at).toLocaleString('pt-PT')}</span>
                               </div>
                             ))
                           )}
@@ -2396,8 +2892,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   )}
                 </div>
 
-                <span className="bg-emerald-50 text-emerald-700 text-xs font-bold py-1.5 px-3.5 rounded-lg border border-emerald-200 flex items-center gap-1">
-                  ● Conectado ao Tenant ID: {currentTenantId.split('-')[1]}
+                <span className="bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 text-xs font-bold py-1.5 px-3.5 rounded-lg border border-emerald-200 dark:border-emerald-800/80 flex items-center gap-1 shrink-0 select-none">
+                  ● Ativo
                 </span>
               </div>
             </div>
@@ -2416,9 +2912,6 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       <h2 className="text-2xl md:text-3xl font-black tracking-tight">
                         Olá, {loggedInUser?.nome || 'Estudante'}! 👋
                       </h2>
-                      <p className="text-indigo-200 text-sm max-w-xl">
-                        Bem-vindo ao seu portal acadêmico. Aqui você pode acompanhar suas notas, disciplinas, pautas trimestrais e o andamento de seus processos escolares.
-                      </p>
                     </div>
                     <div className="bg-white/10 backdrop-blur-md border border-white/15 p-4 rounded-2xl shrink-0 space-y-1">
                       <p className="text-xs text-indigo-200 font-bold uppercase tracking-wider">Matrícula Escolar</p>
@@ -3217,7 +3710,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           const usr = tenantUsers.find(u => u.id === t.user_id);
                           const esc = schools.find(e => e.id === t.escola_id);
                           return (
-                            <tr key={t.id} className="hover:bg-slate-50/50">
+                            <tr key={t.id} className={`hover:bg-slate-50/50 ${activeActionRowId === t.id ? 'relative z-30' : ''}`}>
                               <td className="py-4 px-4 text-center">
                                 <input 
                                   type="checkbox"
@@ -3234,7 +3727,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               <td className="px-6 py-4">{t.especialidade}</td>
                               <td className="px-6 py-4 font-mono text-xs">{t.numero_registro}</td>
                               <td className="px-6 py-4 text-xs text-indigo-600 font-semibold">{esc?.nome || 'Global'}</td>
-                              <td className="px-6 py-4 text-right relative">
+                              <td className={`px-6 py-4 text-right relative ${activeActionRowId === t.id ? 'z-40' : 'z-0'}`}>
                                 <div className="inline-block text-left">
                                   <button
                                     onClick={(e) => {
@@ -3358,7 +3851,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             )}
 
                             {/* 3 Dots action */}
-                            <div className="relative">
+                            <div className={`relative ${activeActionRowId === t.id ? 'z-40' : 'z-0'}`}>
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -3572,7 +4065,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           const esc = schools.find(e => e.id === s.escola_id);
                           const tur = turmas.find(t => t.id === s.turma_id);
                           return (
-                            <tr key={s.id} className="hover:bg-slate-50/50">
+                            <tr key={s.id} className={`hover:bg-slate-50/50 ${activeActionRowId === s.id ? 'relative z-30' : ''}`}>
                               <td className="py-4 px-4 text-center">
                                 <input 
                                   type="checkbox"
@@ -3592,7 +4085,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               <td className="px-6 py-4 text-xs">{s.genero}</td>
                               <td className="px-6 py-4 text-xs text-slate-500">{esc?.nome}</td>
                               <td className="px-6 py-4 text-xs font-bold text-indigo-700">{tur?.nome || 'Sem Turma'}</td>
-                              <td className="px-6 py-4 text-right relative">
+                              <td className={`px-6 py-4 text-right relative ${activeActionRowId === s.id ? 'z-40' : 'z-0'}`}>
                                 <div className="inline-block text-left">
                                   <button
                                     onClick={(e) => {
@@ -3685,7 +4178,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             )}
 
                             {/* 3 Dots Action */}
-                            <div className="relative">
+                            <div className={`relative ${activeActionRowId === s.id ? 'z-40' : 'z-0'}`}>
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -4357,11 +4850,40 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                   )}
                                   {hasPermission('disciplinas', 'excluir') && (
                                     <button 
-                                      onClick={async () => {
-                                        if (confirm(`Tem certeza que deseja excluir a disciplina "${c.nome}"?`)) {
-                                          await deleteDoc(doc(db, 'classes', c.id));
-                                          loadTenantContext();
-                                        }
+                                      onClick={() => {
+                                        setConfirmModal({
+                                          isOpen: true,
+                                          title: 'Confirmar Exclusão',
+                                          message: `Tem certeza que deseja excluir a disciplina "${c.nome}"?`,
+                                          confirmText: 'Excluir',
+                                          cancelText: 'Cancelar',
+                                          isCritical: true,
+                                          onConfirm: async () => {
+                                            await deleteDoc(doc(db, 'classes', c.id));
+                                            
+                                            // Notificar o administrador
+                                            await addDoc(collection(db, 'notificacoes'), {
+                                              destinatario_id: 'admin',
+                                              tenant_id: currentTenantId,
+                                              titulo: '🗑️ Disciplina Excluída',
+                                              mensagem: `A disciplina "${c.nome}" agendada para o dia ${c.data || c.dia_semana} às ${c.horario} foi excluída da agenda.`,
+                                              tipo: 'cadastro',
+                                              lido: false,
+                                              created_at: new Date().toISOString()
+                                            });
+
+                                            // Exibir popup da acao executada
+                                            showSystemNotification(`A disciplina "${c.nome}" foi excluída com sucesso!`, 'sucesso');
+
+                                            const popup = document.createElement('div');
+                                            popup.className = 'fixed bottom-5 right-5 bg-rose-600 text-white font-bold text-xs px-4 py-3 rounded-xl shadow-2xl border border-rose-500 z-[1000000] flex items-center gap-2 animate-bounce';
+                                            popup.innerHTML = `🗑️ Disciplina "${c.nome}" excluída da agenda! Administrador notificado.`;
+                                            document.body.appendChild(popup);
+                                            setTimeout(() => popup.remove(), 6000);
+
+                                            await loadTenantContext();
+                                          }
+                                        });
                                       }}
                                       className="text-rose-600 hover:text-rose-900 font-bold text-xs cursor-pointer"
                                     >
@@ -4506,167 +5028,567 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
             {/* TAB: CALENDÁRIO & HORÁRIOS */}
             {activeTab === 'calendario' && (
-              !hasPermission('calendario') ? renderRestrictedAccess('Calendário & Horários') : (
-                <div className="space-y-6 animate-fadeIn">
-                  <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-4">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div>
-                      <h3 className="font-bold text-slate-800 text-lg">Calendário Semanal & Horários</h3>
-                      <p className="text-xs text-slate-400 font-sans">Grade horária dinâmica baseada nas disciplinas registradas de cada turma.</p>
-                    </div>
-                    <div className="flex items-center gap-3 flex-wrap self-start sm:self-center">
-                      {turmas.length > 0 && (
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-slate-500 font-bold">Turma:</span>
-                          <select 
-                            id="calendar_turma_filter"
-                            className="bg-slate-100 border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                            onChange={(e) => {
-                              // Quick dynamic reload on filter (using local DOM state or component state)
-                              const val = e.target.value;
-                              setSelectedTurmaFilter(val);
-                            }}
-                            value={selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter}
-                          >
-                            {turmas.map(t => (
-                              <option key={t.id} value={t.id}>{t.nome}</option>
-                            ))}
-                          </select>
+              !hasPermission('calendario') ? renderRestrictedAccess('Calendário & Horários') : (() => {
+                const formatCalendarDateWeek = (date: Date) => {
+                  const months = [
+                    'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+                    'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+                  ];
+                  const month = months[date.getMonth()];
+                  const year = date.getFullYear();
+                  
+                  const firstDayOfMonth = new Date(date.getFullYear(), date.getMonth(), 1);
+                  const firstDayOfWeek = firstDayOfMonth.getDay() || 7;
+                  const offsetDate = date.getDate() + firstDayOfWeek - 2;
+                  const weekNum = Math.floor(offsetDate / 7) + 1;
+                  
+                  return `${month} de ${year} - Semana ${weekNum}`;
+                };
+
+                const monday = getMonday(calendarSelectedDate);
+
+                return (
+                  <div className="space-y-6 animate-fadeIn">
+                    <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div>
+                          <h3 className="font-bold text-slate-800 text-lg">Calendário Semanal & Horários</h3>
+                          <p className="text-xs text-slate-400 font-sans">Grade horária dinâmica baseada nas disciplinas registradas de cada turma.</p>
                         </div>
-                      )}
+                        <div className="flex items-center gap-3 flex-wrap self-start sm:self-center">
+                          {turmas.length > 0 && (
+                            <div className="flex items-center gap-2">
+                              <select 
+                                id="calendar_turma_filter"
+                                className="bg-slate-100 border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setSelectedTurmaFilter(val);
+                                }}
+                                value={selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter}
+                              >
+                                {turmas.map(t => (
+                                  <option key={t.id} value={t.id}>{t.nome}</option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
 
-                      {hasPermission('disciplinas', 'criar') && (
+                          {hasPermission('disciplinas', 'criar') && (
+                            <div className="relative">
+                              <button
+                                onClick={() => setIsCopyDropdownOpen(!isCopyDropdownOpen)}
+                                className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2 px-3 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-3xs border border-slate-200/65"
+                              >
+                                <Copy className="w-3.5 h-3.5" /> Copiar Agenda
+                              </button>
+                              
+                              {isCopyDropdownOpen && (
+                                <>
+                                  <div 
+                                    className="fixed inset-0 z-10" 
+                                    onClick={() => setIsCopyDropdownOpen(false)} 
+                                  />
+                                  <div className="absolute right-0 mt-1.5 w-52 rounded-xl bg-white border border-slate-200 shadow-lg py-1.5 z-20 animate-in fade-in slide-in-from-top-1 duration-100">
+                                    <div className="px-3 py-1.5 border-b border-slate-100">
+                                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Copiar esta semana para:</p>
+                                    </div>
+                                    <button
+                                      onClick={() => {
+                                        setIsCopyDropdownOpen(false);
+                                        handleCopySchedule('mes');
+                                      }}
+                                      className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 font-semibold transition-colors cursor-pointer flex items-center justify-between"
+                                    >
+                                      <span>Mês (4 semanas)</span>
+                                      <span className="text-[9px] text-slate-400 font-mono">1 mês</span>
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setIsCopyDropdownOpen(false);
+                                        handleCopySchedule('trimestre');
+                                      }}
+                                      className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 font-semibold transition-colors cursor-pointer flex items-center justify-between"
+                                    >
+                                      <span>Trimestre</span>
+                                      <span className="text-[9px] text-slate-400 font-mono">3 meses</span>
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setIsCopyDropdownOpen(false);
+                                        handleCopySchedule('semestre');
+                                      }}
+                                      className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 font-semibold transition-colors cursor-pointer flex items-center justify-between"
+                                    >
+                                      <span>Semestre</span>
+                                      <span className="text-[9px] text-slate-400 font-mono">6 meses</span>
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setIsCopyDropdownOpen(false);
+                                        handleCopySchedule('ano');
+                                      }}
+                                      className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 font-semibold transition-colors cursor-pointer flex items-center justify-between"
+                                    >
+                                      <span>Ano Inteiro</span>
+                                      <span className="text-[9px] text-slate-400 font-mono">1 ano</span>
+                                    </button>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          )}
+
+                          {hasPermission('disciplinas', 'criar') && (
+                            <button
+                              id="btn_agendar_aula"
+                              onClick={() => {
+                                setEditingItem(null);
+                                const activeFilterId = selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter;
+                                setClasseForm({ 
+                                  nome: '', 
+                                  turma_id: activeFilterId || (turmas[0]?.id || ''), 
+                                  docente_id: teachers[0]?.id || '', 
+                                  horario: '08:00 - 09:30', 
+                                  sala: rawSalas[0]?.nome || '',
+                                  data: new Date().toISOString().split('T')[0],
+                                  dia_semana: getDiaSemanaFromDate(new Date().toISOString().split('T')[0])
+                                });
+                                setModalType('classe');
+                                setIsModalOpen(true);
+                              }}
+                              className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Weekly Navigation Controls */}
+                      <div className="flex justify-center items-center gap-4 py-2.5 border-t border-slate-100 mt-2">
                         <button
-                          id="btn_agendar_aula"
                           onClick={() => {
-                            setEditingItem(null);
-                            const activeFilterId = selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter;
-                            setClasseForm({ 
-                              nome: '', 
-                              turma_id: activeFilterId || (turmas[0]?.id || ''), 
-                              docente_id: teachers[0]?.id || '', 
-                              horario: '08:00 - 09:30', 
-                              sala: rawSalas[0]?.nome || '',
-                              data: new Date().toISOString().split('T')[0],
-                              dia_semana: getDiaSemanaFromDate(new Date().toISOString().split('T')[0])
+                            setCalendarSelectedDate(prev => {
+                              const d = new Date(prev);
+                              d.setDate(d.getDate() - 7);
+                              return d;
                             });
-                            setModalType('classe');
-                            setIsModalOpen(true);
                           }}
-                          className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                          className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-650 transition-colors cursor-pointer border border-slate-200 shadow-3xs"
+                          title="Semana Anterior"
                         >
-                          <Plus className="w-3.5 h-3.5" /> Adicionar
+                          <ChevronLeft className="w-4 h-4" />
                         </button>
-                      )}
-                    </div>
-                  </div>
+                        
+                        <span className="text-xs sm:text-sm font-bold text-indigo-950 font-sans tracking-wide bg-indigo-50/50 border border-indigo-100/80 rounded-xl px-4 py-1.5 shadow-2xs flex items-center gap-2">
+                          📅 {formatCalendarDateWeek(calendarSelectedDate)}
+                        </span>
 
-                  {turmas.length === 0 ? (
-                    <div className="p-8 text-center text-slate-400">
-                      Nenhuma turma cadastrada. Crie uma turma primeiro para ver o calendário.
+                        <button
+                          onClick={() => {
+                            setCalendarSelectedDate(prev => {
+                              const d = new Date(prev);
+                              d.setDate(d.getDate() + 7);
+                              return d;
+                            });
+                          }}
+                          className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-650 transition-colors cursor-pointer border border-slate-200 shadow-3xs"
+                          title="Próxima Semana"
+                        >
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
-                  ) : (
-                    <div className="overflow-x-auto border border-slate-150 rounded-2xl bg-slate-50/50">
-                      <table className="w-full text-left border-collapse min-w-[700px]">
-                        <thead>
-                          <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 text-xs font-bold text-center">
-                            <th className="p-4 border-r border-slate-200 w-32">Horário</th>
-                            <th className="p-4 border-r border-slate-200">Segunda-feira</th>
-                            <th className="p-4 border-r border-slate-200">Terça-feira</th>
-                            <th className="p-4 border-r border-slate-200">Quarta-feira</th>
-                            <th className="p-4 border-r border-slate-200">Quinta-feira</th>
-                            <th className="p-4">Sexta-feira</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {[
-                            "08:00 - 09:30",
-                            "09:35 - 11:05",
-                            "11:10 - 12:40",
-                            "12:45 - 14:15",
-                            "14:20 - 15:50"
-                          ].map((timeSlot, idx) => {
-                            // Filter classes by selected turma or fall back to first
-                            const activeCalendarTurma = selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter;
-                            const matches = classes.filter(c => c.turma_id === activeCalendarTurma);
-                            
-                            // Map matches to weekday slots based on simple hashing or mock rotation to distribute beautifully
-                            const getDisciplineForDay = (dayIndex: number) => {
-                              // Distribute disciplines deterministically among days
-                              const dayName = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira'][dayIndex];
-                              const directMatch = matches.find(c => {
-                                if (!c.dia_semana) return false;
-                                return c.dia_semana.toLowerCase().includes(dayName.toLowerCase().split('-')[0]) && c.horario === timeSlot;
+
+                    {turmas.length === 0 ? (
+                      <div className="p-8 text-center text-slate-400">
+                        Nenhuma turma cadastrada. Crie uma turma primeiro para ver o calendário.
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto border border-slate-150 rounded-2xl bg-slate-50/50 shadow-2xs">
+                        <table className="w-full text-left border-collapse min-w-[700px]">
+                          <thead>
+                            <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 text-xs font-bold text-center">
+                              <th className="p-4 border-r border-slate-200 w-32">Horário</th>
+                              {Array.from({ length: 7 }, (_, i) => i).map((dayIndex) => {
+                                const currentDayDate = new Date(calendarSelectedDate);
+                                currentDayDate.setDate(calendarSelectedDate.getDate() + dayIndex);
+                                const dayNames = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+                                const dayName = dayNames[currentDayDate.getDay()];
+                                const formattedDateHeader = currentDayDate.toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit' });
+                                return (
+                                  <th key={dayIndex} className="p-4 border-r border-slate-200 last:border-r-0">
+                                    <div className="flex flex-col items-center gap-0.5">
+                                      <span>{dayName}</span>
+                                      <span className="text-[10px] text-slate-400 font-mono font-medium">({formattedDateHeader})</span>
+                                    </div>
+                                  </th>
+                                );
+                              })}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(() => {
+                              const activeCalendarTurma = selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter;
+                              const matches = classes.filter(c => c.turma_id === activeCalendarTurma);
+
+                              const getDiaSemanaPt = (date: Date) => {
+                                const names = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+                                return names[date.getDay()];
+                              };
+
+                              // Obter horários cadastrados pelo utilizador para esta turma
+                              const registeredSlots = matches
+                                .map(c => c.horario)
+                                .filter((val, idx, self) => val && self.indexOf(val) === idx);
+
+                              // Grade horária predefinida
+                              const defaultSlots = [
+                                "08:00 - 09:30",
+                                "09:35 - 11:05",
+                                "11:10 - 12:40",
+                                "12:45 - 14:15",
+                                "14:20 - 15:50"
+                              ];
+
+                              // Unificar e ordenar cronologicamente por hora de início
+                              const allSlots = Array.from(new Set([...defaultSlots, ...registeredSlots])).filter(Boolean);
+                              const sortedSlots = allSlots.sort((a, b) => {
+                                const aStart = a.split(' - ')[0] || '';
+                                const bStart = b.split(' - ')[0] || '';
+                                return aStart.localeCompare(bStart);
                               });
-                              if (directMatch) return directMatch;
-                              const fallbackMatches = matches.filter(c => !c.dia_semana);
-                              const indexInMatches = (idx + dayIndex) % Math.max(1, fallbackMatches.length);
-                              if (fallbackMatches.length > 0 && fallbackMatches[indexInMatches]) {
-                                return fallbackMatches[indexInMatches];
-                              }
-                              return null;
-                            };
 
-                            return (
-                              <tr key={timeSlot} className="border-b border-slate-150 hover:bg-slate-50 transition-colors">
-                                <td className="p-4 bg-slate-100/50 border-r border-slate-200 font-bold font-mono text-center text-slate-700 text-xs">
-                                  {timeSlot}
-                                </td>
-                                {[0, 1, 2, 3, 4].map((dayIdx) => {
-                                  const disc = getDisciplineForDay(dayIdx);
-                                  const tea = disc ? teachers.find(t => t.id === disc.docente_id) : null;
-                                  const teaUsr = tea ? tenantUsers.find(u => u.id === tea.user_id) : null;
+                              return sortedSlots.map((timeSlot) => {
+                                const getDisciplineForDay = (dayIndex: number) => {
+                                  const currentDayDate = new Date(calendarSelectedDate);
+                                  currentDayDate.setDate(calendarSelectedDate.getDate() + dayIndex);
+                                  const targetDayDateStr = getLocalYYYYMMDD(currentDayDate);
+                                  const dayName = getDiaSemanaPt(currentDayDate);
                                   
-                                  return (
-                                    <td key={dayIdx} className="p-3 border-r border-slate-150 last:border-r-0 text-center">
-                                      {disc ? (
-                                        <div className="bg-indigo-50 border border-indigo-150 rounded-xl p-3 text-left shadow-2xs space-y-1">
-                                          <p className="font-bold text-indigo-950 text-xs truncate">{disc.nome}</p>
-                                          <p className="text-[10px] text-indigo-700 truncate font-semibold">🧑‍🏫 {teaUsr?.nome || 'Docente'}</p>
-                                          <p className="text-[9px] text-indigo-500 font-mono">🚪 {disc.sala}</p>
-                                        </div>
-                                      ) : (
-                                        hasPermission('disciplinas', 'criar') ? (
-                                          <button
-                                            onClick={() => {
-                                              setEditingItem(null);
-                                              const activeFilterId = selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter;
-                                              setClasseForm({ 
-                                                nome: '', 
-                                                turma_id: activeFilterId || (turmas[0]?.id || ''), 
-                                                docente_id: teachers[0]?.id || '', 
-                                                horario: timeSlot, 
-                                                sala: rawSalas[0]?.nome || '',
-                                                data: new Date().toISOString().split('T')[0],
-                                                dia_semana: getDiaSemanaFromDate(new Date().toISOString().split('T')[0])
-                                              });
-                                              setModalType('classe');
-                                              setIsModalOpen(true);
-                                            }}
-                                            className="w-full border border-dashed border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/50 rounded-xl py-4 text-center text-slate-350 hover:text-indigo-600 text-[10px] font-mono cursor-pointer transition-all flex flex-col items-center justify-center gap-1 group"
-                                          >
-                                            <span>Vago</span>
-                                            <span className="opacity-0 group-hover:opacity-100 text-[9px] text-indigo-500 transition-opacity font-sans">+ Agendar</span>
-                                          </button>
-                                        ) : (
-                                          <div className="border border-dashed border-slate-200 rounded-xl py-4 text-center text-slate-350 text-[10px] font-mono">
-                                            Vago
-                                          </div>
-                                        )
-                                      )}
+                                  let match = matches.find(c => c.data === targetDayDateStr && c.horario === timeSlot);
+                                  if (match) return match;
+                                  
+                                  match = matches.find(c => {
+                                    if (!c.dia_semana) return false;
+                                    if (c.data) return false;
+                                    return c.dia_semana.toLowerCase().includes(dayName.toLowerCase().split('-')[0]) && c.horario === timeSlot;
+                                  });
+                                  return match;
+                                };
+
+                                return (
+                                  <tr key={timeSlot} className="border-b border-slate-150 hover:bg-slate-50/40 transition-colors">
+                                    <td className="p-4 bg-slate-100/50 border-r border-slate-200 font-bold font-mono text-center text-slate-700 text-xs">
+                                      {timeSlot}
                                     </td>
+                                    {Array.from({ length: 7 }, (_, i) => i).map((dayIdx) => {
+                                      const currentDayDate = new Date(calendarSelectedDate);
+                                      currentDayDate.setDate(calendarSelectedDate.getDate() + dayIdx);
+                                      const currentDateStr = getLocalYYYYMMDD(currentDayDate);
+
+                                      // 1. Check Vacation/Férias
+                                      const vacation = rawVacations.find(v => currentDateStr >= v.data_inicio && currentDateStr <= v.data_fim);
+                                      if (vacation) {
+                                        return (
+                                          <td key={dayIdx} className="p-3 border-r border-slate-150 last:border-r-0 text-center bg-amber-50/10">
+                                            <div className="bg-amber-100/40 dark:bg-amber-950/20 border border-amber-200/50 rounded-xl p-2.5 text-left space-y-0.5">
+                                              <p className="font-bold text-amber-900 text-[11px] flex items-center gap-1">🌴 Férias</p>
+                                              <p className="text-[9px] text-amber-700 font-semibold truncate" title={vacation.descricao}>{vacation.descricao}</p>
+                                            </div>
+                                          </td>
+                                        );
+                                      }
+
+                                      const disc = getDisciplineForDay(dayIdx);
+                                      const tea = disc ? teachers.find(t => t.id === disc.docente_id) : null;
+                                      const teaUsr = tea ? tenantUsers.find(u => u.id === tea.user_id) : null;
+                                      
+                                      return (
+                                        <td key={dayIdx} className="p-3 border-r border-slate-150 last:border-r-0 text-center">
+                                          {disc ? (() => {
+                                            const isWeekend = currentDayDate.getDay() === 0 || currentDayDate.getDay() === 6;
+                                            const status = disc.status_aprovacao || (isWeekend ? 'pendente' : 'aprovado');
+                                            
+                                            let bgClass = "bg-indigo-50/80 border border-indigo-150/60 hover:border-indigo-300 hover:bg-indigo-50 rounded-xl p-3 text-left shadow-3xs space-y-1 cursor-pointer transition-all hover:shadow-xs active:scale-98 text-indigo-950";
+                                            let badge = null;
+
+                                            if (status === 'pendente') {
+                                              bgClass = "bg-amber-50 border border-amber-200 hover:border-amber-400 hover:bg-amber-100/70 rounded-xl p-3 text-left shadow-3xs space-y-1 cursor-pointer transition-all hover:shadow-xs active:scale-98 text-amber-900";
+                                              badge = <span className="inline-block text-[8px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-md mt-1">⏳ Pendente</span>;
+                                            } else if (status === 'rejeitado') {
+                                              bgClass = "bg-rose-50 border border-rose-250 hover:border-rose-400 hover:bg-rose-100 rounded-xl p-3 text-left shadow-3xs space-y-1 cursor-pointer transition-all hover:shadow-xs active:scale-98 text-rose-900";
+                                              badge = <span className="inline-block text-[8px] font-bold bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded-md mt-1">❌ Rejeitada</span>;
+                                            } else if (isWeekend) {
+                                              bgClass = "bg-emerald-50 border border-emerald-250 hover:border-emerald-400 hover:bg-emerald-100 rounded-xl p-3 text-left shadow-3xs space-y-1 cursor-pointer transition-all hover:shadow-xs active:scale-98 text-emerald-900";
+                                              badge = <span className="inline-block text-[8px] font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded-md mt-1">✅ Aprovada</span>;
+                                            }
+
+                                            return (
+                                              <div 
+                                                onClick={() => {
+                                                  setSelectedClassPopup({
+                                                    classe: disc,
+                                                    docente: teaUsr,
+                                                    dataStr: currentDayDate.toLocaleDateString('pt-PT')
+                                                  });
+                                                }}
+                                                className={bgClass}
+                                              >
+                                                <p className="font-bold text-xs truncate">{disc.nome}</p>
+                                                <p className="text-[10px] truncate font-semibold opacity-90">🧑‍🏫 {teaUsr?.nome || 'Docente'}</p>
+                                                <p className="text-[9px] font-mono opacity-75">🚪 {disc.sala}</p>
+                                                {badge}
+                                              </div>
+                                            );
+                                          })() : (
+                                            hasPermission('disciplinas', 'criar') ? (
+                                              <button
+                                                onClick={() => {
+                                                  setEditingItem(null);
+                                                  const activeFilterId = selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter;
+                                                  const targetDateStr = getLocalYYYYMMDD(currentDayDate);
+                                                  setClasseForm({ 
+                                                    nome: '', 
+                                                    turma_id: activeFilterId || (turmas[0]?.id || ''), 
+                                                    docente_id: teachers[0]?.id || '', 
+                                                    horario: timeSlot, 
+                                                    sala: rawSalas[0]?.nome || '',
+                                                    data: targetDateStr,
+                                                    dia_semana: getDiaSemanaFromDate(targetDateStr)
+                                                  });
+                                                  setModalType('classe');
+                                                  setIsModalOpen(true);
+                                                }}
+                                                className="w-full border border-dashed border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/50 rounded-xl py-4 text-center text-slate-350 hover:text-indigo-600 text-[10px] font-mono cursor-pointer transition-all flex flex-col items-center justify-center gap-1 group"
+                                              >
+                                                <span>Vago</span>
+                                                <span className="opacity-0 group-hover:opacity-100 text-[9px] text-indigo-500 transition-opacity font-sans">+ Agendar</span>
+                                              </button>
+                                            ) : (
+                                              <div className="border border-dashed border-slate-200 rounded-xl py-4 text-center text-slate-350 text-[10px] font-mono">
+                                                Vago
+                                              </div>
+                                            )
+                                          )}
+                                        </td>
+                                      );
+                                    })}
+                                  </tr>
+                                );
+                              });
+                            })()}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {/* Pop-up de Detalhes da Disciplina / Aula */}
+                    {selectedClassPopup && (
+                      <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0.95 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          className="bg-white rounded-2xl border border-slate-200 max-w-sm w-full p-6 shadow-2xl space-y-4"
+                        >
+                          <div className="flex justify-between items-start">
+                            <div className="flex items-center gap-2">
+                              <span className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
+                                <BookMarked className="w-4 h-4" />
+                              </span>
+                              <h3 className="font-bold text-slate-800 text-sm">Informações da Aula</h3>
+                            </div>
+                            <button
+                              onClick={() => setSelectedClassPopup(null)}
+                              className="text-slate-400 hover:text-slate-650 transition-colors cursor-pointer"
+                            >
+                              <X className="w-4.5 h-4.5" />
+                            </button>
+                          </div>
+
+                          <div className="space-y-2.5 text-xs text-slate-650">
+                            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-150 space-y-2.5 text-left">
+                              <div>
+                                <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Disciplina</span>
+                                <p className="font-bold text-slate-800 text-sm mt-0.5">{selectedClassPopup.classe.nome}</p>
+                              </div>
+                              <div>
+                                <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Docente Responsável</span>
+                                <p className="font-semibold text-indigo-900 mt-0.5">🧑‍🏫 {selectedClassPopup.docente?.nome || 'Docente Não Encontrado'}</p>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 pt-1.5 border-t border-slate-100">
+                                <div>
+                                  <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Sala</span>
+                                  <p className="font-medium text-slate-700 mt-0.5">🚪 {selectedClassPopup.classe.sala}</p>
+                                </div>
+                                <div>
+                                  <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Horário</span>
+                                  <p className="font-semibold text-emerald-700 mt-0.5">⏱️ {selectedClassPopup.classe.horario}</p>
+                                </div>
+                              </div>
+                              <div>
+                                <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Data da Aula</span>
+                                <p className="font-medium text-slate-700 mt-0.5">📅 {selectedClassPopup.dataStr}</p>
+                              </div>
+                              {(() => {
+                                const disc = selectedClassPopup.classe;
+                                const isWeekend = disc.data ? (() => {
+                                  const d = new Date(disc.data + 'T12:00:00');
+                                  return d.getDay() === 0 || d.getDay() === 6;
+                                })() : false;
+                                if (isWeekend || disc.status_aprovacao === 'pendente') {
+                                  const status = disc.status_aprovacao || 'pendente';
+                                  let statusText = 'Pendente de Aprovação';
+                                  let colorClass = 'text-amber-600 bg-amber-50 border-amber-200';
+                                  if (status === 'aprovado') {
+                                    statusText = 'Aprovada';
+                                    colorClass = 'text-emerald-600 bg-emerald-50 border-emerald-200';
+                                  } else if (status === 'rejeitado') {
+                                    statusText = 'Rejeitada';
+                                    colorClass = 'text-rose-600 bg-rose-50 border-rose-250';
+                                  }
+                                  return (
+                                    <div className={`p-2 rounded-lg border text-center font-bold text-[10px] mt-2 ${colorClass}`}>
+                                      Status da Aula: {statusText}
+                                    </div>
                                   );
-                                })}
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              </div>
-              )
+                                }
+                                return null;
+                              })()}
+                            </div>
+                          </div>
+
+                          {/* Approval / Rejection actions for weekend classes */}
+                          {(() => {
+                            const disc = selectedClassPopup.classe;
+                            const isWeekend = disc.data ? (() => {
+                              const d = new Date(disc.data + 'T12:00:00');
+                              return d.getDay() === 0 || d.getDay() === 6;
+                            })() : false;
+                            
+                            const isDirector = currentUserRole === 'director' || loggedInUser?.tipo === 'director';
+                            const isAdmin = currentUserRole === 'admin' || loggedInUser?.tipo === 'admin';
+                            const isDocente = currentUserRole === 'docente' || loggedInUser?.tipo === 'docente';
+                            const canApproveWeekendClasses = isAdmin || isDirector || isDocente;
+
+                            if (isWeekend && canApproveWeekendClasses) {
+                              const status = disc.status_aprovacao || 'pendente';
+                              return (
+                                <div className="flex gap-2 pt-2 border-t border-slate-100">
+                                  {status !== 'aprovado' && (
+                                    <button
+                                      onClick={async () => {
+                                        await updateDoc(doc(db, 'classes', disc.id), { status_aprovacao: 'aprovado' });
+                                        showSystemNotification("Aula de fim de semana aprovada com sucesso!", "sucesso");
+                                        await loadTenantContext();
+                                        setSelectedClassPopup(null);
+                                      }}
+                                      className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                                    >
+                                      <CheckCircle className="w-3.5 h-3.5" /> Aprovar
+                                    </button>
+                                  )}
+                                  {status !== 'rejeitado' && (
+                                    <button
+                                      onClick={async () => {
+                                        await updateDoc(doc(db, 'classes', disc.id), { status_aprovacao: 'rejeitado' });
+                                        showSystemNotification("Aula de fim de semana rejeitada!", "sucesso");
+                                        await loadTenantContext();
+                                        setSelectedClassPopup(null);
+                                      }}
+                                      className="flex-1 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                                    >
+                                      <XCircle className="w-3.5 h-3.5" /> Rejeitar
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            }
+                            return null;
+                          })()}
+
+                          <div className="flex gap-2 pt-2 border-t border-slate-100">
+                            {hasPermission('disciplinas', 'editar') && (
+                              <button
+                                onClick={() => {
+                                  const c = selectedClassPopup.classe;
+                                  setEditingItem(c);
+                                  setClasseForm({
+                                    nome: c.nome,
+                                    turma_id: c.turma_id,
+                                    docente_id: c.docente_id,
+                                    horario: c.horario,
+                                    sala: c.sala,
+                                    data: c.data || new Date().toISOString().split('T')[0],
+                                    dia_semana: c.dia_semana || getDiaSemanaFromDate(c.data || new Date().toISOString().split('T')[0])
+                                  });
+                                  setModalType('classe');
+                                  setIsModalOpen(true);
+                                  setSelectedClassPopup(null);
+                                }}
+                                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2.5 px-3 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                              >
+                                <Edit className="w-3.5 h-3.5" /> Editar
+                              </button>
+                            )}
+
+                            {hasPermission('disciplinas', 'excluir') && (
+                              <button
+                                onClick={() => {
+                                  const c = selectedClassPopup.classe;
+                                  const tempPopup = selectedClassPopup;
+                                  setSelectedClassPopup(null); // Close the popup first
+                                  setConfirmModal({
+                                    isOpen: true,
+                                    title: 'Confirmar Exclusão',
+                                    message: `Tem certeza que deseja excluir a disciplina "${c.nome}" do calendário?`,
+                                    confirmText: 'Excluir',
+                                    cancelText: 'Cancelar',
+                                    isCritical: true,
+                                    onConfirm: async () => {
+                                      await deleteDoc(doc(db, 'classes', c.id));
+                                      
+                                      // Notificar o administrador
+                                      await addDoc(collection(db, 'notificacoes'), {
+                                        destinatario_id: 'admin',
+                                        tenant_id: currentTenantId,
+                                        titulo: '🗑️ Disciplina Excluída',
+                                        mensagem: `A disciplina "${c.nome}" agendada para o dia ${c.data || c.dia_semana} às ${c.horario} foi excluída da agenda.`,
+                                        tipo: 'cadastro',
+                                        lido: false,
+                                        created_at: new Date().toISOString()
+                                      });
+
+                                      // Exibir popup da acao executada
+                                      showSystemNotification(`A disciplina "${c.nome}" foi excluída com sucesso!`, 'sucesso');
+
+                                      const popup = document.createElement('div');
+                                      popup.className = 'fixed bottom-5 right-5 bg-rose-600 text-white font-bold text-xs px-4 py-3 rounded-xl shadow-2xl border border-rose-500 z-[1000000] flex items-center gap-2 animate-bounce';
+                                      popup.innerHTML = `🗑️ Disciplina "${c.nome}" excluída da agenda! Administrador notificado.`;
+                                      document.body.appendChild(popup);
+                                      setTimeout(() => popup.remove(), 6000);
+
+                                      await loadTenantContext();
+                                      setSelectedClassPopup(null);
+                                    },
+                                    onCancel: () => {
+                                      setSelectedClassPopup(tempPopup); // Restore previous popup on cancel!
+                                    }
+                                  });
+                                }}
+                                className="flex-1 bg-rose-50 hover:bg-rose-150 text-rose-700 font-bold text-xs py-2.5 px-3 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" /> Excluir
+                              </button>
+                            )}
+                          </div>
+                        </motion.div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()
             )}
 
             {/* TAB: PAUTA GERAL */}
@@ -7513,39 +8435,54 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Grade Horária</label>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Grade Horária (Predefinida)</label>
                       <select 
-                        value={["08:00 - 09:30", "09:35 - 11:05", "11:10 - 12:40", "12:45 - 14:15", "14:20 - 15:50"].includes(classeForm.horario) || !classeForm.horario ? classeForm.horario : "Custom"}
+                        value={["08:00 - 09:30", "09:35 - 11:05", "11:10 - 12:40", "12:45 - 14:15", "14:20 - 15:50"].includes(classeForm.horario) ? classeForm.horario : "Custom"}
                         onChange={(e) => {
                           const val = e.target.value;
                           if (val === "Custom") {
-                            setClasseForm({ ...classeForm, horario: "" });
+                            setClasseForm({ ...classeForm, horario: "08:00 - 09:30" });
                           } else {
                             setClasseForm({ ...classeForm, horario: val });
                           }
                         }}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 mb-2 focus:ring-1 focus:ring-indigo-500"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 focus:ring-1 focus:ring-indigo-500"
                       >
-                        <option value="">-- Selecionar Horário --</option>
                         <option value="08:00 - 09:30">08:00 - 09:30 (1º Tempo)</option>
                         <option value="09:35 - 11:05">09:35 - 11:05 (2º Tempo)</option>
                         <option value="11:10 - 12:40">11:10 - 12:40 (3º Tempo)</option>
                         <option value="12:45 - 14:15">12:45 - 14:15 (4º Tempo)</option>
                         <option value="14:20 - 15:50">14:20 - 15:50 (5º Tempo)</option>
-                        <option value="Custom">Outro Horário...</option>
+                        <option value="Custom">-- Definir Horário Personalizado --</option>
                       </select>
-
-                      {(!["08:00 - 09:30", "09:35 - 11:05", "11:10 - 12:40", "12:45 - 14:15", "14:20 - 15:50"].includes(classeForm.horario) || classeForm.horario === "") && (
-                        <input 
-                          type="text"
-                          required
-                          value={classeForm.horario}
-                          onChange={(e) => setClasseForm({ ...classeForm, horario: e.target.value })}
-                          placeholder="Ex: Seg 08:00 - 09:30"
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm animate-in fade-in slide-in-from-top-1 duration-200"
-                        />
-                      )}
                     </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Horário Personalizado</label>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="time"
+                          value={classeForm.horario ? classeForm.horario.split(' - ')[0] || "08:00" : "08:00"}
+                          onChange={(e) => {
+                            const start = e.target.value;
+                            const end = classeForm.horario ? classeForm.horario.split(' - ')[1] || "09:30" : "09:30";
+                            setClasseForm({ ...classeForm, horario: `${start} - ${end}` });
+                          }}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm text-slate-750 text-center focus:ring-1 focus:ring-indigo-500"
+                        />
+                        <span className="text-slate-400 text-xs">até</span>
+                        <input
+                          type="time"
+                          value={classeForm.horario ? classeForm.horario.split(' - ')[1] || "09:30" : "09:30"}
+                          onChange={(e) => {
+                            const start = classeForm.horario ? classeForm.horario.split(' - ')[0] || "08:00" : "08:00";
+                            const end = e.target.value;
+                            setClasseForm({ ...classeForm, horario: `${start} - ${end}` });
+                          }}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm text-slate-750 text-center focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
                     <div>
                       <label className="block text-xs font-bold text-slate-500 mb-1">Sala de Aula</label>
                       <select 
@@ -7560,8 +8497,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         ))}
                       </select>
                     </div>
-                  </div>
-                </>
+                  </>
               )}
 
               {/* CLASSE ESCOLAR FORM */}
@@ -8012,6 +8948,45 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 </>
               )}
 
+              {/* FERIAS FORM */}
+              {modalType === 'ferias' && (
+                <>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Descrição das Férias / Feriado</label>
+                    <input 
+                      type="text"
+                      required
+                      placeholder="Ex: Férias de Natal, Feriado Nacional, Recesso Escolar"
+                      value={feriasForm.descricao}
+                      onChange={(e) => setFeriasForm({ ...feriasForm, descricao: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Data de Início</label>
+                      <input 
+                        type="date"
+                        required
+                        value={feriasForm.data_inicio}
+                        onChange={(e) => setFeriasForm({ ...feriasForm, data_inicio: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Data de Fim</label>
+                      <input 
+                        type="date"
+                        required
+                        value={feriasForm.data_fim}
+                        onChange={(e) => setFeriasForm({ ...feriasForm, data_fim: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
               <div className="flex gap-2 justify-end pt-4 border-t border-slate-100">
                 <button 
                   type="button"
@@ -8034,55 +9009,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         </div>
       )}
 
-      {/* MOBILE RESPONSIVE NAVIGATION BOTTOM BAR */}
-      {isMobile && (
-        <div className={`md:hidden fixed bottom-0 left-0 right-0 z-40 border-t ${
-          detectedOS === 'iOS' 
-            ? 'bg-slate-900/80 backdrop-blur-lg border-slate-800/60 pb-safe-bottom' 
-            : 'bg-slate-900 border-slate-850'
-        } text-white shadow-lg`}>
-          <div className="flex justify-around items-center h-16 px-2">
-            {[
-              { id: 'dashboard', label: 'Início', icon: <Sliders className="w-5.5 h-5.5" /> },
-              { id: 'estudantes', label: 'Estudantes', icon: <GraduationCap className="w-5.5 h-5.5" />, allowed: hasPermission('estudantes') },
-              { id: 'pautas', label: 'Notas', icon: <FileSpreadsheet className="w-5.5 h-5.5" />, allowed: hasPermission('pautas') },
-              { id: 'turmas', label: 'Turmas', icon: <BookOpen className="w-5.5 h-5.5" />, allowed: hasPermission('turmas') },
-            ].map((tab) => {
-              if (tab.allowed === false) return null;
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => {
-                    setActiveTab(tab.id);
-                    setIsMobileMoreOpen(false);
-                  }}
-                  className={`flex flex-col items-center justify-center flex-1 h-full py-1 text-center cursor-pointer transition-colors ${
-                    isActive ? 'text-indigo-400 font-bold' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <div className={`transition-transform duration-200 active:scale-90 ${isActive ? 'scale-110 text-indigo-400' : ''}`}>
-                    {tab.icon}
-                  </div>
-                  <span className="text-[10px] mt-1 truncate max-w-[65px]">{tab.label}</span>
-                </button>
-              );
-            })}
-            
-            <button
-              onClick={() => setIsMobileMoreOpen(true)}
-              className={`flex flex-col items-center justify-center flex-1 h-full py-1 text-center cursor-pointer transition-colors ${
-                isMobileMoreOpen ? 'text-indigo-400 font-bold' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <div className="transition-transform active:scale-90">
-                <Menu className="w-5.5 h-5.5" />
-              </div>
-              <span className="text-[10px] mt-1">Mais</span>
-            </button>
-          </div>
-        </div>
-      )}
+
 
       {/* MOBILE RESPONSIVE "MAIS" MENU SHEET */}
       {isMobile && isMobileMoreOpen && (
@@ -8174,7 +9101,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
       {/* CUSTOM CONFIRM MODAL */}
       {confirmModal.isOpen && (
-        <div className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs flex items-center justify-center p-4 z-[100000]">
           <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-sm w-full p-6 shadow-xl border border-slate-100 dark:border-slate-800 animate-in zoom-in-95 duration-150">
             <h3 className="text-base font-bold text-slate-900 dark:text-white font-sans flex items-center gap-2">
               {confirmModal.isCritical ? (

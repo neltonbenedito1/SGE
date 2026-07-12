@@ -28,7 +28,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Livro, Edicao, PermissaoBiblioteca, HistoricoLeitura, Avaliacao, Escola } from '../types';
-import { collection, doc, setDoc, getDocs } from 'firebase/firestore';
+import { collection, doc, setDoc, getDocs, addDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { InternalPdfViewer } from './InternalPdfViewer';
 
@@ -98,6 +98,26 @@ const INITIAL_LIVROS: Livro[] = [
     escola_origem: 'escola-1',
     criado_em: new Date(Date.now() - 15 * 24 * 3600 * 1000).toISOString(),
     atualizado_em: new Date(Date.now() - 15 * 24 * 3600 * 1000).toISOString()
+  },
+  {
+    id: 'livro-4',
+    tenant_id: 'default',
+    titulo: 'Física Geral - 10ª Classe',
+    autor: 'Dr. Nelton Benedito',
+    editora: 'Plural Editores',
+    numero_paginas: 192,
+    capa_url: '',
+    categoria: 'Didático',
+    disciplina_associada: 'Física',
+    sinopse: 'Manual escolar complementar focado na mecânica clássica, termodinâmica e ótica geométrica aplicadas ao plano curricular oficial. Contém exercícios práticos resolvidos e sugestões de laboratório.',
+    idioma: 'Português',
+    isbn: '978-9890000004',
+    tags: ['Didático', 'Física', '10ª Classe', 'Ensino Médio'],
+    destaque: true,
+    criado_por: 'user-admin',
+    escola_origem: 'escola-1',
+    criado_em: new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString(),
+    atualizado_em: new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString()
   }
 ];
 
@@ -233,13 +253,31 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
   });
 
   // UI State
-  const [activeSubTab, setActiveSubTab] = useState<'catalogo' | 'permissoes' | 'historico'>('catalogo');
+  const [activeSubTab, setActiveSubTab] = useState<'catalogo' | 'historico'>('catalogo');
   const [selectedLivro, setSelectedLivro] = useState<Livro | null>(null);
   const [activeEditionToRead, setActiveEditionToRead] = useState<{livro: Livro, edicao: Edicao} | null>(null);
   const [readerPageNum, setReaderPageNum] = useState<number>(1);
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('todas');
   const [schoolFilter, setSchoolFilter] = useState('todas');
+
+  // Custom Delete and Notification States
+  const [confirmDeleteData, setConfirmDeleteData] = useState<{
+    type: 'livro' | 'edicao';
+    id: string;
+    title: string;
+    subId?: string;
+  } | null>(null);
+
+  const [actionNotification, setActionNotification] = useState<{
+    message: string;
+    type: 'sucesso' | 'erro';
+  } | null>(null);
+
+  const showToast = (message: string, type: 'sucesso' | 'erro' = 'sucesso') => {
+    setActionNotification({ message, type });
+    setTimeout(() => setActionNotification(null), 4000);
+  };
 
   // Modals
   const [isBookModalOpen, setIsBookModalOpen] = useState(false);
@@ -641,14 +679,13 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
   };
 
   const handleDeleteBook = (id: string) => {
-    if (window.confirm('Tem certeza de que deseja excluir este livro? Todas as edições e avaliações associadas serão removidas.')) {
-      setLivros(livros.filter(l => l.id !== id));
-      setEdicoes(edicoes.filter(e => e.livro_id !== id));
-      setAvaliacoes(avaliacoes.filter(a => a.livro_id !== id));
-      if (selectedLivro?.id === id) {
-        setSelectedLivro(null);
-      }
-    }
+    const book = livros.find(l => l.id === id);
+    if (!book) return;
+    setConfirmDeleteData({
+      type: 'livro',
+      id,
+      title: book.titulo
+    });
   };
 
   // Drag and drop / base64 simulation
@@ -854,19 +891,6 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
             }`}
           >
             Meu Histórico de Leitura ({historicoLeitura.length})
-          </button>
-        )}
-
-        {isAdmin && (
-          <button
-            onClick={() => { setActiveSubTab('permissoes'); setSelectedLivro(null); }}
-            className={`pb-3 px-5 text-sm font-medium transition-all cursor-pointer border-b-2 -mb-[2px] ${
-              activeSubTab === 'permissoes'
-                ? 'border-indigo-600 text-indigo-600 font-bold'
-                : 'border-transparent text-slate-400 hover:text-slate-650'
-            }`}
-          >
-            Regras de Acesso (Administrador)
           </button>
         )}
       </div>
@@ -1124,6 +1148,23 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                                 <Download className="w-3.5 h-3.5" /> Baixar PDF
                               </button>
                             )}
+
+                            {isAdmin && (
+                              <button
+                                onClick={() => {
+                                  setConfirmDeleteData({
+                                    type: 'edicao',
+                                    id: selectedLivro.id,
+                                    subId: ed.id,
+                                    title: `Edição ${ed.numero_edicao} de "${selectedLivro.titulo}"`
+                                  });
+                                }}
+                                className="bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs py-2 px-3 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors"
+                                title="Excluir Edição"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" /> Excluir
+                              </button>
+                            )}
                           </div>
                         </div>
                       ))
@@ -1181,70 +1222,6 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
               onPageChange={(pageNum, totalPages) => handlePageChange(pageNum, totalPages)}
               onClose={() => setActiveEditionToRead(null)}
             />
-          </motion.div>
-        )}
-
-        {/* TAB 2: ACCESS CONTROL AND PERMISSIONS FOR ADMIN */}
-        {activeSubTab === 'permissoes' && isAdmin && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-white rounded-2xl border border-slate-150 p-6 shadow-xs space-y-6"
-          >
-            <div>
-              <h2 className="text-base font-bold text-slate-800">Matriz de Permissões da Biblioteca</h2>
-              <p className="text-slate-400 text-xs mt-0.5">Defina se alunos, professores e responsáveis possuem permissão de leitura integral e se podem efetuar downloads dos arquivos PDFs.</p>
-            </div>
-
-            <div className="overflow-x-auto border border-slate-100 rounded-xl">
-              <table className="w-full text-left text-sm border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 text-slate-500 font-bold border-b border-slate-100 text-xs">
-                    <th className="p-4">Perfil de Utilizador</th>
-                    <th className="p-4 text-center">Permitir Leitura Online</th>
-                    <th className="p-4 text-center">Permitir Download PDF</th>
-                    <th className="p-4">Regra Transversal</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {(['estudante', 'docente', 'pai'] as const).map(role => {
-                    const perm = permissoes.find(p => p.utilizador_id === `todos_${role}s`);
-                    const roleLabel = role === 'estudante' ? 'Estudantes / Alunos' : role === 'docente' ? 'Professores / Docentes' : 'Encarregados de Educação / Pais';
-                    return (
-                      <tr key={role} className="hover:bg-slate-50/20 transition-colors">
-                        <td className="p-4 font-bold text-slate-700">{roleLabel}</td>
-                        <td className="p-4 text-center">
-                          <input
-                            type="checkbox"
-                            checked={perm ? perm.pode_ler : true}
-                            onChange={() => handleTogglePermission(role, 'pode_ler')}
-                            className="w-4 h-4 text-indigo-600 focus:ring-indigo-500 border-slate-300 rounded cursor-pointer"
-                          />
-                        </td>
-                        <td className="p-4 text-center">
-                          <input
-                            type="checkbox"
-                            checked={perm ? perm.pode_baixar : false}
-                            onChange={() => handleTogglePermission(role, 'pode_baixar')}
-                            className="w-4 h-4 text-indigo-600 focus:ring-indigo-500 border-slate-300 rounded cursor-pointer"
-                          />
-                        </td>
-                        <td className="p-4 text-xs text-slate-450 font-mono">
-                          Aplicado para todas as escolas da instituição.
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="p-4 bg-indigo-50/50 rounded-xl border border-indigo-100 text-indigo-900 text-xs flex gap-2 leading-relaxed">
-              <CheckCircle className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
-              <div>
-                <span className="font-bold">Regra Transversal Global Ativada:</span> O módulo biblioteca compartilha os livros de forma global de acordo com a política institucional. Nenhuma escola fica isolada do acervo unificado.
-              </div>
-            </div>
           </motion.div>
         )}
 
@@ -1368,13 +1345,59 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
 
                 <div>
                   <label className="block text-xs font-bold text-slate-500 mb-1">Categoria / Gênero</label>
-                  <input
-                    type="text"
-                    placeholder="Ex: Clássicos, Poesia, Física"
-                    value={bookForm.categoria}
-                    onChange={(e) => setBookForm({ ...bookForm, categoria: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-hidden"
-                  />
+                  <select
+                    value={["Clássicos", "Poesia", "Didático", "Científico", "Geral"].includes(bookForm.categoria || '') ? bookForm.categoria : "Outro"}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === "Outro") {
+                        setBookForm({ ...bookForm, categoria: "" });
+                      } else {
+                        setBookForm({ ...bookForm, categoria: val });
+                      }
+                    }}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-hidden mb-2"
+                  >
+                    <option value="Geral">Geral</option>
+                    <option value="Clássicos">Clássicos</option>
+                    <option value="Poesia">Poesia</option>
+                    <option value="Didático">Didático (Livro de classe ministrada)</option>
+                    <option value="Científico">Científico</option>
+                    <option value="Outro">Outra (Digitar...)</option>
+                  </select>
+
+                  {(!["Clássicos", "Poesia", "Didático", "Científico", "Geral"].includes(bookForm.categoria || '') || bookForm.categoria === "") && (
+                    <input
+                      type="text"
+                      placeholder="Digite a categoria customizada..."
+                      value={bookForm.categoria || ''}
+                      onChange={(e) => setBookForm({ ...bookForm, categoria: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm focus:ring-2 focus:ring-indigo-500/20 outline-hidden animate-in fade-in slide-in-from-top-1 duration-200"
+                    />
+                  )}
+
+                  {bookForm.categoria === 'Didático' && (
+                    <div className="mt-2 p-3 bg-indigo-50/50 rounded-xl border border-indigo-100 animate-in fade-in duration-200">
+                      <label className="block text-[10px] font-bold text-indigo-900 uppercase tracking-wider mb-1">Disciplina / Matéria Ministrada</label>
+                      <select
+                        value={bookForm.disciplina_associada || ''}
+                        onChange={(e) => setBookForm({ ...bookForm, disciplina_associada: e.target.value })}
+                        className="w-full bg-white border border-indigo-200 rounded-lg p-2 text-xs text-indigo-950 focus:ring-2 focus:ring-indigo-500/20 outline-hidden"
+                      >
+                        <option value="">-- Selecionar Disciplina --</option>
+                        <option value="Matemática">Matemática</option>
+                        <option value="Língua Portuguesa">Língua Portuguesa</option>
+                        <option value="Física">Física</option>
+                        <option value="Química">Química</option>
+                        <option value="História">História</option>
+                        <option value="Geografia">Geografia</option>
+                        <option value="Biologia">Biologia</option>
+                        <option value="Educação Física">Educação Física</option>
+                        <option value="Artes">Artes</option>
+                        <option value="Inglês">Inglês</option>
+                      </select>
+                      <p className="text-[10px] text-indigo-600 mt-1">Este livro didático é associado à classe curricular ministrada na instituição.</p>
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -1663,6 +1686,108 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
               </div>
             </form>
           </motion.div>
+        </div>
+      )}
+
+      {/* CONFIRMATION DELETE MODAL */}
+      {confirmDeleteData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-2xl border border-slate-200 max-w-sm w-full p-6 shadow-2xl space-y-4"
+          >
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-rose-50 text-rose-600 rounded-full shrink-0">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 font-sans">
+                  Confirmar Exclusão
+                </h3>
+                <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                  Deseja realmente excluir {confirmDeleteData.type === 'livro' ? 'o livro' : 'a edição'}{' '}
+                  <span className="font-extrabold text-slate-800">"{confirmDeleteData.title}"</span>? Esta ação não pode ser desfeita e removerá permanentemente os dados associados.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteData(null)}
+                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2 px-3 rounded-lg transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const data = confirmDeleteData;
+                  setConfirmDeleteData(null);
+                  if (data.type === 'livro') {
+                    // Excluir livro
+                    setLivros(prev => prev.filter(l => l.id !== data.id));
+                    setEdicoes(prev => prev.filter(e => e.livro_id !== data.id));
+                    setAvaliacoes(prev => prev.filter(a => a.livro_id !== data.id));
+                    if (selectedLivro?.id === data.id) {
+                      setSelectedLivro(null);
+                    }
+                    
+                    // Notificar administrador no Firestore
+                    try {
+                      await addDoc(collection(db, 'notificacoes'), {
+                        destinatario_id: 'admin',
+                        titulo: '🚨 Livro Removido do Acervo',
+                        mensagem: `O utilizador "${currentUserName}" excluiu o livro "${data.title}" e todas as suas edições/avaliações associadas da Biblioteca.`,
+                        tipo: 'alerta',
+                        lido: false,
+                        created_at: new Date().toISOString()
+                      });
+                    } catch (e) {
+                      console.error("Erro ao notificar administrador no Firestore:", e);
+                    }
+                    
+                    // Exibir popup de sucesso
+                    showToast(`O livro "${data.title}" foi excluído com sucesso!`);
+                  } else {
+                    // Excluir edição
+                    setEdicoes(prev => prev.filter(e => e.id !== data.subId));
+                    
+                    // Notificar administrador no Firestore
+                    try {
+                      await addDoc(collection(db, 'notificacoes'), {
+                        destinatario_id: 'admin',
+                        titulo: '🚨 Edição de Livro Removida',
+                        mensagem: `O utilizador "${currentUserName}" excluiu a edição "${data.title}" da Biblioteca.`,
+                        tipo: 'alerta',
+                        lido: false,
+                        created_at: new Date().toISOString()
+                      });
+                    } catch (e) {
+                      console.error("Erro ao notificar administrador no Firestore:", e);
+                    }
+                    
+                    // Exibir popup de sucesso
+                    showToast(`A ${data.title} foi excluída com sucesso!`);
+                  }
+                }}
+                className="flex-1 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs py-2 px-3 rounded-lg transition-colors cursor-pointer"
+              >
+                Confirmar Exclusão
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* DYNAMIC TOAST/POPUP NOTIFICATION */}
+      {actionNotification && (
+        <div className="fixed bottom-4 right-4 z-50 animate-in slide-in-from-bottom-5 duration-300">
+          <div className="bg-slate-900 text-white rounded-xl py-3 px-4 shadow-xl flex items-center gap-2.5 border border-slate-800">
+            <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0" />
+            <p className="text-xs font-semibold">{actionNotification.message}</p>
+          </div>
         </div>
       )}
     </div>
