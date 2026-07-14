@@ -97,7 +97,8 @@ import {
   CheckCheck,
   RefreshCw,
   Settings,
-  Palette
+  Palette,
+  TrendingUp
 } from 'lucide-react';
 import { SchoolMap } from './SchoolMap';
 import { AnalyticsModule } from './AnalyticsModule';
@@ -124,6 +125,9 @@ import {
   getCookie,
   saveSettingIfAllowed
 } from '../lib/cookies';
+import { SessionStateService, useDebouncedScroll } from '../lib/userState';
+import { useUnsavedChangesGuard } from '../lib/useUnsavedChangesGuard';
+import { User as UserIcon } from 'lucide-react';
 
 function getSavedFormDraft<T>(key: string, defaultValue: T): T {
   const saved = getCookie(key);
@@ -166,13 +170,19 @@ const DEFAULT_MODULO_ACESSOS: Record<string, { habilitado: boolean; funcionalida
   classes: { habilitado: true, funcionalidades: { visualizar: true, criar: true, editar: true, excluir: true } },
   calendario: { habilitado: true, funcionalidades: { visualizar: true, criar: true, editar: true, excluir: true } },
   pautas: { habilitado: true, funcionalidades: { visualizar: true, criar: true, editar: true, excluir: true } },
+  pauta_geral: { habilitado: true, funcionalidades: { visualizar: true, criar: true, editar: true, excluir: true } },
   processos: { habilitado: true, funcionalidades: { visualizar: true, criar: true, editar: true, excluir: true } },
   utilizadores: { habilitado: true, funcionalidades: { visualizar: true, criar: true, editar: true, excluir: true } },
   biblioteca: { habilitado: true, funcionalidades: { visualizar: true, criar: true, editar: true, excluir: true } },
+  analytics: { habilitado: true, funcionalidades: { visualizar: true, criar: true, editar: true, excluir: true } },
 };
 
 export default function TenantPortal({ currentTenantId, currentUserRole, currentUserEmail, onLogout, activeTheme, onChangeTheme, systemLang = 'pt', onChangeLanguage }: TenantPortalProps) {
   const [activeTab, setActiveTab] = useState<string>(() => getLastModule() || 'dashboard');
+  const [isFormDirty, setIsFormDirty] = useState(false);
+
+  // Unsaved changes navigation guard hook
+  const { showConfirmModal, guardAction, confirmLeave, cancelLeave } = useUnsavedChangesGuard(isFormDirty);
 
   useEffect(() => {
     saveLastModule(activeTab);
@@ -342,6 +352,43 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     return tenantUsers.find(u => u.email.trim().toLowerCase() === currentUserEmail.trim().toLowerCase());
   }, [tenantUsers, currentUserEmail]);
 
+  // Enable performance-optimized debounced scroll tracking on main content wrapper
+  useDebouncedScroll(loggedInUser?.id || null, 'main_content_area');
+
+  // Sync active module (last page/route) to Firestore
+  useEffect(() => {
+    if (loggedInUser?.id) {
+      SessionStateService.savePreference(loggedInUser.id, 'lastModule', activeTab);
+    }
+  }, [activeTab, loggedInUser?.id]);
+
+  // Load and restore form drafts and scroll position from Firestore user record (hybrid strategy)
+  useEffect(() => {
+    if (loggedInUser?.id) {
+      SessionStateService.loadUserPreferences(loggedInUser.id).then((prefs) => {
+        if (prefs.drafts) {
+          if (prefs.drafts.student) setStudentForm(prev => ({ ...prev, ...prefs.drafts.student }));
+          if (prefs.drafts.turma) setTurmaForm(prev => ({ ...prev, ...prefs.drafts.turma }));
+          if (prefs.drafts.classe) setClasseForm(prev => ({ ...prev, ...prefs.drafts.classe }));
+          if (prefs.drafts.pauta) setPautaForm(prev => ({ ...prev, ...prefs.drafts.pauta }));
+          if (prefs.drafts.processo) setProcessoForm(prev => ({ ...prev, ...prefs.drafts.processo }));
+          if (prefs.drafts.user) setUserForm(prev => ({ ...prev, ...prefs.drafts.user }));
+          if (prefs.drafts.classe_escolar) setClasseEscolarForm(prev => ({ ...prev, ...prefs.drafts.classe_escolar }));
+        }
+        
+        // Restore scroll position
+        if (prefs.scrollPosition) {
+          const container = document.getElementById('main_content_area');
+          if (container) {
+            setTimeout(() => {
+              container.scrollTop = prefs.scrollPosition;
+            }, 250);
+          }
+        }
+      }).catch(err => console.warn("[TenantPortal] Error restoring preferences and drafts:", err));
+    }
+  }, [loggedInUser?.id]);
+
   // Computed Filtered Lists based on role
   const isDocente = currentUserRole === 'docente' || loggedInUser?.tipo === 'docente';
   const isEstudante = currentUserRole === 'estudante' || loggedInUser?.tipo === 'estudante';
@@ -422,6 +469,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [isDeactivateModalOpen, setIsDeactivateModalOpen] = useState(false);
   const [studentToDeactivate, setStudentToDeactivate] = useState<Estudante | null>(null);
   const [deactivateReason, setDeactivateReason] = useState('');
+
+  // Dropout student modal state
+  const [isDropoutModalOpen, setIsDropoutModalOpen] = useState(false);
+  const [studentToDropout, setStudentToDropout] = useState<Estudante | null>(null);
+  const [dropoutReason, setDropoutReason] = useState('Abandono escolar / Desistência');
 
   // Student transfer modal state
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
@@ -584,6 +636,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalType, setModalType] = useState<string>('');
   const [editingItem, setEditingItem] = useState<any>(null);
+
+  // Declarative reset of isFormDirty when any form modal is toggled
+  useEffect(() => {
+    setIsFormDirty(false);
+  }, [isModalOpen]);
   
   // Selection and Action row states
   const [selectedTeacherIds, setSelectedTeacherIds] = useState<string[]>([]);
@@ -679,7 +736,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [studentForm, setStudentForm] = useState(() => getSavedFormDraft('draft_student', { nome: '', email: '', escola_id: '', turma_id: '', numero_matricula: '', data_nascimento: '', genero: 'Masculino' as 'Masculino' | 'Feminino', pai_id: '', faturado: false, periodo_facturacao: 'Mensal' as 'Mensal' | 'Semestral' | 'Anual' }));
   const [turmaForm, setTurmaForm] = useState(() => getSavedFormDraft('draft_turma', { nome: '', escola_id: '', ano_letivo: '2026', nivel: 'Primário', docente_id: '', capacidade_max: 30, classe_escolar_id: '' }));
   const [classeForm, setClasseForm] = useState(() => getSavedFormDraft('draft_classe', { nome: '', turma_id: '', docente_id: '', horario: '', sala: '', data: new Date().toISOString().split('T')[0], dia_semana: getDiaSemanaFromDate(new Date().toISOString().split('T')[0]) }));
-  const [pautaForm, setPautaForm] = useState(() => getSavedFormDraft('draft_pauta', { estudante_id: '', classe_id: '', trimestre: '1º Trimestre' as any, nota_prova: 10, nota_trabalho: 10, nota_participacao: 10, nota_exame: 10, nota_reavaliacao: '' as any, observacao: '' }));
+  const [pautaForm, setPautaForm] = useState(() => getSavedFormDraft('draft_pauta', { estudante_id: '', classe_id: '', trimestre: '1º Trimestre' as any, nota_prova: '' as any, nota_trabalho: '' as any, nota_participacao: '' as any, nota_exame: '' as any, nota_reavaliacao: '' as any, observacao: '' }));
+  const [selectedPautaSchoolId, setSelectedPautaSchoolId] = useState('');
+  const [pautaGeralEscolaId, setPautaGeralEscolaId] = useState('');
+  const [pautaGeralAlunoQuery, setPautaGeralAlunoQuery] = useState('');
+  const [pautaGeralEstado, setPautaGeralEstado] = useState('');
+  const [pautaGeralDateStart, setPautaGeralDateStart] = useState('');
+  const [pautaGeralDateEnd, setPautaGeralDateEnd] = useState('');
+  const [activeToast, setActiveToast] = useState<{ id: string; titulo: string; mensagem: string; tipo: string } | null>(null);
   const [processoForm, setProcessoForm] = useState(() => getSavedFormDraft('draft_processo', { estudante_id: '', tipo: 'Matrícula' as any, status: 'Solicitação' as any, documentos: [] as string[], observacao: '' }));
   const [userForm, setUserForm] = useState<{
     nome: string;
@@ -696,7 +760,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   }));
   const [classeEscolarForm, setClasseEscolarForm] = useState(() => getSavedFormDraft('draft_classe_escolar', { nome: '', nivel: 'Primário' as 'Primário' | 'Secundário' | 'Médio' | 'Pré-escolar', descricao: '' }));
   const [salaForm, setSalaForm] = useState(() => getSavedFormDraft('draft_sala', { nome: '', capacidade: 30, tipo: 'Normal', descricao: '' }));
-  const [feriasForm, setFeriasForm] = useState(() => getSavedFormDraft('draft_ferias', { descricao: '', data_inicio: new Date().toISOString().split('T')[0], data_fim: new Date().toISOString().split('T')[0] }));
+  const [feriasForm, setFeriasForm] = useState(() => getSavedFormDraft('draft_ferias', { descricao: '', turma_id: 'todas', data_inicio: new Date().toISOString().split('T')[0], data_fim: new Date().toISOString().split('T')[0] }));
 
   useEffect(() => {
     saveSettingIfAllowed('draft_ferias', JSON.stringify(feriasForm), 'formData', 24);
@@ -716,35 +780,59 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
   useEffect(() => {
     saveSettingIfAllowed('draft_teacher', JSON.stringify(teacherForm), 'formData', 24);
-  }, [teacherForm]);
+    if (loggedInUser?.id) {
+      SessionStateService.savePreference(loggedInUser.id, 'drafts', teacherForm, 'teacher');
+    }
+  }, [teacherForm, loggedInUser?.id]);
 
   useEffect(() => {
     saveSettingIfAllowed('draft_student', JSON.stringify(studentForm), 'formData', 24);
-  }, [studentForm]);
+    if (loggedInUser?.id) {
+      SessionStateService.savePreference(loggedInUser.id, 'drafts', studentForm, 'student');
+    }
+  }, [studentForm, loggedInUser?.id]);
 
   useEffect(() => {
     saveSettingIfAllowed('draft_turma', JSON.stringify(turmaForm), 'formData', 24);
-  }, [turmaForm]);
+    if (loggedInUser?.id) {
+      SessionStateService.savePreference(loggedInUser.id, 'drafts', turmaForm, 'turma');
+    }
+  }, [turmaForm, loggedInUser?.id]);
 
   useEffect(() => {
     saveSettingIfAllowed('draft_classe', JSON.stringify(classeForm), 'formData', 24);
-  }, [classeForm]);
+    if (loggedInUser?.id) {
+      SessionStateService.savePreference(loggedInUser.id, 'drafts', classeForm, 'classe');
+    }
+  }, [classeForm, loggedInUser?.id]);
 
   useEffect(() => {
     saveSettingIfAllowed('draft_pauta', JSON.stringify(pautaForm), 'formData', 24);
-  }, [pautaForm]);
+    if (loggedInUser?.id) {
+      SessionStateService.savePreference(loggedInUser.id, 'drafts', pautaForm, 'pauta');
+    }
+  }, [pautaForm, loggedInUser?.id]);
 
   useEffect(() => {
     saveSettingIfAllowed('draft_processo', JSON.stringify(processoForm), 'formData', 24);
-  }, [processoForm]);
+    if (loggedInUser?.id) {
+      SessionStateService.savePreference(loggedInUser.id, 'drafts', processoForm, 'processo');
+    }
+  }, [processoForm, loggedInUser?.id]);
 
   useEffect(() => {
     saveSettingIfAllowed('draft_user', JSON.stringify(userForm), 'formData', 24);
-  }, [userForm]);
+    if (loggedInUser?.id) {
+      SessionStateService.savePreference(loggedInUser.id, 'drafts', userForm, 'user');
+    }
+  }, [userForm, loggedInUser?.id]);
 
   useEffect(() => {
     saveSettingIfAllowed('draft_classe_escolar', JSON.stringify(classeEscolarForm), 'formData', 24);
-  }, [classeEscolarForm]);
+    if (loggedInUser?.id) {
+      SessionStateService.savePreference(loggedInUser.id, 'drafts', classeEscolarForm, 'classe_escolar');
+    }
+  }, [classeEscolarForm, loggedInUser?.id]);
 
   // Load Tenant Details and Plan Constraints
   async function loadTenantContext() {
@@ -1151,6 +1239,21 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           </button>
         )}
 
+        {hasPermission('estudantes', 'editar') && !isDeactivated && (
+          <button
+            onClick={() => {
+              setActiveActionRowId(null);
+              setStudentToDropout(s);
+              setDropoutReason('Abandono escolar / Desistência');
+              setIsDropoutModalOpen(true);
+            }}
+            className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-2 cursor-pointer"
+          >
+            <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+            Aluno Desistiu
+          </button>
+        )}
+
         {hasPermission('estudantes', 'editar') && isDeactivated && isAdminOrSuper && (
           <button
             onClick={async () => {
@@ -1454,6 +1557,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
   useEffect(() => {
     if (!currentTenantId) return;
+    const mountTime = Date.now();
     const q = query(collection(db, 'notificacoes'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list: Notificacao[] = [];
@@ -1500,6 +1604,49 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           }
         }
       });
+
+      // Handle Real-Time Push Toast alert for freshly added notifications
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === 'added') {
+          const data = change.doc.data();
+          const createdTime = data.created_at ? new Date(data.created_at).getTime() : Date.now();
+          if (createdTime > mountTime - 5000 && !data.lido) {
+            const isBelongToTenant = data.destinatario_id === currentTenantId || data.tenant_id === currentTenantId || data.destinatario_id === 'todos';
+            const isDirectMessage = loggedInUser?.id && (data.destinatario_id === loggedInUser.id || data.usuario_id === loggedInUser.id);
+            const destRole = data.destinatario_role || (data.destinatario_id === 'todos' ? 'todos' : 'admin');
+            
+            let shouldShowToast = false;
+            if (isBelongToTenant) {
+              if (isDirectMessage) {
+                shouldShowToast = true;
+              } else {
+                if (userRole === 'admin' || userRole === 'super_admin' || userRole === 'director') {
+                  if (destRole === 'admin' || destRole === 'todos') shouldShowToast = true;
+                } else if (userRole === 'docente') {
+                  if (destRole === 'docente' || destRole === 'todos') shouldShowToast = true;
+                } else if (userRole === 'estudante') {
+                  if (destRole === 'estudante' || destRole === 'todos') shouldShowToast = true;
+                } else if (destRole === userRole || destRole === 'todos') {
+                  shouldShowToast = true;
+                }
+              }
+            }
+            
+            if (shouldShowToast) {
+              setActiveToast({
+                id: change.doc.id,
+                titulo: data.titulo,
+                mensagem: data.mensagem,
+                tipo: data.tipo || 'info'
+              });
+              setTimeout(() => {
+                setActiveToast(null);
+              }, 6000);
+            }
+          }
+        }
+      });
+
       list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
       setNotifications(list);
     }, (error) => {
@@ -2207,7 +2354,23 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       } 
       
       else if (modalType === 'pauta') {
-        const average = (Number(pautaForm.nota_prova) + Number(pautaForm.nota_trabalho) + Number(pautaForm.nota_participacao)) / 3;
+        const grades: number[] = [];
+        const checkAndAddGrade = (val: any) => {
+          if (val === 0 || val === '0') {
+            grades.push(0);
+          } else if (val !== undefined && val !== null && val !== '') {
+            const num = Number(val);
+            if (!isNaN(num)) {
+              grades.push(num);
+            }
+          }
+        };
+
+        checkAndAddGrade(pautaForm.nota_prova);
+        checkAndAddGrade(pautaForm.nota_trabalho);
+        checkAndAddGrade(pautaForm.nota_participacao);
+
+        const average = grades.length > 0 ? (grades.reduce((sum, g) => sum + g, 0) / grades.length) : 0;
         const examValue = pautaForm.nota_exame !== undefined && pautaForm.nota_exame !== null && pautaForm.nota_exame !== '' ? Number(pautaForm.nota_exame) : null;
         
         let finalMedia = average;
@@ -2229,9 +2392,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
         const calculatedPauta = {
           ...pautaForm,
-          nota_prova: Number(pautaForm.nota_prova),
-          nota_trabalho: Number(pautaForm.nota_trabalho),
-          nota_participacao: Number(pautaForm.nota_participacao),
+          nota_prova: pautaForm.nota_prova !== '' && pautaForm.nota_prova !== undefined ? Number(pautaForm.nota_prova) : '',
+          nota_trabalho: pautaForm.nota_trabalho !== '' && pautaForm.nota_trabalho !== undefined ? Number(pautaForm.nota_trabalho) : '',
+          nota_participacao: pautaForm.nota_participacao !== '' && pautaForm.nota_participacao !== undefined ? Number(pautaForm.nota_participacao) : '',
           nota_exame: examValue !== null ? examValue : null,
           nota_reavaliacao: reavalValue !== null ? reavalValue : null,
           nota_media: Number(finalMedia.toFixed(2)),
@@ -2388,6 +2551,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
       setIsModalOpen(false);
       setEditingItem(null);
+      setIsFormDirty(false); // Reset dirty flag on successful submit
       loadTenantContext();
       showSystemNotification(`Operação realizada com sucesso! Registro de ${modalType} salvo.`, 'cadastro');
     } catch (err: any) {
@@ -2485,8 +2649,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     return (
       <button
         onClick={() => {
-          setActiveTab(tab);
-          setIsMobileMenuOpen(false);
+          guardAction(() => {
+            setActiveTab(tab);
+            setIsFormDirty(false); // Reset dirty state on successful navigation
+            setIsMobileMenuOpen(false);
+          });
         }}
         className={`w-full py-2.5 px-3.5 rounded-xl text-sm font-semibold flex items-center transition-all duration-200 group relative
           ${isActive 
@@ -2762,14 +2929,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           {onLogout && (
             isExpanded ? (
               <button 
-                onClick={onLogout}
+                onClick={() => guardAction(onLogout)}
                 className="w-full bg-slate-800 hover:bg-rose-950/60 hover:text-rose-200 py-2 rounded-xl font-bold text-center text-slate-300 transition-colors cursor-pointer flex items-center justify-center gap-2 shrink-0"
               >
                 <LogOut className="w-4 h-4" /> Sair da Unidade
               </button>
             ) : (
               <button 
-                onClick={onLogout}
+                onClick={() => guardAction(onLogout)}
                 className="p-2 bg-slate-800/50 hover:bg-rose-950/60 hover:text-rose-400 rounded-xl transition-colors cursor-pointer shrink-0"
                 title="Sair da Unidade"
               >
@@ -4060,10 +4227,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-slate-700 text-sm">
-                        {students.map(s => {
+                        {students.map((s, index) => {
                           const usr = tenantUsers.find(u => u.id === s.user_id);
                           const esc = schools.find(e => e.id === s.escola_id);
                           const tur = turmas.find(t => t.id === s.turma_id);
+                          const isLast = index >= students.length - 2 && students.length > 2;
                           return (
                             <tr key={s.id} className={`hover:bg-slate-50/50 ${activeActionRowId === s.id ? 'relative z-30' : ''}`}>
                               <td className="py-4 px-4 text-center">
@@ -4104,7 +4272,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                         className="fixed inset-0 z-30 bg-transparent" 
                                         onClick={() => setActiveActionRowId(null)} 
                                       />
-                                      <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xl z-40 py-1.5 text-left animate-in fade-in slide-in-from-top-1 duration-150">
+                                      <div className={`absolute right-0 w-48 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xl z-[9999] py-1.5 text-left animate-in fade-in duration-150 ${isLast ? 'bottom-full mb-1 origin-bottom-right' : 'mt-1 origin-top top-full'}`}>
                                         {renderStudentActions(s, usr)}
                                       </div>
                                     </>
@@ -5289,7 +5457,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                       const currentDateStr = getLocalYYYYMMDD(currentDayDate);
 
                                       // 1. Check Vacation/Férias
-                                      const vacation = rawVacations.find(v => currentDateStr >= v.data_inicio && currentDateStr <= v.data_fim);
+                                      const vacation = rawVacations.find(v => 
+                                        currentDateStr >= v.data_inicio && 
+                                        currentDateStr <= v.data_fim &&
+                                        (!v.turma_id || v.turma_id === 'todas' || v.turma_id === activeCalendarTurma)
+                                      );
                                       if (vacation) {
                                         return (
                                           <td key={dayIdx} className="p-3 border-r border-slate-150 last:border-r-0 text-center bg-amber-50/10">
@@ -5595,129 +5767,286 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             {activeTab === 'pauta_geral' && (
               !hasPermission('pauta_geral') ? renderRestrictedAccess('Pauta Geral') : (
                 <div className="space-y-6 animate-fadeIn">
-                  <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-4">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div>
-                      <h3 className="font-bold text-slate-800 text-lg">Pauta Geral de Rendimento Trimestral</h3>
-                      <p className="text-xs text-slate-400">Conselho de Notas consolidado por disciplina em tempo real.</p>
-                    </div>
-                    {turmas.length > 0 && (
-                      <div className="flex items-center gap-2 self-start sm:self-center">
-                        <span className="text-xs text-slate-500 font-bold">Filtrar Turma:</span>
-                        <select 
-                          id="pautageral_turma_filter"
-                          className="bg-slate-100 border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                          onChange={(e) => setSelectedTurmaFilter(e.target.value)}
-                          value={selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter}
-                        >
-                          {turmas.map(t => (
-                            <option key={t.id} value={t.id}>{t.nome}</option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
-                  </div>
+                  {/* KPI CARDS */}
+                  {(() => {
+                    // Compute filtered grades
+                    const filteredPautas = pautas.filter(p => {
+                      const student = students.find(s => s.id === p.estudante_id);
+                      if (!student) return false;
 
-                  {turmas.length === 0 ? (
-                    <div className="p-8 text-center text-slate-400">
-                      Nenhuma turma cadastrada para gerar a Pauta Geral.
-                    </div>
-                  ) : (
-                    <div className="overflow-x-auto border border-slate-100 rounded-2xl">
-                      <table className="w-full text-left border-collapse text-xs min-w-[800px]">
-                        <thead>
-                          <tr className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
-                            <th className="p-4 w-52">Nome do Estudante</th>
-                            {classes.filter(c => c.turma_id === (selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter)).map(c => (
-                              <th key={c.id} className="p-4 text-center">{c.nome}</th>
-                            ))}
-                            {classes.filter(c => c.turma_id === (selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter)).length === 0 && (
-                              <th className="p-4 text-center text-slate-400">Sem disciplinas associadas</th>
-                            )}
-                            <th className="p-4 text-center font-bold bg-indigo-50/50 text-indigo-950 w-24">Média Geral</th>
-                            <th className="p-4 text-right w-32">Situação Geral</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {students.filter(s => s.turma_id === (selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter)).length === 0 ? (
-                            <tr>
-                              <td colSpan={10} className="p-8 text-center text-slate-400 font-sans">
-                                Nenhum estudante matriculado nesta turma para exibição de boletim consolidado.
-                              </td>
-                            </tr>
-                          ) : (
-                            students.filter(s => s.turma_id === (selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter)).map(st => {
-                              const activeTurmaDisciplines = classes.filter(c => c.turma_id === st.turma_id);
-                              
-                              let sumOfMedias = 0;
-                              let countOfDisciplines = 0;
+                      // 1. School Filter
+                      if (pautaGeralEscolaId && student.escola_id !== pautaGeralEscolaId) return false;
 
-                              return (
-                                <tr key={st.id} className="hover:bg-slate-50/50 transition-colors">
-                                  <td className="p-4 font-bold text-slate-800">{st.nome}</td>
-                                  
-                                  {activeTurmaDisciplines.map(disc => {
-                                    // Find student's grade (pauta) in this specific discipline/classe
-                                    const stdGrade = pautas.find(p => p.estudante_id === st.id && p.classe_id === disc.id);
-                                    const media = stdGrade ? stdGrade.nota_media : null;
-                                    
-                                    if (media !== null) {
-                                      sumOfMedias += media;
-                                      countOfDisciplines++;
-                                    }
+                      // 2. Student Query Filter
+                      if (pautaGeralAlunoQuery) {
+                        const term = pautaGeralAlunoQuery.toLowerCase();
+                        if (!student.nome.toLowerCase().includes(term) && !(student.numero_matricula || '').toLowerCase().includes(term)) {
+                          return false;
+                        }
+                      }
+
+                      // 3. Status Filter
+                      if (pautaGeralEstado) {
+                        const sLower = p.situacao?.toLowerCase() || '';
+                        if (pautaGeralEstado === 'aprovado' && sLower !== 'aprovado') return false;
+                        if (pautaGeralEstado === 'reprovado' && sLower !== 'reprovado') return false;
+                        if (pautaGeralEstado === 'recuperacao' && sLower !== 'recuperação' && sLower !== 'recuperacao' && sLower !== 'admitido') return false;
+                      }
+
+                      // 4. Date Range Filter
+                      if (pautaGeralDateStart && (!p.data_lancamento || p.data_lancamento < pautaGeralDateStart)) return false;
+                      if (pautaGeralDateEnd && (!p.data_lancamento || p.data_lancamento > pautaGeralDateEnd)) return false;
+
+                      return true;
+                    });
+
+                    const totalLancamentos = filteredPautas.length;
+                    const totalAprovados = filteredPautas.filter(p => p.situacao === 'Aprovado').length;
+                    const totalReprovados = filteredPautas.filter(p => p.situacao === 'Reprovado').length;
+                    const totalRecuperacao = filteredPautas.filter(p => p.situacao === 'Recuperação' || p.situacao === 'Recuperação').length;
+                    
+                    const percentAprovado = totalLancamentos > 0 ? ((totalAprovados / totalLancamentos) * 100).toFixed(0) : '0';
+                    const listMedias = filteredPautas.map(p => p.nota_media).filter(m => m !== undefined && m !== null);
+                    const mediaGeralGeral = listMedias.length > 0 ? (listMedias.reduce((acc, current) => acc + current, 0) / listMedias.length).toFixed(1) : '0.0';
+
+                    return (
+                      <>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                          <div className="bg-white p-4 rounded-2xl border border-slate-200/60 shadow-3xs flex items-center gap-4">
+                            <div className="p-3 bg-indigo-50 rounded-xl text-indigo-600">
+                              <Award className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total de Notas</p>
+                              <p className="text-xl font-black text-slate-800">{totalLancamentos}</p>
+                            </div>
+                          </div>
+
+                          <div className="bg-white p-4 rounded-2xl border border-slate-200/60 shadow-3xs flex items-center gap-4">
+                            <div className="p-3 bg-emerald-50 rounded-xl text-emerald-600">
+                              <CheckCircle className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Taxa de Aprovação</p>
+                              <p className="text-xl font-black text-slate-800">{percentAprovado}% <span className="text-xs font-semibold text-slate-400">({totalAprovados})</span></p>
+                            </div>
+                          </div>
+
+                          <div className="bg-white p-4 rounded-2xl border border-slate-200/60 shadow-3xs flex items-center gap-4">
+                            <div className="p-3 bg-rose-50 rounded-xl text-rose-600">
+                              <XCircle className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Reprovados / Excluídos</p>
+                              <p className="text-xl font-black text-slate-800">{totalReprovados} <span className="text-xs font-semibold text-slate-400">alunos</span></p>
+                            </div>
+                          </div>
+
+                          <div className="bg-white p-4 rounded-2xl border border-slate-200/60 shadow-3xs flex items-center gap-4">
+                            <div className="p-3 bg-amber-50 rounded-xl text-amber-600">
+                              <TrendingUp className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Média Geral</p>
+                              <p className="text-xl font-black text-slate-800">{mediaGeralGeral} <span className="text-xs font-semibold text-slate-400">valores</span></p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* FILTERS PANEL */}
+                        <div className="bg-white p-5 rounded-2xl border border-slate-200/60 shadow-xs space-y-4">
+                          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                            <div>
+                              <h3 className="font-extrabold text-slate-800 text-sm">Filtros da Pauta Geral</h3>
+                              <p className="text-[10px] text-slate-400">Filtre as notas consolidadas de todas as escolas do sistema em tempo real.</p>
+                            </div>
+                            <button
+                              onClick={() => {
+                                setPautaGeralEscolaId('');
+                                setPautaGeralAlunoQuery('');
+                                setPautaGeralEstado('');
+                                setPautaGeralDateStart('');
+                                setPautaGeralDateEnd('');
+                              }}
+                              className="text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors"
+                            >
+                              Limpar Filtros
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                            {/* Escola Dropdown */}
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Escola de Origem</label>
+                              <select
+                                value={pautaGeralEscolaId}
+                                onChange={(e) => setPautaGeralEscolaId(e.target.value)}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold text-slate-700"
+                              >
+                                <option value="">✨ Todas as Escolas</option>
+                                {schools.map(s => (
+                                  <option key={s.id} value={s.id}>{s.nome}</option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Aluno Input Search */}
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Estudante (Nome/Matrícula)</label>
+                              <input
+                                type="text"
+                                placeholder="Buscar aluno..."
+                                value={pautaGeralAlunoQuery}
+                                onChange={(e) => setPautaGeralAlunoQuery(e.target.value)}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold text-slate-700"
+                              />
+                            </div>
+
+                            {/* Estado Dropdown */}
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Estado de Aproveitamento</label>
+                              <select
+                                value={pautaGeralEstado}
+                                onChange={(e) => setPautaGeralEstado(e.target.value)}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold text-slate-700"
+                              >
+                                <option value="">🌟 Todos os Estados</option>
+                                <option value="aprovado">🟢 Aprovado</option>
+                                <option value="reprovado">🔴 Reprovado</option>
+                                <option value="recuperacao">🟡 Recuperação / Admitido</option>
+                              </select>
+                            </div>
+
+                            {/* Intervalo Data Inicio */}
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Lançado Desde</label>
+                              <input
+                                type="date"
+                                value={pautaGeralDateStart}
+                                onChange={(e) => setPautaGeralDateStart(e.target.value)}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold text-slate-700"
+                              />
+                            </div>
+
+                            {/* Intervalo Data Fim */}
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Lançado Até</label>
+                              <input
+                                type="date"
+                                value={pautaGeralDateEnd}
+                                onChange={(e) => setPautaGeralDateEnd(e.target.value)}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold text-slate-700"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* DATA TABLE */}
+                        <div className="bg-white rounded-2xl border border-slate-200/60 shadow-xs overflow-hidden">
+                          <div className="p-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+                            <span className="text-xs font-bold text-slate-500">
+                              Exibindo {filteredPautas.length} de {pautas.length} registros de notas
+                            </span>
+                          </div>
+
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left border-collapse text-xs min-w-[900px]">
+                              <thead>
+                                <tr className="bg-slate-50/50 text-slate-500 font-bold border-b border-slate-200 text-[10px] uppercase tracking-wider">
+                                  <th className="p-4">Estudante</th>
+                                  <th className="p-4">Escola / Local</th>
+                                  <th className="p-4">Turma / Período</th>
+                                  <th className="p-4">Disciplina</th>
+                                  <th className="p-4 text-center">Trimestre</th>
+                                  <th className="p-4 text-center">Provas</th>
+                                  <th className="p-4 text-center">Trabalhos</th>
+                                  <th className="p-4 text-center">Participação</th>
+                                  <th className="p-4 text-center">Exame / Reaval.</th>
+                                  <th className="p-4 text-center font-bold text-indigo-900 bg-indigo-50/10">Média Final</th>
+                                  <th className="p-4 text-right">Situação</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 font-sans">
+                                {filteredPautas.length === 0 ? (
+                                  <tr>
+                                    <td colSpan={11} className="p-8 text-center text-slate-400 font-semibold">
+                                      Nenhuma nota correspondente aos filtros foi encontrada na base de dados.
+                                    </td>
+                                  </tr>
+                                ) : (
+                                  filteredPautas.map(p => {
+                                    const student = students.find(s => s.id === p.estudante_id);
+                                    const school = student ? schools.find(sch => sch.id === student.escola_id) : null;
+                                    const turma = student ? turmas.find(t => t.id === student.turma_id) : null;
+                                    const discipline = classes.find(c => c.id === p.classe_id);
 
                                     return (
-                                      <td key={disc.id} className="p-4 text-center">
-                                        {media !== null ? (
-                                          <span className={`font-mono font-bold ${media < 10 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                                            {media.toFixed(1)} MZN
+                                      <tr key={p.id} className="hover:bg-slate-50/40 transition-colors">
+                                        <td className="p-4">
+                                          <p className="font-extrabold text-slate-800">{student?.nome || 'Estudante não encontrado'}</p>
+                                          <p className="text-[9px] text-slate-400 font-mono">MAT: {student?.numero_matricula || 'N/D'}</p>
+                                        </td>
+                                        <td className="p-4">
+                                          <p className="font-bold text-slate-700">{school?.nome || 'Sem Escola'}</p>
+                                          <p className="text-[9px] text-slate-400">{school?.endereco || 'Sem Endereço'}</p>
+                                        </td>
+                                        <td className="p-4">
+                                          <p className="font-bold text-slate-700">{turma?.nome || 'Sem Turma'}</p>
+                                          <p className="text-[9px] text-slate-400">{turma?.ano_letivo || '2026'}</p>
+                                        </td>
+                                        <td className="p-4">
+                                          <span className="bg-slate-100 text-slate-800 px-2 py-0.5 rounded-md font-bold">
+                                            {discipline?.nome || 'Disciplina Geral'}
                                           </span>
-                                        ) : (
-                                          <span className="text-slate-300 font-mono">-</span>
-                                        )}
-                                      </td>
+                                        </td>
+                                        <td className="p-4 text-center font-bold text-slate-600">
+                                          {p.trimestre}
+                                        </td>
+                                        <td className="p-4 text-center font-mono font-bold text-slate-700">
+                                          {p.nota_prova !== undefined && p.nota_prova !== null && p.nota_prova !== '' ? p.nota_prova : '-'}
+                                        </td>
+                                        <td className="p-4 text-center font-mono font-bold text-slate-700">
+                                          {p.nota_trabalho !== undefined && p.nota_trabalho !== null && p.nota_trabalho !== '' ? p.nota_trabalho : '-'}
+                                        </td>
+                                        <td className="p-4 text-center font-mono font-bold text-slate-700">
+                                          {p.nota_participacao !== undefined && p.nota_participacao !== null && p.nota_participacao !== '' ? p.nota_participacao : '-'}
+                                        </td>
+                                        <td className="p-4 text-center">
+                                          <p className="font-mono font-bold text-slate-700">{p.nota_exame !== undefined && p.nota_exame !== null && p.nota_exame !== '' ? p.nota_exame : '-'}</p>
+                                          {p.nota_reavaliacao !== undefined && p.nota_reavaliacao !== null && p.nota_reavaliacao !== '' && (
+                                            <p className="text-[9px] text-amber-600 font-bold font-mono">RE: {p.nota_reavaliacao}</p>
+                                          )}
+                                        </td>
+                                        <td className="p-4 text-center font-black font-mono bg-indigo-50/10 text-indigo-950 text-xs">
+                                          {p.nota_media !== undefined && p.nota_media !== null ? p.nota_media.toFixed(1) : '-'}
+                                        </td>
+                                        <td className="p-4 text-right">
+                                          {p.situacao === 'Aprovado' ? (
+                                            <span className="bg-emerald-50 text-emerald-700 text-[9px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider">
+                                              Aprovado
+                                            </span>
+                                          ) : p.situacao === 'Reprovado' ? (
+                                            <span className="bg-rose-50 text-rose-700 text-[9px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider">
+                                              Reprovado
+                                            </span>
+                                          ) : (
+                                            <span className="bg-amber-50 text-amber-700 text-[9px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider">
+                                              Recuperação
+                                            </span>
+                                          )}
+                                        </td>
+                                      </tr>
                                     );
-                                  })}
-
-                                  {activeTurmaDisciplines.length === 0 && (
-                                    <td className="p-4 text-center text-slate-400">-</td>
-                                  )}
-
-                                  {/* Consolidated Media */}
-                                  <td className="p-4 text-center bg-indigo-50/30 font-bold font-mono text-indigo-900">
-                                    {countOfDisciplines > 0 ? (sumOfMedias / countOfDisciplines).toFixed(1) : '-'}
-                                  </td>
-
-                                  {/* Status */}
-                                  <td className="p-4 text-right">
-                                    {countOfDisciplines > 0 ? (
-                                      (sumOfMedias / countOfDisciplines) >= 10 ? (
-                                        <span className="bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-1 rounded-full uppercase">
-                                          Aprovado
-                                        </span>
-                                      ) : (sumOfMedias / countOfDisciplines) >= 7.5 ? (
-                                        <span className="bg-amber-50 text-amber-700 text-[10px] font-bold px-2 py-1 rounded-full uppercase">
-                                          Admitido
-                                        </span>
-                                      ) : (
-                                        <span className="bg-rose-50 text-rose-700 text-[10px] font-bold px-2 py-1 rounded-full uppercase">
-                                          Excluído
-                                        </span>
-                                      )
-                                    ) : (
-                                      <span className="text-slate-400 text-[10px]">Sem Notas</span>
-                                    )}
-                                  </td>
-                                </tr>
-                              );
-                            })
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
+                                  })
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
-              </div>
               )
             )}
 
@@ -7245,6 +7574,201 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         </div>
       )}
 
+      {/* MODAL: ESTUDANTE DESISTIU */}
+      {isDropoutModalOpen && studentToDropout && (
+        <div className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs flex items-center justify-center p-4 z-[200000] overflow-y-auto pointer-events-auto text-slate-800">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-150 dark:border-slate-800 text-xs animate-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-2 mb-4">
+              <AlertTriangle className="w-5 h-5 text-rose-500" />
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Registrar Desistência do Aluno</h3>
+            </div>
+
+            <p className="text-slate-600 dark:text-slate-400 mb-4 font-semibold leading-relaxed">
+              Tem certeza que deseja registrar a desistência definitiva dos estudos para o(a) estudante <span className="text-rose-600 font-extrabold">{tenantUsers.find(u => u.id === studentToDropout.user_id)?.nome || 'Estudante'}</span>? 
+              <br />
+              <span className="text-rose-500 font-bold block mt-2 text-[10px] uppercase">⚠️ Esta ação irá suspender permanentemente o acesso do aluno ao sistema e notificar a Direção, Professores e Encarregados.</span>
+            </p>
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setIsSaving(true);
+                try {
+                  const s = studentToDropout;
+                  const user_id = s.user_id;
+                  const studName = tenantUsers.find(u => u.id === user_id)?.nome || 'Estudante';
+                  const studentTurma = turmas.find(t => t.id === s.turma_id);
+
+                  // 1. Update Student Record
+                  await updateDoc(doc(db, 'estudantes', s.id), {
+                    ativo: false,
+                    motivo_desativacao: dropoutReason,
+                    desativado_em: new Date().toISOString(),
+                    desativado_por: loggedInUser?.nome || 'Admin',
+                    desistiu: true
+                  });
+
+                  // 2. Suspend Student User account access
+                  if (user_id) {
+                    await updateDoc(doc(db, 'users', user_id), {
+                      ativo: false,
+                      suspenso_motivo: `Desistência de estudos registrada em ${new Date().toLocaleDateString('pt-MZ')}`
+                    });
+                  }
+
+                  // 3. Add Historical Entry in processes
+                  await addDoc(collection(db, 'processos_aluno'), {
+                    estudante_id: s.id,
+                    tipo: 'Desistência',
+                    detalhes: `Desistência oficial registrada. Motivo: ${dropoutReason}`,
+                    criado_em: new Date().toISOString(),
+                    criado_por: loggedInUser?.nome || 'Admin'
+                  });
+
+                  // 4. Log Audit
+                  await tenantAuditLog(
+                    "Estudante Desistiu",
+                    "Estudante",
+                    s.id,
+                    `Aluno ${studName} registrado como desistente. Motivo: ${dropoutReason}`
+                  );
+
+                  // 5. Send in-app and email notifications to Administrators
+                  await addDoc(collection(db, 'notificacoes'), {
+                    tenant_id: currentTenantId,
+                    destinatario_id: 'admin',
+                    destinatario_role: 'admin',
+                    titulo: `⚠️ Alerta: Desistência de Aluno - ${studName}`,
+                    mensagem: `O(A) estudante "${studName}" (Matrícula: ${s.numero_matricula}) foi registrado(a) como desistente dos estudos. Acesso ao sistema suspenso.`,
+                    tipo: 'alerta',
+                    lido: false,
+                    created_at: new Date().toISOString()
+                  });
+
+                  const admins = tenantUsers.filter(u => u.tipo === 'admin' || u.tipo === 'director');
+                  for (const admin of admins) {
+                    if (admin.email) {
+                      await queueOrSendEmail(
+                        admin.email,
+                        `⚠️ Alerta: Desistência de Aluno - ${studName}`,
+                        `Prezado(a) Administrador(a),\n\nInformamos que o(a) estudante "${studName}" (Nº Matrícula: ${s.numero_matricula}) desistiu oficialmente dos estudos. O acesso deste aluno ao portal escolar foi suspenso automaticamente.\n\nAtenciosamente,\nPortal SGE`
+                      );
+                    }
+                    if (admin.id !== loggedInUser?.id) {
+                      await addDoc(collection(db, 'notificacoes'), {
+                        tenant_id: currentTenantId,
+                        destinatario_id: admin.id,
+                        titulo: `⚠️ Desistência de Aluno - ${studName}`,
+                        mensagem: `O(A) estudante "${studName}" (Matrícula: ${s.numero_matricula}) foi registrado(a) como desistente dos estudos.`,
+                        tipo: 'alerta',
+                        lido: false,
+                        created_at: new Date().toISOString()
+                      });
+                    }
+                  }
+
+                  // 6. Send in-app and email notifications to Teachers/Docentes of the student's Turma
+                  const studentClasses = classes.filter(c => c.turma_id === s.turma_id);
+                  const teacherIds = Array.from(new Set(studentClasses.map(c => c.docente_id).filter(Boolean)));
+                  for (const teacherId of teacherIds) {
+                    const teacherObj = rawTeachers.find(t => t.id === teacherId);
+                    if (teacherObj) {
+                      const teacherUser = tenantUsers.find(u => u.id === teacherObj.user_id);
+                      if (teacherUser) {
+                        if (teacherUser.email) {
+                          await queueOrSendEmail(
+                            teacherUser.email,
+                            `📢 Notificação Pedagógica: Desistência de Aluno - ${studName}`,
+                            `Estimado(a) Docente,\n\nInformamos que o(a) estudante "${studName}" da turma "${studentTurma?.nome || 'Turma'}", para a qual leciona, foi registrado(a) no sistema como desistente dos estudos. Por favor, desconsidere-o nas próximas avaliações e pautas.\n\nAtenciosamente,\nSGE`
+                          );
+                        }
+                        await addDoc(collection(db, 'notificacoes'), {
+                          tenant_id: currentTenantId,
+                          destinatario_id: teacherUser.id,
+                          titulo: `📢 Desistência de Aluno - ${studName}`,
+                          mensagem: `O(A) estudante "${studName}" da sua turma foi registrado(a) como desistente dos estudos.`,
+                          tipo: 'info',
+                          lido: false,
+                          created_at: new Date().toISOString()
+                        });
+                      }
+                    }
+                  }
+
+                  // 7. Send in-app and email notifications to Parents/Encarregados
+                  const parentUser = tenantUsers.find(u => u.id === s.pai_id);
+                  if (parentUser) {
+                    if (parentUser.email) {
+                      await queueOrSendEmail(
+                        parentUser.email,
+                        `⚠️ Comunicado Oficial: Desistência de Estudos - ${studName}`,
+                        `Estimado(a) Encarregado(a) de Educação,\n\nConfirmamos o registro no SGE de que o(a) estudante "${studName}" desistiu dos estudos nesta instituição. De acordo com os procedimentos internos, o acesso do estudante ao portal escolar foi suspenso.\n\nSe esta informação estiver incorreta ou desejar reverter este processo, por favor dirija-se à secretaria escolar de imediato.\n\nAtenciosamente,\nDireção Pedagógica`
+                      );
+                    }
+                    await addDoc(collection(db, 'notificacoes'), {
+                      tenant_id: currentTenantId,
+                      destinatario_id: parentUser.id,
+                      titulo: `⚠️ Desistência de Estudos - ${studName}`,
+                      mensagem: `O registro do(a) seu(sua) educando(a) "${studName}" foi alterado para desistente e o acesso dele foi suspenso.`,
+                      tipo: 'alerta',
+                      lido: false,
+                      created_at: new Date().toISOString()
+                    });
+                  }
+
+                  // Show 6-second popup notification (Rule 3)
+                  const popup = document.createElement('div');
+                  popup.className = 'fixed bottom-5 right-5 bg-rose-600 text-white font-bold text-xs px-4 py-3 rounded-xl shadow-2xl border border-rose-500 z-50 flex items-center gap-2 animate-bounce';
+                  popup.innerHTML = `⚠️ Registro de desistência para ${studName} efetuado com sucesso!`;
+                  document.body.appendChild(popup);
+                  setTimeout(() => popup.remove(), 6000);
+
+                  setIsDropoutModalOpen(false);
+                  loadTenantContext();
+                } catch (err: any) {
+                  console.error("Error processing dropout:", err);
+                  showSystemNotification(`Erro ao registrar desistência: ${err.message}`, 'erro');
+                } finally {
+                  setIsSaving(false);
+                }
+              }}
+              className="space-y-4"
+            >
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 mb-1">Motivo / Observações da Desistência</label>
+                <select
+                  value={dropoutReason}
+                  onChange={(e) => setDropoutReason(e.target.value)}
+                  required
+                  className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="Abandono escolar / Desistência">Abandono escolar / Desistência</option>
+                  <option value="Mudança de residência / Província">Mudança de residência / Província</option>
+                  <option value="Dificuldades financeiras">Dificuldades financeiras</option>
+                  <option value="Motivos pessoais / Força maior">Motivos pessoais / Força maior</option>
+                </select>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsDropoutModalOpen(false)}
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-4 py-2 rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="bg-rose-600 hover:bg-rose-500 text-white font-extrabold px-4 py-2 rounded-xl cursor-pointer transition-all"
+                >
+                  Confirmar Desistência
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* MODAL: TRANSFERIR ESTUDANTE */}
       {isTransferModalOpen && studentToTransfer && (
         <div className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto pointer-events-auto text-slate-800">
@@ -7436,14 +7960,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 <label className="block text-[10px] font-bold text-slate-500 mb-1">Turma de Destino</label>
                 <select
                   value={transferTurmaId}
-                  disabled={!transferClasseEscolarId}
+                  disabled={!transferEscolaId}
                   onChange={(e) => setTransferTurmaId(e.target.value)}
                   required
                   className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
                 >
                   <option value="">Selecione Turma...</option>
                   {turmas
-                    .filter(t => t.escola_id === transferEscolaId && t.classe_escolar_id === transferClasseEscolarId)
+                    .filter(t => t.escola_id === transferEscolaId && (!transferClasseEscolarId || t.classe_escolar_id === transferClasseEscolarId))
                     .map(t => (
                       <option key={t.id} value={t.id}>{t.nome}</option>
                     ))}
@@ -7787,23 +8311,49 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               <div className="bg-white dark:bg-slate-900 border border-slate-100 p-5 rounded-2xl space-y-3">
                 <h4 className="font-bold text-slate-900 dark:text-white border-b border-slate-100 pb-2">Histórico do Aluno & Ocorrências</h4>
                 
-                <div className="space-y-3 relative before:absolute before:left-3 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-100">
-                  {processos
-                    .filter(p => p.estudante_id === selectedProcessStudent.id)
-                    .map(p => (
-                      <div key={p.id} className="pl-6 relative">
+                <div className="space-y-4 relative before:absolute before:left-3 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-100">
+                  {(() => {
+                    const studentPautas = pautas.filter(p => p.estudante_id === selectedProcessStudent.id);
+                    const studentEvents = processos.filter(p => p.estudante_id === selectedProcessStudent.id);
+                    
+                    const activities = [
+                      ...studentEvents.map(p => ({
+                        id: p.id,
+                        tipo: p.tipo || 'Ocorrência',
+                        descricao: p.observacao || p.detalhes || 'Nenhum detalhe informado',
+                        data: p.data || p.criado_em,
+                        autor: p.criador_nome || p.criado_por || 'Secretaria Escolar'
+                      })),
+                      ...studentPautas.map(p => {
+                        const discName = classes.find(c => c.id === p.classe_id)?.nome || 'Cadeira Curricular';
+                        return {
+                          id: p.id,
+                          tipo: '📊 Lançamento de Nota',
+                          descricao: `Nota publicada para a disciplina "${discName}" (${p.trimestre}). Média Final: ${p.nota_media} valores (${p.situacao}).`,
+                          data: p.data_lancamento || p.criado_em || new Date().toISOString(),
+                          autor: 'Corpo Docente'
+                        };
+                      })
+                    ];
+
+                    const sortedActivities = activities.sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime());
+
+                    if (sortedActivities.length === 0) {
+                      return <p className="text-center text-slate-400 py-2">Nenhum evento histórico registrado no processo.</p>;
+                    }
+
+                    return sortedActivities.map(act => (
+                      <div key={act.id} className="pl-6 relative">
                         <div className="absolute left-[9px] top-1.5 w-2.5 h-2.5 rounded-full bg-indigo-500 border-2 border-white dark:border-slate-900" />
                         <div className="flex items-center justify-between">
-                          <span className="font-black text-slate-900 dark:text-white uppercase text-[9px]">{p.tipo}</span>
-                          <span className="text-[9px] text-slate-500">{new Date(p.data || p.criado_em).toLocaleDateString('pt-BR')}</span>
+                          <span className="font-black text-slate-900 dark:text-white uppercase text-[9px]">{act.tipo}</span>
+                          <span className="text-[9px] text-slate-500">{new Date(act.data).toLocaleDateString('pt-PT')}</span>
                         </div>
-                        <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1">{p.observacao || p.detalhes}</p>
-                        <p className="text-[9px] text-slate-400 mt-0.5 font-mono font-medium">Lançado por: {p.criador_nome || p.criado_por || 'Sistema'}</p>
+                        <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1">{act.descricao}</p>
+                        <p className="text-[9px] text-slate-400 mt-0.5 font-mono font-medium">Lançado por: {act.autor}</p>
                       </div>
-                    ))}
-                  {processos.filter(p => p.estudante_id === selectedProcessStudent.id).length === 0 && (
-                    <p className="text-center text-slate-400 py-2">Nenhum evento histórico registrado no processo.</p>
-                  )}
+                    ));
+                  })()}
                 </div>
 
                 {/* Add Custom Note Form */}
@@ -7909,7 +8459,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 : `${editingItem ? 'Editar Registro' : 'Novo Lançamento'} (${modalType.toUpperCase()})`}
             </h3>
             
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleSubmit} onChange={() => setIsFormDirty(true)} className="space-y-4">
               
               {/* PROVINCIA FORM */}
               {modalType === 'provincia' && (
@@ -8202,9 +8752,20 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       <label className="block text-xs font-bold text-slate-500 mb-1">Escola</label>
                       <select 
                         value={studentForm.escola_id}
-                        onChange={(e) => setStudentForm({ ...studentForm, escola_id: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
+                        disabled={!!editingItem}
+                        onChange={(e) => {
+                          const schId = e.target.value;
+                          const schoolTurmas = turmas.filter(t => t.escola_id === schId);
+                          setStudentForm({ 
+                            ...studentForm, 
+                            escola_id: schId,
+                            turma_id: schoolTurmas[0]?.id || ''
+                          });
+                        }}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 disabled:opacity-70 disabled:cursor-not-allowed font-bold"
+                        required
                       >
+                        <option value="">-- Selecionar Escola --</option>
                         {schools.map(s => (
                           <option key={s.id} value={s.id}>{s.nome}</option>
                         ))}
@@ -8214,15 +8775,25 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       <label className="block text-xs font-bold text-slate-500 mb-1">Turma Destino</label>
                       <select 
                         value={studentForm.turma_id}
+                        disabled={!!editingItem || !studentForm.escola_id}
                         onChange={(e) => setStudentForm({ ...studentForm, turma_id: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 disabled:opacity-70 disabled:cursor-not-allowed font-bold"
+                        required
                       >
-                        {turmas.map(t => (
-                          <option key={t.id} value={t.id}>{t.nome}</option>
-                        ))}
+                        <option value="">-- Selecionar Turma --</option>
+                        {turmas
+                          .filter(t => t.escola_id === studentForm.escola_id)
+                          .map(t => (
+                            <option key={t.id} value={t.id}>{t.nome}</option>
+                          ))}
                       </select>
                     </div>
                   </div>
+                  {!!editingItem && (
+                    <p className="text-[10px] text-amber-600 font-medium">
+                      ⚠️ A escola e a turma não podem ser alteradas diretamente no cadastro. Use a funcionalidade de <strong>Transferência de Aluno</strong>.
+                    </p>
+                  )}
 
                   <div className="border-t border-slate-100 pt-4 grid grid-cols-2 gap-4 items-center">
                     <div className="flex items-center gap-2">
@@ -8272,35 +8843,58 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Ano Letivo</label>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Ano Letivo (Auto-selecionado)</label>
                       <input 
                         type="text"
-                        required
-                        value={turmaForm.ano_letivo}
-                        onChange={(e) => setTurmaForm({ ...turmaForm, ano_letivo: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
+                        readOnly
+                        value={turmaForm.ano_letivo || '2026'}
+                        className="w-full bg-slate-100 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-500 font-bold cursor-not-allowed font-mono"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Nível de Ensino</label>
-                      <input 
-                        type="text"
-                        required
-                        value={turmaForm.nivel}
-                        onChange={(e) => setTurmaForm({ ...turmaForm, nivel: e.target.value })}
-                        placeholder="Ex: Primário"
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
-                      />
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Nível Acadêmico</label>
+                      <select 
+                        value={['Primário', 'Secundário', 'Formação profissional/Instituto', 'Universitário'].includes(turmaForm.nivel) ? turmaForm.nivel : (turmaForm.nivel ? 'Outro' : 'Primário')}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === 'Outro') {
+                            setTurmaForm({ ...turmaForm, nivel: '' });
+                          } else {
+                            setTurmaForm({ ...turmaForm, nivel: val });
+                          }
+                        }}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 font-bold"
+                      >
+                        <option value="Primário">Primário</option>
+                        <option value="Secundário">Secundário</option>
+                        <option value="Formação profissional/Instituto">Formação profissional/Instituto</option>
+                        <option value="Universitário">Universitário</option>
+                        <option value="Outro">Outro (Especificar...)</option>
+                      </select>
+
+                      {!['Primário', 'Secundário', 'Formação profissional/Instituto', 'Universitário'].includes(turmaForm.nivel) && (
+                        <div className="mt-1.5 animate-in fade-in slide-in-from-top-1 duration-200">
+                          <input 
+                            type="text"
+                            required
+                            value={turmaForm.nivel}
+                            onChange={(e) => setTurmaForm({ ...turmaForm, nivel: e.target.value })}
+                            placeholder="Especificar nível académico..."
+                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs"
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Professor Diretor/Titular</label>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Diretor de Turma</label>
                       <select 
                         value={turmaForm.docente_id}
                         onChange={(e) => setTurmaForm({ ...turmaForm, docente_id: e.target.value })}
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
                       >
+                        <option value="">-- Selecionar Diretor --</option>
                         {teachers.map(t => {
                           const usr = tenantUsers.find(u => u.id === t.user_id);
                           return (
@@ -8321,12 +8915,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     </div>
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">Escola de Alocação</label>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Escola</label>
                     <select 
                       value={turmaForm.escola_id}
                       onChange={(e) => setTurmaForm({ ...turmaForm, escola_id: e.target.value })}
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
                     >
+                      <option value="">-- Selecionar Escola --</option>
                       {schools.map(s => (
                         <option key={s.id} value={s.id}>{s.nome}</option>
                       ))}
@@ -8338,44 +8933,123 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               {/* CLASSE FORM */}
               {modalType === 'classe' && (
                 <>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">Nome da Matéria/Disciplina</label>
-                    <select 
-                      value={["Matemática", "Língua Portuguesa", "Física", "Química", "História", "Geografia", "Biologia", "Educação Física", "Artes", "Inglês"].includes(classeForm.nome) || !classeForm.nome ? classeForm.nome : "Custom"}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val === "Custom") {
-                          setClasseForm({ ...classeForm, nome: "" });
-                        } else {
-                          setClasseForm({ ...classeForm, nome: val });
-                        }
-                      }}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 mb-2 focus:ring-1 focus:ring-indigo-500"
-                    >
-                      <option value="">-- Selecionar Disciplina --</option>
-                      <option value="Matemática">Matemática</option>
-                      <option value="Língua Portuguesa">Língua Portuguesa</option>
-                      <option value="Física">Física</option>
-                      <option value="Química">Química</option>
-                      <option value="História">História</option>
-                      <option value="Geografia">Geografia</option>
-                      <option value="Biologia">Biologia</option>
-                      <option value="Educação Física">Educação Física</option>
-                      <option value="Artes">Artes</option>
-                      <option value="Inglês">Inglês</option>
-                      <option value="Custom">Outra (Digitar...)</option>
-                    </select>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Nome da Matéria/Disciplina</label>
+                      <select 
+                        value={["Matemática", "Língua Portuguesa", "Física", "Química", "História", "Geografia", "Biologia", "Educação Física", "Artes", "Inglês"].includes(classeForm.nome) || !classeForm.nome ? classeForm.nome : "Custom"}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === "Custom") {
+                            setClasseForm({ ...classeForm, nome: "" });
+                          } else {
+                            setClasseForm({ ...classeForm, nome: val });
+                          }
+                        }}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 mb-2 focus:ring-1 focus:ring-indigo-500"
+                      >
+                        <option value="">-- Selecionar Disciplina --</option>
+                        <option value="Matemática">Matemática</option>
+                        <option value="Língua Portuguesa">Língua Portuguesa</option>
+                        <option value="Física">Física</option>
+                        <option value="Química">Química</option>
+                        <option value="História">História</option>
+                        <option value="Geografia">Geografia</option>
+                        <option value="Biologia">Biologia</option>
+                        <option value="Educação Física">Educação Física</option>
+                        <option value="Artes">Artes</option>
+                        <option value="Inglês">Inglês</option>
+                        <option value="Custom">Outra (Digitar...)</option>
+                      </select>
 
-                    {(!["Matemática", "Língua Portuguesa", "Física", "Química", "História", "Geografia", "Biologia", "Educação Física", "Artes", "Inglês"].includes(classeForm.nome) || classeForm.nome === "") && (
+                      {(!["Matemática", "Língua Portuguesa", "Física", "Química", "História", "Geografia", "Biologia", "Educação Física", "Artes", "Inglês"].includes(classeForm.nome) || classeForm.nome === "") && (
+                        <input 
+                          type="text"
+                          required
+                          value={classeForm.nome}
+                          onChange={(e) => setClasseForm({ ...classeForm, nome: e.target.value })}
+                          placeholder="Digite o nome da disciplina..."
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm animate-in fade-in slide-in-from-top-1 duration-200"
+                        />
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Código da Disciplina (Background)</label>
                       <input 
                         type="text"
-                        required
-                        value={classeForm.nome}
-                        onChange={(e) => setClasseForm({ ...classeForm, nome: e.target.value })}
-                        placeholder="Digite o nome da disciplina..."
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm animate-in fade-in slide-in-from-top-1 duration-200"
+                        readOnly
+                        value={classeForm.codigo || (() => {
+                          const code = 'DISC-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+                          setTimeout(() => {
+                            if (!classeForm.codigo) {
+                              setClasseForm(prev => ({ ...prev, codigo: code }));
+                            }
+                          }, 0);
+                          return code;
+                        })()}
+                        className="w-full bg-slate-150 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-650 font-bold font-mono cursor-not-allowed"
                       />
-                    )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Escola</label>
+                      <select 
+                        value={classeForm.escola_id || ''}
+                        required
+                        onChange={(e) => setClasseForm({ ...classeForm, escola_id: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 font-bold"
+                      >
+                        <option value="">-- Selecionar Escola --</option>
+                        {schools.map(s => (
+                          <option key={s.id} value={s.id}>{s.nome}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Classe Acadêmica</label>
+                      <select 
+                        value={classeForm.classe_escolar_id || ''}
+                        required
+                        onChange={(e) => setClasseForm({ ...classeForm, classe_escolar_id: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 font-bold"
+                      >
+                        <option value="">-- Selecionar Classe --</option>
+                        {classesEscolares.map(c => (
+                          <option key={c.id} value={c.id}>{c.nome} ({c.nivel})</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Professores Responsáveis</label>
+                    <select 
+                      multiple
+                      value={classeForm.professores_responsaveis || []}
+                      onChange={(e) => {
+                        const options = e.target.options;
+                        const selected: string[] = [];
+                        for (let i = 0; i < options.length; i++) {
+                          if (options[i].selected) {
+                            selected.push(options[i].value);
+                          }
+                        }
+                        setClasseForm({ ...classeForm, professores_responsaveis: selected });
+                      }}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 min-h-20"
+                    >
+                      {teachers.map(t => {
+                        const usr = tenantUsers.find(u => u.id === t.user_id);
+                        return (
+                          <option key={t.id} value={t.id}>{usr?.nome || "Docente"}</option>
+                        );
+                      })}
+                    </select>
+                    <p className="text-[9px] text-slate-400 mt-1">Mantenha pressionado Ctrl (Cmd no Mac) para selecionar múltiplos professores.</p>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
@@ -8597,6 +9271,34 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               {/* PAUTA FORM */}
               {modalType === 'pauta' && (
                 <>
+                  <div className="col-span-2 bg-slate-50 border border-slate-150 rounded-xl p-3 mb-2">
+                    <label className="block text-xs font-extrabold text-slate-500 mb-1 flex items-center gap-1">🏫 Filtrar por Escola</label>
+                    <select
+                      value={selectedPautaSchoolId}
+                      onChange={(e) => {
+                        const schId = e.target.value;
+                        setSelectedPautaSchoolId(schId);
+                        // Auto-select first student and class of this school
+                        const filteredStuds = students.filter(s => !schId || s.escola_id === schId);
+                        const filteredClasses = classes.filter(c => {
+                          const t = turmas.find(tu => tu.id === c.turma_id);
+                          return !schId || (t && t.escola_id === schId);
+                        });
+                        setPautaForm({
+                          ...pautaForm,
+                          estudante_id: filteredStuds[0]?.id || '',
+                          classe_id: filteredClasses[0]?.id || ''
+                        });
+                      }}
+                      className="w-full bg-white border border-slate-200 rounded-lg p-2.5 text-xs font-bold text-slate-700"
+                    >
+                      <option value="">✨ Todas as Escolas</option>
+                      {schools.map(sch => (
+                        <option key={sch.id} value={sch.id}>{sch.nome}</option>
+                      ))}
+                    </select>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-xs font-bold text-slate-500 mb-1">Estudante Avaliado</label>
@@ -8605,12 +9307,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         onChange={(e) => setPautaForm({ ...pautaForm, estudante_id: e.target.value })}
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
                       >
-                        {students.map(s => {
-                          const usr = tenantUsers.find(u => u.id === s.user_id);
-                          return (
-                            <option key={s.id} value={s.id}>{usr?.nome}</option>
-                          );
-                        })}
+                        <option value="">Selecione Estudante...</option>
+                        {students
+                          .filter(s => !selectedPautaSchoolId || s.escola_id === selectedPautaSchoolId)
+                          .map(s => {
+                            const usr = tenantUsers.find(u => u.id === s.user_id);
+                            return (
+                              <option key={s.id} value={s.id}>{usr?.nome || s.nome}</option>
+                            );
+                          })}
                       </select>
                     </div>
                     <div>
@@ -8620,9 +9325,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         onChange={(e) => setPautaForm({ ...pautaForm, classe_id: e.target.value })}
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
                       >
-                        {classes.map(c => (
-                          <option key={c.id} value={c.id}>{c.nome}</option>
-                        ))}
+                        <option value="">Selecione Disciplina...</option>
+                        {classes
+                          .filter(c => {
+                            const t = turmas.find(tu => tu.id === c.turma_id);
+                            return !selectedPautaSchoolId || (t && t.escola_id === selectedPautaSchoolId);
+                          })
+                          .map(c => (
+                            <option key={c.id} value={c.id}>{c.nome}</option>
+                          ))}
                       </select>
                     </div>
                   </div>
@@ -8646,10 +9357,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         type="number"
                         min={0}
                         max={20}
-                        required
-                        value={pautaForm.nota_prova}
-                        onChange={(e) => setPautaForm({ ...pautaForm, nota_prova: Number(e.target.value) })}
+                        step="any"
+                        value={pautaForm.nota_prova === undefined || pautaForm.nota_prova === null ? '' : pautaForm.nota_prova}
+                        onChange={(e) => setPautaForm({ ...pautaForm, nota_prova: e.target.value === '' ? '' : Number(e.target.value) })}
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
+                        placeholder="Em branco (não conta)"
                       />
                     </div>
                   </div>
@@ -8662,10 +9374,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         min={0}
                         max={20}
                         step="any"
-                        required
-                        value={pautaForm.nota_trabalho}
-                        onChange={(e) => setPautaForm({ ...pautaForm, nota_trabalho: Number(e.target.value) })}
+                        value={pautaForm.nota_trabalho === undefined || pautaForm.nota_trabalho === null ? '' : pautaForm.nota_trabalho}
+                        onChange={(e) => setPautaForm({ ...pautaForm, nota_trabalho: e.target.value === '' ? '' : Number(e.target.value) })}
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm"
+                        placeholder="Em branco"
                       />
                     </div>
                     <div>
@@ -8675,10 +9387,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         min={0}
                         max={20}
                         step="any"
-                        required
-                        value={pautaForm.nota_participacao}
-                        onChange={(e) => setPautaForm({ ...pautaForm, nota_participacao: Number(e.target.value) })}
+                        value={pautaForm.nota_participacao === undefined || pautaForm.nota_participacao === null ? '' : pautaForm.nota_participacao}
+                        onChange={(e) => setPautaForm({ ...pautaForm, nota_participacao: e.target.value === '' ? '' : Number(e.target.value) })}
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm"
+                        placeholder="Em branco"
                       />
                     </div>
                     <div>
@@ -8688,9 +9400,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         min={0}
                         max={20}
                         step="any"
-                        value={pautaForm.nota_exame || ''}
+                        value={pautaForm.nota_exame === undefined || pautaForm.nota_exame === null ? '' : pautaForm.nota_exame}
                         onChange={(e) => setPautaForm({ ...pautaForm, nota_exame: e.target.value === '' ? '' : Number(e.target.value) })}
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm"
+                        placeholder="Opcional"
                       />
                     </div>
                     <div>
@@ -8700,9 +9413,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         min={0}
                         max={20}
                         step="any"
-                        value={pautaForm.nota_reavaliacao || ''}
+                        value={pautaForm.nota_reavaliacao === undefined || pautaForm.nota_reavaliacao === null ? '' : pautaForm.nota_reavaliacao}
                         onChange={(e) => setPautaForm({ ...pautaForm, nota_reavaliacao: e.target.value === '' ? '' : Number(e.target.value) })}
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm"
+                        placeholder="Opcional"
                       />
                     </div>
                   </div>
@@ -8866,8 +9580,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             classes: 'Classes Letivas',
                             calendario: 'Calendário & Horários',
                             pautas: 'Lançamento de Notas / Pautas',
+                            pauta_geral: 'Pauta Geral',
                             processos: 'Processo Individual do Aluno',
-                            utilizadores: 'Gestão de Utilizadores'
+                            utilizadores: 'Gestão de Utilizadores',
+                            biblioteca: 'Biblioteca Digital',
+                            analytics: 'Análises & Analytics'
                           };
 
                           const label = moduleLabels[moduleKey] || moduleKey;
@@ -8962,6 +9679,20 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
                     />
                   </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Aplicável a (Turma / Classe)</label>
+                    <select
+                      value={feriasForm.turma_id || 'todas'}
+                      onChange={(e) => setFeriasForm({ ...feriasForm, turma_id: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 font-bold focus:ring-1 focus:ring-indigo-500"
+                      required
+                    >
+                      <option value="todas">✨ Todas as Turmas (Geral)</option>
+                      {turmas.map(t => (
+                        <option key={t.id} value={t.id}>{t.nome}</option>
+                      ))}
+                    </select>
+                  </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-xs font-bold text-slate-500 mb-1">Data de Início</label>
@@ -9050,8 +9781,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 <button
                   key={item.id}
                   onClick={() => {
-                    setActiveTab(item.id);
-                    setIsMobileMoreOpen(false);
+                    guardAction(() => {
+                      setActiveTab(item.id);
+                      setIsFormDirty(false); // Reset dirty state on successful navigation
+                      setIsMobileMoreOpen(false);
+                    });
                   }}
                   className={`p-3 bg-slate-850 hover:bg-slate-800 rounded-xl border border-slate-800/80 flex flex-col items-start gap-2 transition-all text-left cursor-pointer ${
                     activeTab === item.id ? 'border-indigo-500/50 bg-indigo-950/25 text-indigo-300' : 'text-slate-200'
@@ -9086,8 +9820,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               {onLogout && (
                 <button 
                   onClick={() => {
-                    setIsMobileMoreOpen(false);
-                    onLogout();
+                    guardAction(() => {
+                      setIsMobileMoreOpen(false);
+                      onLogout();
+                    });
                   }}
                   className="w-full bg-rose-950/30 hover:bg-rose-950/50 text-rose-300 py-2.5 rounded-xl font-bold text-center text-xs transition-colors cursor-pointer flex items-center justify-center gap-2 border border-rose-900/20"
                 >
@@ -9147,6 +9883,67 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             <div>
               <p className="text-xs font-bold text-slate-800 dark:text-slate-100 uppercase tracking-widest">Processando dados</p>
               <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">Carregando e salvando informações de forma segura...</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* REAL-TIME IN-APP PUSH TOASTS */}
+      {activeToast && (
+        <motion.div 
+          initial={{ opacity: 0, y: 50, scale: 0.9 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          className="fixed bottom-6 right-6 z-[200000] bg-slate-900 dark:bg-slate-950 border border-slate-800 text-white p-4 rounded-2xl shadow-2xl max-w-sm flex gap-3 items-start cursor-pointer hover:bg-slate-850 transition-colors"
+          onClick={() => setActiveToast(null)}
+        >
+          <div className="bg-indigo-600 p-2 rounded-xl text-white font-extrabold text-base flex-shrink-0 animate-bounce">
+            🔔
+          </div>
+          <div className="space-y-1 text-xs">
+            <p className="font-extrabold text-slate-100">{activeToast.titulo}</p>
+            <p className="text-slate-300 font-sans leading-relaxed">{activeToast.mensagem}</p>
+            <p className="text-[9px] text-slate-500 font-mono text-right">Toque para fechar</p>
+          </div>
+        </motion.div>
+      )}
+
+      {/* UNSAVED CHANGES GUARD DIALOG */}
+      {showConfirmModal && (
+        <div className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs flex items-center justify-center p-4 z-[300000] animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 dark:border-slate-800 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3.5 mb-4">
+              <div className="bg-amber-100 dark:bg-amber-950/40 p-2.5 rounded-2xl text-amber-600 dark:text-amber-400">
+                <AlertTriangle className="w-6 h-6 shrink-0" />
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900 dark:text-white font-sans">
+                  Alterações não salvas
+                </h3>
+                <p className="text-[11px] text-slate-400">
+                  Você possui alterações em andamento no formulário.
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed mb-6">
+              Se você sair deste módulo agora, todos os dados digitados e não salvos serão descartados. Tem certeza de que deseja prosseguir?
+            </p>
+
+            <div className="flex items-center justify-end gap-3">
+              <button 
+                type="button"
+                onClick={cancelLeave}
+                className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold px-4 py-2.5 rounded-xl text-xs hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+              >
+                Voltar e Editar
+              </button>
+              <button 
+                type="button"
+                onClick={confirmLeave}
+                className="bg-amber-600 hover:bg-amber-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
+              >
+                Descartar Alterações
+              </button>
             </div>
           </div>
         </div>

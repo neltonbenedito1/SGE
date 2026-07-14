@@ -17,7 +17,7 @@ export interface Tenant {
   nome: string;
   slug: string;
   plano_id: string;
-  status: 'ativo' | 'suspenso' | 'cancelado';
+  status: 'ativo' | 'suspenso' | 'cancelado' | 'pendente_pagamento';
   data_vencimento: string;
   data_renovacao: string;
   created_at: string;

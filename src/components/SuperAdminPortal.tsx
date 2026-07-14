@@ -25,6 +25,7 @@ import { LANGUAGES, translate } from '../lib/translation';
 import { localDb, syncLocalDataToFirestore } from '../lib/localDb';
 import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { Tenant, Plano, Pagamento, LogAdmin, SmtpConfig, Notificacao } from '../types';
+import { SuperAdminFinancePanel } from './SuperAdminFinancePanel';
 import { 
   Building2, 
   CreditCard, 
@@ -2977,315 +2978,37 @@ export default function SuperAdminPortal({
 
             {/* TAB: PAYMENTS */}
             {activeTab === 'payments' && (
-              <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm space-y-6 animate-fadeIn">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <h3 className="font-bold font-sans text-lg text-slate-900 dark:text-white">Histórico de Cobrança</h3>
-                    <p className="text-slate-400 text-sm">Veja faturas e lance pagamentos manuais recebidos via Pix ou Transferência Bancária.</p>
-                  </div>
-                  <button 
-                    onClick={() => {
-                      setPaymentForm({
-                        tenant_id: tenants[0]?.id || '',
-                        valor: 299,
-                        data_vencimento: new Date().toISOString().split('T')[0],
-                        status: 'Pago',
-                        metodo: 'Transferência Bancária'
-                      });
-                      setIsPaymentModalOpen(true);
-                    }}
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-medium px-4 py-2.5 rounded-lg text-sm flex items-center gap-1 shadow cursor-pointer"
-                  >
-                    <Plus className="w-4 h-4" /> Registrar Pagamento
-                  </button>
-                </div>
-
-                {selectedPaymentIds.length > 0 && (
-                  <div className="flex items-center justify-between bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/40 rounded-xl px-4 py-3 text-sm animate-in fade-in duration-200">
-                    <span className="text-indigo-800 dark:text-indigo-300 font-medium">
-                      {selectedPaymentIds.length} {selectedPaymentIds.length === 1 ? 'pagamento selecionado' : 'pagamentos selecionados'}
-                    </span>
-                    <div className="flex items-center gap-3">
-                      <select
-                        onChange={(e) => {
-                          if (e.target.value) {
-                            handlePaymentBatchAction(e.target.value);
-                            e.target.value = ''; // Reset select
-                          }
-                        }}
-                        className="bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800 text-slate-700 dark:text-slate-200 px-3 py-1.5 rounded-lg text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
-                        defaultValue=""
-                      >
-                        <option value="" disabled>Ação</option>
-                        <option value="Pago">Marcar como Pago</option>
-                        <option value="Pendente">Marcar como Pendente</option>
-                        <option value="Atrasado">Marcar como Atrasado</option>
-                        <option value="Excluir">Excluir Selecionados</option>
-                      </select>
-                      <button 
-                        onClick={() => setSelectedPaymentIds([])}
-                        className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-xs font-semibold cursor-pointer"
-                      >
-                        Limpar Seleção
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Desktop View (Table) */}
-                <div className="hidden md:block overflow-x-auto border border-slate-100 dark:border-slate-800 rounded-xl">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 dark:bg-slate-900 text-slate-500 text-xs font-semibold uppercase border-b border-slate-100 dark:border-slate-800">
-                        <th className="px-4 py-4 w-12 text-center">
-                          <input 
-                            type="checkbox"
-                            checked={payments.length > 0 && selectedPaymentIds.length === payments.length}
-                            onChange={() => {
-                              if (selectedPaymentIds.length === payments.length) {
-                                setSelectedPaymentIds([]);
-                              } else {
-                                setSelectedPaymentIds(payments.map(p => p.id));
-                              }
-                            }}
-                            className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
-                          />
-                        </th>
-                        <th className="px-6 py-4">Fatura ID</th>
-                        <th className="px-6 py-4">Cliente / Instituição</th>
-                        <th className="px-6 py-4">Valor</th>
-                        <th className="px-6 py-4">Data Vencimento</th>
-                        <th className="px-6 py-4">Data Pagamento</th>
-                        <th className="px-6 py-4">Método</th>
-                        <th className="px-6 py-4">Status</th>
-                        <th className="px-6 py-4 text-right">Ações</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-300 text-sm">
-                      {payments.map(p => (
-                        <tr key={p.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
-                          <td className="px-4 py-4 text-center">
-                            <input 
-                              type="checkbox"
-                              checked={selectedPaymentIds.includes(p.id)}
-                              onChange={() => {
-                                setSelectedPaymentIds(prev => 
-                                  prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id]
-                                );
-                              }}
-                              className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
-                            />
-                          </td>
-                          <td className="px-6 py-4 font-mono text-xs text-indigo-600 dark:text-indigo-400 font-bold">{p.id}</td>
-                          <td className="px-6 py-4 font-semibold text-slate-800 dark:text-slate-200">{p.tenant_nome}</td>
-                          <td className="px-6 py-4 font-bold font-mono">
-                            {p.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                          </td>
-                          <td className="px-6 py-4 font-mono text-xs">{p.data_vencimento}</td>
-                          <td className="px-6 py-4 font-mono text-xs">{p.data_pagamento || '—'}</td>
-                          <td className="px-6 py-4 text-xs font-medium text-slate-500 dark:text-slate-400">{p.metodo}</td>
-                          <td className="px-6 py-4">
-                            <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
-                              p.status === 'Pago' ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300' :
-                              p.status === 'Pendente' ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300' :
-                              p.status === 'Atrasado' ? 'bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 animate-pulse' :
-                              'bg-slate-100 dark:bg-slate-800 text-slate-500'
-                            }`}>
-                              {p.status}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 text-right relative">
-                            <div className="inline-block text-left">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setActiveActionRowId(activeActionRowId === p.id ? null : p.id);
-                                }}
-                                className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors focus:outline-none cursor-pointer"
-                                title="Opções"
-                              >
-                                <MoreVertical className="w-5 h-5" />
-                              </button>
-
-                              {activeActionRowId === p.id && (
-                                <>
-                                  <div 
-                                    className="fixed inset-0 z-30 bg-transparent" 
-                                    onClick={() => setActiveActionRowId(null)} 
-                                  />
-                                  <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xl z-40 py-1.5 text-left animate-in fade-in slide-in-from-top-1 duration-150">
-                                    <button
-                                      onClick={() => {
-                                        setActiveActionRowId(null);
-                                        updatePaymentStatus(p.id, 'Pago');
-                                      }}
-                                      className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-2 cursor-pointer"
-                                    >
-                                      <CheckCircle className="w-3.5 h-3.5" />
-                                      Marcar como Pago
-                                    </button>
-
-                                    <button
-                                      onClick={() => {
-                                        setActiveActionRowId(null);
-                                        updatePaymentStatus(p.id, 'Pendente');
-                                      }}
-                                      className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-2 cursor-pointer"
-                                    >
-                                      <AlertTriangle className="w-3.5 h-3.5" />
-                                      Marcar como Pendente
-                                    </button>
-
-                                    <button
-                                      onClick={() => {
-                                        setActiveActionRowId(null);
-                                        updatePaymentStatus(p.id, 'Atrasado');
-                                      }}
-                                      className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-2 cursor-pointer"
-                                    >
-                                      <XCircle className="w-3.5 h-3.5" />
-                                      Marcar como Atrasado
-                                    </button>
-
-                                    <div className="border-t border-slate-100 dark:border-slate-800 my-1" />
-
-                                    <button
-                                      onClick={() => {
-                                        setActiveActionRowId(null);
-                                        handleDeletePayment(p.id);
-                                      }}
-                                      className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-2 cursor-pointer"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                                      Excluir Registro
-                                    </button>
-                                  </div>
-                                </>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                      {payments.length === 0 && (
-                        <tr>
-                          <td colSpan={9} className="text-center text-slate-400 py-8">Nenhum registro de pagamento lançado.</td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Mobile View (List with Checkbox, Detail View button and 3 dots) */}
-                <div className="block md:hidden space-y-3">
-                  {payments.map(p => (
-                    <div key={p.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <input 
-                          type="checkbox"
-                          checked={selectedPaymentIds.includes(p.id)}
-                          onChange={() => {
-                            setSelectedPaymentIds(prev => 
-                              prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id]
-                            );
-                          }}
-                          className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer flex-shrink-0"
-                        />
-                        <div className="min-w-0">
-                          <p className="font-bold text-slate-900 dark:text-white truncate text-sm">{p.tenant_nome}</p>
-                          <p className="text-xs text-slate-400 font-mono font-bold mt-0.5">
-                            {p.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 flex-shrink-0">
-                        {/* Details/View button */}
-                        <button
-                          onClick={() => setViewingPayment(p)}
-                          className="p-1.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 rounded-lg hover:bg-indigo-100 dark:hover:bg-indigo-900/40 text-xs font-semibold flex items-center gap-1 cursor-pointer"
-                          title="Visualizar Dados"
-                        >
-                          <Eye className="w-4 h-4" />
-                          <span className="sr-only">Visualizar</span>
-                        </button>
-
-                        {/* 3 Dots dropdown */}
-                        <div className="relative">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setActiveActionRowId(activeActionRowId === p.id ? null : p.id);
-                            }}
-                            className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors focus:outline-none cursor-pointer"
-                          >
-                            <MoreVertical className="w-5 h-5" />
-                          </button>
-
-                          {activeActionRowId === p.id && (
-                            <>
-                              <div 
-                                className="fixed inset-0 z-30 bg-transparent" 
-                                onClick={() => setActiveActionRowId(null)} 
-                              />
-                              <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xl z-40 py-1.5 text-left animate-in fade-in slide-in-from-top-1 duration-150">
-                                <button
-                                  onClick={() => {
-                                    setActiveActionRowId(null);
-                                    updatePaymentStatus(p.id, 'Pago');
-                                  }}
-                                  className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-2 cursor-pointer"
-                                >
-                                  <CheckCircle className="w-3.5 h-3.5" />
-                                  Marcar como Pago
-                                </button>
-
-                                <button
-                                  onClick={() => {
-                                    setActiveActionRowId(null);
-                                    updatePaymentStatus(p.id, 'Pendente');
-                                  }}
-                                  className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-2 cursor-pointer"
-                                >
-                                  <AlertTriangle className="w-3.5 h-3.5" />
-                                  Marcar como Pendente
-                                </button>
-
-                                <button
-                                  onClick={() => {
-                                    setActiveActionRowId(null);
-                                    updatePaymentStatus(p.id, 'Atrasado');
-                                  }}
-                                  className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-2 cursor-pointer"
-                                >
-                                  <XCircle className="w-3.5 h-3.5" />
-                                  Marcar como Atrasado
-                                </button>
-
-                                <div className="border-t border-slate-100 dark:border-slate-800 my-1" />
-
-                                <button
-                                  onClick={() => {
-                                    setActiveActionRowId(null);
-                                    handleDeletePayment(p.id);
-                                  }}
-                                  className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-2 cursor-pointer"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                                  Excluir Registro
-                                </button>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  {payments.length === 0 && (
-                    <div className="text-center text-slate-400 py-8 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl">
-                      Nenhum registro de pagamento lançado.
-                    </div>
-                  )}
-                </div>
+              <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm animate-fadeIn">
+                <SuperAdminFinancePanel 
+                  payments={payments}
+                  tenants={tenants}
+                  plans={plans}
+                  onUpdatePaymentStatus={updatePaymentStatus}
+                  onDeletePayment={handleDeletePayment}
+                  onAddLog={async (acao, entidade, entidadeId, detalhes) => {
+                    await addDoc(collection(db, "log_admins"), {
+                      admin_id: "super_admin_finance",
+                      admin_nome: "Super Admin Finanças",
+                      acao,
+                      entidade,
+                      entidade_id: entidadeId,
+                      timestamp: new Date().toISOString(),
+                      detalhes
+                    });
+                  }}
+                  onReloadTenants={async () => {
+                    const tenantsSnap = await getDocs(collection(db, 'tenants'));
+                    const tenantsList: any[] = [];
+                    tenantsSnap.forEach(d => tenantsList.push({ ...d.data(), id: d.id }));
+                    setTenants(tenantsList);
+                  }}
+                  onReloadPayments={async () => {
+                    const paymentsSnap = await getDocs(collection(db, 'pagamentos'));
+                    const paymentsList: any[] = [];
+                    paymentsSnap.forEach(d => paymentsList.push({ ...d.data(), id: d.id }));
+                    setPayments(paymentsList);
+                  }}
+                />
               </div>
             )}
 

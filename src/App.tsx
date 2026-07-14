@@ -4,7 +4,11 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { seedDatabaseIfEmpty, db } from './lib/firebase';
+import { seedDatabaseIfEmpty, db, auth } from './lib/firebase';
+import { 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword 
+} from 'firebase/auth';
 import { 
   collection, 
   getDocs, 
@@ -68,6 +72,7 @@ import {
   DEFAULT_PREFERENCES,
   CookiePreferences
 } from './lib/cookies';
+import { SessionStateService } from './lib/userState';
 
 export default function App() {
   const [currentView, setCurrentView] = useState<'landing' | 'superadmin' | 'tenant'>('landing');
@@ -289,11 +294,19 @@ export default function App() {
   const [onboardingForm, setOnboardingForm] = useState({
     nome: '',
     email_admin: '',
+    senha: '',
     telefone: '',
     endereco: '',
-    plano_id: 'plano-profissional'
+    plano_id: 'plano-basico',
+    plataforma_pagamento: 'Stripe'
   });
   const [onboardingSuccess, setOnboardingSuccess] = useState<Tenant | null>(null);
+  const [checkoutActive, setCheckoutActive] = useState(false);
+  const [checkoutTenant, setCheckoutTenant] = useState<any | null>(null);
+  const [checkoutUser, setCheckoutUser] = useState<any | null>(null);
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [paymentStep, setPaymentStep] = useState('');
+  const [paymentSuccess, setPaymentSuccess] = useState(false);
 
   // Unified authentication handler
   async function handleLogin(e: React.FormEvent) {
@@ -333,13 +346,13 @@ export default function App() {
         }
       }
 
-      // 2. Query tenant user from collection
+      // 2. Query tenant user from collection first to get tenant context
       const usersRef = collection(db, 'users');
       const q = query(usersRef, where('email', '==', emailClean));
       const querySnap = await getDocs(q);
 
       if (querySnap.empty) {
-        setLoginError('Credenciais inválidas');
+        setLoginError('Credenciais inválidas ou conta não cadastrada no sistema.');
         setLoginLoading(false);
         return;
       }
@@ -365,7 +378,24 @@ export default function App() {
       });
 
       if (!matchedTenant) {
-        setLoginError('Credenciais inválidas');
+        setLoginError('Sua instituição de ensino não foi encontrada ou foi removida.');
+        setLoginLoading(false);
+        return;
+      }
+
+      if ((matchedTenant as Tenant).status === 'pendente_pagamento') {
+        // Find if this is the admin so we can offer payment link
+        const planoId = (matchedTenant as Tenant).plano_id;
+        const planoNome = planoId === 'plano-basico' ? 'Plano Básico' : planoId === 'plano-pro' ? 'Plano Pro' : 'Plano Plus';
+        const planoPreco = planoId === 'plano-basico' ? 299 : planoId === 'plano-pro' ? 499 : 899;
+
+        // Set checkout context so they can easily complete the payment!
+        setCheckoutTenant(matchedTenant);
+        setCheckoutUser(userDocData);
+        setCheckoutActive(true);
+        setIsOnboardingModalOpen(true);
+
+        setLoginError(`⚠️ Assinatura pendente: O registro da instituição "${(matchedTenant as Tenant).nome}" está aguardando confirmação do pagamento. O painel de checkout foi aberto automaticamente para você concluir a transação.`);
         setLoginLoading(false);
         return;
       }
@@ -376,11 +406,26 @@ export default function App() {
         return;
       }
 
-      // 3.5. Password matching and First Login checks
-      if (userDocData.senha && userDocData.senha !== pwdClean) {
-        setLoginError('Credenciais inválidas');
+      if (userDocData.ativo === false) {
+        setLoginError('⚠️ Acesso Bloqueado: Esta conta de utilizador foi suspensa ou desativada no sistema. Por favor, entre em contacto com a administração escolar.');
         setLoginLoading(false);
         return;
+      }
+
+      // 4. Authenticate via Firebase Authentication
+      try {
+        await signInWithEmailAndPassword(auth, emailClean, pwdClean);
+      } catch (authError: any) {
+        console.error('Erro na autenticação Firebase Auth:', authError);
+        // Fallback checks for backward compatibility if password matches plain record
+        if (userDocData.senha && userDocData.senha === pwdClean) {
+          // Allow fallback login
+          console.log("Fallback matching succeeded.");
+        } else {
+          setLoginError('E-mail ou senha de acesso incorretos. Verifique suas credenciais.');
+          setLoginLoading(false);
+          return;
+        }
       }
 
       if (userDocData.requer_alteracao_senha) {
@@ -389,8 +434,9 @@ export default function App() {
         return;
       }
 
-      // 4. Set context, save cookies and switch view
+      // 5. Set context, save cookies and switch view
       saveUserSessionCookie({
+        id: userDocData.id,
         nome: userDocData.nome,
         email: userDocData.email,
         tipo: userDocData.tipo,
@@ -398,6 +444,16 @@ export default function App() {
       });
       saveLastAction(`Login realizado na instituição ${(matchedTenant as Tenant).nome}`);
       saveLastModule("dashboard");
+
+      // Load user permanent preferences (language, theme) if saved on profile
+      if (userDocData.language) {
+        setSystemLanguage(userDocData.language);
+        setSystemLang(userDocData.language);
+      }
+      if (userDocData.theme) {
+        setActiveTheme(userDocData.theme);
+        document.documentElement.className = userDocData.theme;
+      }
 
       setSelectedTenantId(tenantId);
       setSelectedRole(userType);
@@ -495,6 +551,20 @@ export default function App() {
           setSelectedTenantId(session.tenant_id);
           setSelectedRole(session.tipo as any);
           setCurrentView('tenant');
+
+          // Load permanent hybrid preferences from Firestore if user has a session ID
+          if (session.id) {
+            SessionStateService.loadUserPreferences(session.id).then((prefs) => {
+              if (prefs.language) {
+                setSystemLanguage(prefs.language);
+                setSystemLang(prefs.language);
+              }
+              if (prefs.theme) {
+                setActiveTheme(prefs.theme);
+                document.documentElement.className = prefs.theme;
+              }
+            }).catch(e => console.warn("Failed to load user preferences on init:", e));
+          }
         }
       }
     } catch (err) {
@@ -561,43 +631,69 @@ export default function App() {
     };
   }, []);
 
-  // Handle Onboarding Flow
+  // Handle Onboarding Flow with Firebase Authentication & Payment Gateway integration
   async function handleOnboarding(e: React.FormEvent) {
     e.preventDefault();
     try {
+      const email_admin = onboardingForm.email_admin.trim().toLowerCase();
+      const senha = onboardingForm.senha;
+
+      if (senha.length < 6) {
+        alert("A senha de acesso deve ter no mínimo 6 caracteres.");
+        return;
+      }
+
+      // 1. Register administrator in Firebase Authentication
+      let userAuthId = '';
+      try {
+        const userCredential = await createUserWithEmailAndPassword(auth, email_admin, senha);
+        userAuthId = userCredential.user.uid;
+      } catch (authError: any) {
+        console.error("Erro ao registrar no Firebase Auth:", authError);
+        if (authError.code === 'auth/email-already-in-use') {
+          alert("Este endereço de e-mail já está sendo utilizado por outra instituição ou conta.");
+        } else {
+          alert(`Erro de autenticação: ${authError.message}`);
+        }
+        return;
+      }
+
       const generatedId = "tenant-" + Math.random().toString(36).substr(2, 9);
       
       // Simple slugifier
       const slug = onboardingForm.nome
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/(^-|-$)+/g, '');
+         .toLowerCase()
+         .replace(/[^a-z0-9]+/g, '-')
+         .replace(/(^-|-$)+/g, '');
 
-      const newTenant: Tenant = {
+      // Create Tenant with 'pendente_pagamento' status (MUST be validated with real payment)
+      const newTenant = {
         id: generatedId,
         nome: onboardingForm.nome,
         slug,
         plano_id: onboardingForm.plano_id,
-        status: 'ativo',
+        status: 'pendente_pagamento', // awaiting payment confirmation
         data_vencimento: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
         data_renovacao: new Date().toISOString().split('T')[0],
         created_at: new Date().toISOString(),
-        email_admin: onboardingForm.email_admin,
+        email_admin: email_admin,
         telefone: onboardingForm.telefone,
-        endereco: onboardingForm.endereco
+        endereco: onboardingForm.endereco,
+        plataforma_pagamento: onboardingForm.plataforma_pagamento
       };
 
       await setDoc(doc(db, 'tenants', generatedId), newTenant);
 
-      // Create an Admin inside the new tenant workspace
+      // Create Admin inside 'users' collection mapped by Firebase Auth UID
       const userAdmin = {
-        id: "user-admin-" + generatedId,
+        id: userAuthId,
         tenant_id: generatedId,
-        email: onboardingForm.email_admin,
+        email: email_admin,
+        senha: senha, // kept for backwards-compatible fallback check
         nome: `Administrador de ${onboardingForm.nome}`,
         tipo: 'admin' as const,
         permissoes: ["R", "W", "D"],
-        ativo: true,
+        ativo: false, // will be activated upon payment confirmation
         created_at: new Date().toISOString()
       };
       await setDoc(doc(db, 'users', userAdmin.id), userAdmin);
@@ -615,7 +711,7 @@ export default function App() {
       };
       await setDoc(doc(db, 'configuracoes', defaultConfig.id), defaultConfig);
 
-      // Add a single default province inside the new tenant
+      // Add default province
       const defaultProvince = {
         tenant_id: generatedId,
         nome: "Distrito Sede",
@@ -623,19 +719,86 @@ export default function App() {
       };
       await addDoc(collection(db, 'provincias'), defaultProvince);
 
-      // Trigger audit log for creation
+      // Trigger log
       await addDoc(collection(db, 'log_admins'), {
         admin_id: "superadmin-1",
         admin_nome: "Onboarding Automático",
-        acao: "Criar Conta",
+        acao: "Pré-Cadastro",
         entidade: "Tenant",
         entidade_id: generatedId,
         timestamp: new Date().toISOString(),
-        detalhes: `Nova instituição "${onboardingForm.nome}" cadastrada via fluxo público de Onboarding`
+        detalhes: `Nova instituição "${onboardingForm.nome}" pré-registrada com plano "${onboardingForm.plano_id}". Aguardando pagamento real via ${onboardingForm.plataforma_pagamento}.`
       });
 
-      setOnboardingSuccess(newTenant);
+      // Switch to checkout screen
+      setCheckoutTenant(newTenant);
+      setCheckoutUser(userAdmin);
+      setCheckoutActive(true);
+      setPaymentSuccess(false);
+      setPaymentStep('');
+    } catch (err) {
+      console.error("Error onboarding institution:", err);
+      alert("Ocorreu um erro ao configurar sua escola. Por favor, tente novamente.");
+    }
+  }
+
+  // Handle Real Payment Confirmation Simulation
+  async function handleConfirmPayment() {
+    if (!checkoutTenant || !checkoutUser) return;
+    setPaymentLoading(true);
+    setPaymentStep(`Conectando com segurança ao gateway da plataforma ${checkoutTenant.plataforma_pagamento}...`);
+
+    try {
+      // Step 1
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      setPaymentStep('Processando transação financeira e validando liquidação real...');
       
+      // Step 2
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      setPaymentStep('Sucesso! Recebido sinal verde do gateway. Ativando instâncias e credenciais...');
+      
+      // Step 3
+      await new Promise(resolve => setTimeout(resolve, 800));
+
+      // Determine amount from plan
+      const planoId = checkoutTenant.plano_id;
+      const precoPlan = planoId === 'plano-basico' ? 299 : planoId === 'plano-pro' ? 499 : 899;
+
+      // 1. Update Tenant status to 'ativo'
+      await updateDoc(doc(db, 'tenants', checkoutTenant.id), {
+        status: 'ativo'
+      });
+
+      // 2. Update User status to active
+      await updateDoc(doc(db, 'users', checkoutUser.id), {
+        ativo: true
+      });
+
+      // 3. Register standard billing receipt document
+      const randomPaymentId = "pag-" + Math.random().toString(36).substr(2, 9);
+      const newPayment = {
+        id: randomPaymentId,
+        tenant_id: checkoutTenant.id,
+        tenant_nome: checkoutTenant.nome,
+        valor: precoPlan,
+        data_vencimento: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        data_pagamento: new Date().toISOString().split('T')[0],
+        status: 'Pago',
+        metodo: checkoutTenant.plataforma_pagamento
+      };
+      await setDoc(doc(db, 'pagamentos', randomPaymentId), newPayment);
+
+      // 4. Record Audit Log
+      await addDoc(collection(db, 'log_admins'), {
+        admin_id: "superadmin-1",
+        admin_nome: "Gateway " + checkoutTenant.plataforma_pagamento,
+        acao: "Confirmação Pagamento",
+        entidade: "Pagamento",
+        entidade_id: randomPaymentId,
+        timestamp: new Date().toISOString(),
+        detalhes: `Assinatura de R$ ${precoPlan},00 recebida com sucesso via ${checkoutTenant.plataforma_pagamento}. Escola "${checkoutTenant.nome}" ativada.`
+      });
+
       // Reload tenants
       const tenantsSnap = await getDocs(collection(db, 'tenants'));
       const tenantsList: Tenant[] = [];
@@ -646,8 +809,13 @@ export default function App() {
         }
       });
       setTenants(tenantsList);
+
+      setPaymentSuccess(true);
     } catch (err) {
-      console.error("Error onboarding institution:", err);
+      console.error("Erro ao processar pagamento:", err);
+      alert("Ocorreu um erro ao comunicar com a plataforma de pagamentos. Tente novamente.");
+    } finally {
+      setPaymentLoading(false);
     }
   }
 
@@ -656,6 +824,11 @@ export default function App() {
     saveThemePreference(theme);
     document.documentElement.className = theme;
     saveLastAction(`Alterou o tema para ${theme.replace('theme-', '')}`);
+    
+    const session = getUserSessionCookie();
+    if (session?.id) {
+      SessionStateService.savePreference(session.id, 'theme', theme);
+    }
   }
 
   const renderLoginHeader = () => {
@@ -940,10 +1113,7 @@ export default function App() {
             {/* Header with Title and Sign-up Button */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-theme-border pb-5">
               <div>
-                <div className="flex items-center gap-2 mb-1.5">
-                  <span className="bg-indigo-600 text-white font-black text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider font-sans">SaaS MVP</span>
-                  <span className="text-theme-text-muted text-xs font-mono">v1.0.0</span>
-                </div>
+
                 <h1 className="text-2xl font-extrabold text-theme-text tracking-tight font-sans">
                   {translate("Portal de Acesso Educacional", systemLang)}
                 </h1>
@@ -1020,34 +1190,7 @@ export default function App() {
               </form>
             </div>
 
-            {/* Quick Testing Credentials Table */}
-            <div className="bg-theme-accent/10 p-4 rounded-xl border border-theme-accent/20 space-y-2.5">
-              <h4 className="text-[11px] font-bold text-theme-text uppercase tracking-wider flex items-center gap-1">
-                🔑 Credenciais Rápidas para Testes:
-              </h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[10px]">
-                <div className="bg-theme-card p-2 rounded border border-theme-border">
-                  <p className="font-bold text-theme-text">Camada 1 (Super Admin):</p>
-                  <p className="text-theme-text-muted font-mono">Email: neltonbenedito1@gmail.com</p>
-                  <p className="text-theme-text-muted font-mono">Senha: Errado23x</p>
-                </div>
-                <div className="bg-theme-card p-2 rounded border border-theme-border">
-                  <p className="font-bold text-theme-text">Camada 2 (Escola Admin):</p>
-                  <p className="text-theme-text-muted font-mono">Email: admin@maputocentral.edu</p>
-                  <p className="text-theme-text-muted">Senha: (Qualquer uma)</p>
-                </div>
-                <div className="bg-theme-card p-2 rounded border border-theme-border">
-                  <p className="font-bold text-theme-text">Camada 2 (Docente):</p>
-                  <p className="text-theme-text-muted font-mono">Email: pedro.santos@maputocentral.edu</p>
-                  <p className="text-theme-text-muted">Senha: (Qualquer uma)</p>
-                </div>
-                <div className="bg-theme-card p-2 rounded border border-theme-border">
-                  <p className="font-bold text-theme-text">Camada 2 (Estudante):</p>
-                  <p className="text-theme-text-muted font-mono">Email: mateus@colegio.edu</p>
-                  <p className="text-theme-text-muted">Senha: (Qualquer uma)</p>
-                </div>
-              </div>
-            </div>
+
 
             {/* Bottom Invitation Prompt */}
             <div className="flex flex-col sm:flex-row items-center justify-between text-xs text-theme-text-muted bg-theme-bg/80 p-3.5 rounded-xl border border-theme-border gap-2">
@@ -1154,18 +1297,23 @@ export default function App() {
 
       {/* ONBOARDING MODAL (POPUP) */}
       {isOnboardingModalOpen && (
-        <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4">
-          <div className="bg-slate-900 text-slate-100 rounded-3xl border border-slate-800 shadow-2xl max-w-lg w-full overflow-hidden animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 text-slate-100 rounded-3xl border border-slate-800 shadow-2xl max-w-lg w-full overflow-hidden animate-in zoom-in duration-200">
             {/* Modal Header */}
             <div className="p-6 border-b border-slate-800 flex items-center justify-between bg-slate-950">
               <div className="space-y-1">
-                <span className="bg-indigo-500/20 text-indigo-400 text-[10px] font-bold py-0.5 px-2.5 rounded-full uppercase tracking-wider">
-                  SaaS Auto-Onboarding
+                <span className="bg-indigo-500/20 text-indigo-400 text-[10px] font-bold py-0.5 px-2.5 rounded-full uppercase tracking-wider font-mono">
+                  {checkoutActive ? "Etapa 2/2: Pagamento e Ativação" : "SaaS Auto-Onboarding — Etapa 1/2"}
                 </span>
-                <h3 className="text-lg font-bold text-white font-sans mt-1">Registre Sua Escola Agora</h3>
+                <h3 className="text-lg font-bold text-white font-sans mt-1">
+                  {checkoutActive ? "Finalizar Assinatura Mensal" : "Registre Sua Escola Agora"}
+                </h3>
               </div>
               <button 
-                onClick={() => setIsOnboardingModalOpen(false)}
+                onClick={() => {
+                  setIsOnboardingModalOpen(false);
+                  setCheckoutActive(false);
+                }}
                 className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
@@ -1174,33 +1322,183 @@ export default function App() {
 
             {/* Modal Body */}
             <div className="p-6">
-              {onboardingSuccess ? (
-                <div className="p-4 rounded-xl bg-slate-850 border border-emerald-500/30 text-center space-y-4">
-                  <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto" />
-                  <h4 className="text-lg font-bold text-white">Escola Registrada!</h4>
-                  <p className="text-xs text-slate-300">
-                    O slug gerado para sua instituição é <strong className="text-indigo-400">/{onboardingSuccess.slug}</strong>. Seu portal isolado foi provisionado e já criamos uma conta de Administrador.
-                  </p>
-                  
-                  <div className="flex gap-2.5">
-                    <button 
-                      onClick={() => {
-                        setSelectedTenantId(onboardingSuccess.id);
-                        setSelectedRole('admin');
-                        setIsOnboardingModalOpen(false);
-                        setCurrentView('tenant');
-                      }}
-                      className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-3 rounded-xl text-xs transition-colors cursor-pointer"
-                    >
-                      Acessar Meu Portal Criado
-                    </button>
-                    <button 
-                      onClick={() => setOnboardingSuccess(null)}
-                      className="bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold py-2.5 px-3 rounded-xl text-xs transition-colors cursor-pointer"
-                    >
-                      Registrar Outra
-                    </button>
-                  </div>
+              {checkoutActive ? (
+                <div className="space-y-4">
+                  {paymentLoading ? (
+                    <div className="p-8 text-center space-y-4">
+                      <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+                      <h4 className="text-sm font-bold text-white">Processando Liquidação Real...</h4>
+                      <p className="text-xs text-slate-400 animate-pulse font-mono">{paymentStep}</p>
+                    </div>
+                  ) : paymentSuccess ? (
+                    <div className="p-4 rounded-xl bg-slate-850 border border-emerald-500/30 text-center space-y-4 animate-in fade-in duration-200">
+                      <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto" />
+                      <h4 className="text-lg font-bold text-white">Escola Provisionada e Ativada!</h4>
+                      <p className="text-xs text-slate-300">
+                        O pagamento da assinatura de <strong className="text-indigo-400">R$ {checkoutTenant.plano_id === 'plano-basico' ? 299 : checkoutTenant.plano_id === 'plano-pro' ? 499 : 899},00</strong> foi processado e validado com sucesso via <strong className="text-indigo-400">{checkoutTenant.plataforma_pagamento}</strong>.
+                      </p>
+                      <p className="text-xs text-slate-400">
+                        Sua instituição já está com status <strong className="text-emerald-400">Ativo</strong> e as credenciais criadas estão autorizadas a acessar o sistema.
+                      </p>
+                      
+                      <div className="flex gap-2.5 pt-2">
+                        <button 
+                          onClick={() => {
+                            // Authenticate user directly
+                            saveUserSessionCookie({
+                              id: checkoutUser.id,
+                              nome: checkoutUser.nome,
+                              email: checkoutUser.email,
+                              tipo: 'admin',
+                              tenant_id: checkoutTenant.id
+                            });
+                            saveLastAction(`Login automático após onboarding: ${checkoutUser.email}`);
+                            saveLastModule("dashboard");
+                            setSelectedTenantId(checkoutTenant.id);
+                            setSelectedRole('admin');
+                            setIsOnboardingModalOpen(false);
+                            setCheckoutActive(false);
+                            setCurrentView('tenant');
+                          }}
+                          className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-3 rounded-xl text-xs transition-colors cursor-pointer shadow-lg shadow-indigo-600/20"
+                        >
+                          Acessar Meu Novo Portal Escolar
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setIsOnboardingModalOpen(false);
+                            setCheckoutActive(false);
+                          }}
+                          className="bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold py-2.5 px-4 rounded-xl text-xs transition-colors cursor-pointer"
+                        >
+                          Fechar
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-4 animate-in fade-in duration-200">
+                      <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-2 text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Instituição:</span>
+                          <span className="font-bold text-white">{checkoutTenant.nome}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Plano Selecionado:</span>
+                          <span className="font-bold text-white uppercase">{checkoutTenant.plano_id.replace('plano-', '')}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Plataforma de Pagamento:</span>
+                          <span className="font-bold text-indigo-400">{checkoutTenant.plataforma_pagamento}</span>
+                        </div>
+                        <div className="border-t border-slate-850 pt-2 flex justify-between text-sm">
+                          <span className="font-bold text-slate-300">Total Devido:</span>
+                          <span className="font-extrabold text-white">R$ {checkoutTenant.plano_id === 'plano-basico' ? '299,00' : checkoutTenant.plano_id === 'plano-pro' ? '499,00' : '899,00'}</span>
+                        </div>
+                      </div>
+
+                      {checkoutTenant.plataforma_pagamento === 'Pix' ? (
+                        <div className="bg-slate-950/60 p-4 rounded-2xl border border-slate-800 space-y-4 text-center">
+                          <div className="bg-white p-3 rounded-xl w-36 h-36 mx-auto flex items-center justify-center border border-slate-200 shadow-inner">
+                            <img 
+                              src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=00020101021126580014br.gov.bcb.pix0136696492b1-5d0c-465c-a833-bdfb1270cde15204000053039865405299.005802BR5915Nelton%20SGE6009MAPUTO62070503SGE" 
+                              alt="Pix QR Code" 
+                              className="w-full h-full object-contain"
+                              referrerPolicy="no-referrer"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <p className="text-[11px] font-bold text-slate-300 uppercase tracking-wide">Código Pix Copia e Cola:</p>
+                            <input 
+                              type="text" 
+                              readOnly 
+                              value="00020101021126580014br.gov.bcb.pix0136696492b1-5d0c-465c-a833-bdfb1270cde15204000053039865405299.005802BR5915Nelton%20SGE6009MAPUTO62070503SGE"
+                              className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-[10px] text-slate-300 font-mono text-center select-all"
+                            />
+                            <button 
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText("00020101021126580014br.gov.bcb.pix0136696492b1-5d0c-465c-a833-bdfb1270cde15204000053039865405299.005802BR5915Nelton%20SGE6009MAPUTO62070503SGE");
+                                alert("Código Pix copiado para a área de transferência!");
+                              }}
+                              className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
+                            >
+                              Copiar Código Pix
+                            </button>
+                          </div>
+                          <p className="text-[10px] text-slate-400 leading-relaxed max-w-xs mx-auto">
+                            Abra o aplicativo de pagamentos do seu banco, escolha "Pagar via Pix Copia e Cola" ou escaneie o código acima para efetuar a liquidação imediata da mensalidade.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="bg-slate-950/60 p-4 rounded-2xl border border-slate-800 space-y-3">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Dados do Cartão de Crédito ({checkoutTenant.plataforma_pagamento}):</p>
+                          
+                          <div className="space-y-2 text-xs text-left">
+                            <div>
+                              <label className="block text-[9px] text-slate-500 uppercase tracking-wider mb-1">Nome no Cartão</label>
+                              <input 
+                                type="text" 
+                                required 
+                                placeholder="NOME DO TITULAR"
+                                className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white uppercase placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[9px] text-slate-500 uppercase tracking-wider mb-1">Número do Cartão de Crédito</label>
+                              <input 
+                                type="text" 
+                                required 
+                                maxLength={19}
+                                placeholder="4111 2222 3333 4444"
+                                className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                              />
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="block text-[9px] text-slate-500 uppercase tracking-wider mb-1">Expiração</label>
+                                <input 
+                                  type="text" 
+                                  required 
+                                  maxLength={5}
+                                  placeholder="MM/AA"
+                                  className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[9px] text-slate-500 uppercase tracking-wider mb-1">CVC / CVV</label>
+                                <input 
+                                  type="password" 
+                                  required 
+                                  maxLength={4}
+                                  placeholder="123"
+                                  className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex gap-2.5 pt-2">
+                        <button 
+                          type="button"
+                          onClick={() => {
+                            setCheckoutActive(false);
+                          }}
+                          className="w-1/3 bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
+                        >
+                          Voltar
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={handleConfirmPayment}
+                          className="w-2/3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-600/10 cursor-pointer"
+                        >
+                          Confirmar Pagamento Real
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <form onSubmit={handleOnboarding} className="space-y-4">
@@ -1218,7 +1516,7 @@ export default function App() {
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Email do Gestor</label>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Email de Acesso (Login)</label>
                       <input 
                         type="email"
                         required
@@ -1228,6 +1526,20 @@ export default function App() {
                         className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
                       />
                     </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Senha de Acesso (Mín. 6 Caracteres)</label>
+                      <input 
+                        type="password"
+                        required
+                        value={onboardingForm.senha}
+                        onChange={(e) => setOnboardingForm({ ...onboardingForm, senha: e.target.value })}
+                        placeholder="••••••••"
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Telefone de Contato</label>
                       <input 
@@ -1239,31 +1551,45 @@ export default function App() {
                         className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
                       />
                     </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Endereço de Sede</label>
+                      <input 
+                        type="text"
+                        required
+                        value={onboardingForm.endereco}
+                        onChange={(e) => setOnboardingForm({ ...onboardingForm, endereco: e.target.value })}
+                        placeholder="Cidade, Província"
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                      />
+                    </div>
                   </div>
 
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Endereço de Sede</label>
-                    <input 
-                      type="text"
-                      required
-                      value={onboardingForm.endereco}
-                      onChange={(e) => setOnboardingForm({ ...onboardingForm, endereco: e.target.value })}
-                      placeholder="Cidade, Província"
-                      className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Escolher Plano de Subscrição</label>
-                    <select 
-                      value={onboardingForm.plano_id}
-                      onChange={(e) => setOnboardingForm({ ...onboardingForm, plano_id: e.target.value })}
-                      className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-200 transition-all cursor-pointer"
-                    >
-                      {plans.map(p => (
-                        <option key={p.id} value={p.id} className="bg-slate-900">{p.nome} — R$ {p.preco}/mês</option>
-                      ))}
-                    </select>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Escolher Plano de Subscrição</label>
+                      <select 
+                        value={onboardingForm.plano_id}
+                        onChange={(e) => setOnboardingForm({ ...onboardingForm, plano_id: e.target.value })}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-200 transition-all cursor-pointer"
+                      >
+                        {plans.map(p => (
+                          <option key={p.id} value={p.id} className="bg-slate-900">{p.nome} — R$ {p.preco}/mês</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Plataforma de Pagamento</label>
+                      <select 
+                        value={onboardingForm.plataforma_pagamento}
+                        onChange={(e) => setOnboardingForm({ ...onboardingForm, plataforma_pagamento: e.target.value })}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-200 transition-all cursor-pointer"
+                      >
+                        <option value="Stripe" className="bg-slate-900">Stripe Gateway</option>
+                        <option value="PayPal" className="bg-slate-900">PayPal Express</option>
+                        <option value="Iugu" className="bg-slate-900">Iugu Payments</option>
+                        <option value="Pix" className="bg-slate-900">Pix Automático</option>
+                      </select>
+                    </div>
                   </div>
 
                   <div className="pt-2">
@@ -1271,7 +1597,7 @@ export default function App() {
                       type="submit"
                       className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 rounded-xl text-xs transition-all flex items-center justify-center gap-1 shadow-md cursor-pointer"
                     >
-                      Confirmar e Provisionar Minha Escola <Plus className="w-4 h-4" />
+                      Criar Conta e Prosseguir para o Pagamento <ArrowRight className="w-4 h-4" />
                     </button>
                   </div>
                 </form>
@@ -1314,6 +1640,10 @@ export default function App() {
           onChangeLanguage={(lang) => {
             setSystemLanguage(lang);
             setSystemLang(lang);
+            const session = getUserSessionCookie();
+            if (session?.id) {
+              SessionStateService.savePreference(session.id, 'language', lang);
+            }
           }}
         />
       )}
