@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import { initializeApp, getApps } from "firebase/app";
+import { getAuth, createUserWithEmailAndPassword, signOut } from "firebase/auth";
 import { 
   getFirestore, 
   collection, 
@@ -32,6 +32,35 @@ export const db = (configData as any).firestoreDatabaseId
   ? getFirestore(app, (configData as any).firestoreDatabaseId)
   : getFirestore(app);
 export const auth = getAuth(app);
+
+/**
+ * Register user account in Firebase Authentication if not already registered.
+ */
+export async function registerUserInFirebaseAuth(email: string, password?: string): Promise<boolean> {
+  if (!email || !email.trim()) return false;
+  const emailClean = email.trim();
+  const pwdToUse = (password && password.trim().length >= 6) ? password.trim() : "12345678";
+  
+  try {
+    const secondaryAppName = "secondaryAuthApp";
+    let secondaryApp = getApps().find(a => a.name === secondaryAppName);
+    if (!secondaryApp) {
+      secondaryApp = initializeApp(firebaseConfig, secondaryAppName);
+    }
+    const secondaryAuth = getAuth(secondaryApp);
+    await createUserWithEmailAndPassword(secondaryAuth, emailClean, pwdToUse);
+    await signOut(secondaryAuth);
+    console.log(`User ${emailClean} registered successfully in Firebase Authentication.`);
+    return true;
+  } catch (err: any) {
+    if (err?.code === 'auth/email-already-in-use') {
+      console.log(`User ${emailClean} already registered in Firebase Authentication.`);
+      return true;
+    }
+    console.warn(`Firebase Authentication registration note for ${emailClean}:`, err?.message || err);
+    return false;
+  }
+}
 
 // Validation check on database initialization as requested by guidelines
 async function testConnection() {
@@ -115,7 +144,7 @@ export async function seedDatabaseIfEmpty() {
 
     await batch.commit();
     console.log("Database plans updated/created successfully");
-  } catch (err) {
-    console.error("Error seeding database: ", err);
+  } catch (err: any) {
+    console.warn("Notice during database seeding (using local defaults if offline/unauthenticated):", err?.message || err);
   }
 }

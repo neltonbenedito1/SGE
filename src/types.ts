@@ -71,7 +71,7 @@ export interface LogAdmin {
 }
 
 // Tenant Entities
-export type UserType = 'admin' | 'director' | 'docente' | 'pai' | 'estudante';
+export type UserType = 'admin' | 'director' | 'docente' | 'pai' | 'estudante' | 'suporte';
 
 export interface User {
   id: string;
@@ -80,8 +80,23 @@ export interface User {
   nome: string;
   tipo: UserType;
   permissoes: string[]; // RWD permissions
+  modulo_acessos?: string[];
+  escola_id?: string;
+  foto_url?: string;
+  senha_temporaria?: string;
   ativo: boolean;
   created_at: string;
+}
+
+export interface Feriado {
+  id?: string;
+  tenant_id?: string;
+  nome: string;
+  data: string;
+  pais?: string;
+  tipo?: string;
+  descricao?: string;
+  created_at?: string;
 }
 
 export interface Provincia {
@@ -104,22 +119,33 @@ export interface Escola {
   latitude?: string | number;
   longitude?: string | number;
   deleted_at?: string | null;
+  logo_url?: string;
+  controlar_assiduidade?: boolean;
+  tolerancia_manha?: string;
+  tolerancia_tarde?: string;
+  tolerancia_noite?: string;
+  nuit?: string;
+  diretor_nome?: string;
+  contacto?: string;
 }
 
 export interface Docente {
   id: string;
   tenant_id: string;
   user_id: string;
+  nome?: string;
   escola_id: string;
   especialidade: string;
   numero_registro: string;
   data_contratacao: string;
+  turmas_atribuidas?: string[];
 }
 
 export interface Estudante {
   id: string;
   tenant_id: string;
   user_id: string;
+  nome?: string;
   escola_id: string;
   numero_matricula: string;
   data_nascimento: string;
@@ -140,6 +166,12 @@ export interface Estudante {
   propina_vencimento?: string;
   propina_valor?: number;
   data_matricula?: string;
+  dados_em_falta?: string[];
+  usuario_sistema?: boolean;
+  senha_temporaria?: string;
+  bi_nif?: string;
+  encarregado_nome?: string;
+  encarregado_contacto?: string;
 }
 
 export interface FaturaEstudante {
@@ -175,6 +207,8 @@ export interface Turma {
   nivel: string;
   docente_id: string; // Professor titular
   capacidade_max: number;
+  classe_escolar_id?: string;
+  horario?: string;
 }
 
 export interface Classe {
@@ -187,6 +221,14 @@ export interface Classe {
   sala: string;
   data?: string; // e.g. "2026-07-10"
   dia_semana?: string; // e.g. "Sexta-feira"
+  escola_id?: string;
+  classe_escolar_id?: string;
+  professores_responsaveis?: string[];
+  classes_associadas_ids?: string[];
+  codigo?: string;
+  status_aprovacao?: string;
+  justificativa?: string;
+  disciplina_id?: string;
 }
 
 export interface Sala {
@@ -204,23 +246,38 @@ export interface ClasseEscolar {
   nome: string; // e.g. "7ª Classe", "10ª Classe"
   nivel: 'Primário' | 'Secundário' | 'Médio' | 'Pré-escolar';
   descricao?: string;
+  escola_id?: string;
 }
 
 export interface Pauta {
   id: string;
   tenant_id: string;
+  escola_id?: string;
+  turma_id?: string;
   estudante_id: string;
   classe_id: string;
   trimestre: '1º Trimestre' | '2º Trimestre' | '3º Trimestre';
-  nota_prova: number;
-  nota_trabalho: number;
-  nota_participacao: number;
+  nota_prova?: number;
+  nota_trabalho?: number;
+  nota_participacao?: number;
+  num_avaliacoes?: number;
+  avaliacao_1?: number;
+  avaliacao_2?: number;
+  avaliacao_3?: number;
+  nota_tr1?: number;
+  media_final?: number;
   nota_exame?: number;
   nota_reavaliacao?: number;
-  nota_media: number;
-  situacao: 'Aprovado' | 'Reprovado' | 'Recuperação';
-  observacao: string;
-  data_lancamento: string;
+  nota_media?: number;
+  situacao?: 'Aprovado' | 'Reprovado' | 'Recuperação' | string;
+  status_estudante?: string;
+  observacao?: string;
+  data_lancamento?: string;
+  status?: string;
+  estado?: string;
+  publicado?: boolean;
+  nota?: number;
+  criado_em?: string;
 }
 
 export type ProcessoTipo = 'Matrícula' | 'Transferência' | 'Suspensão' | 'Conclusão' | 'Desistência';
@@ -236,6 +293,42 @@ export interface ProcessoAluno {
   status: ProcessoStatus;
   criador_nome: string;
   observacao?: string;
+  detalhes?: string;
+  criado_em?: string;
+  criado_por?: string;
+}
+
+export type SeveridadeActividade = 'Baixo' | 'Médio' | 'Crítico';
+export type StatusActividade = 'Pendente' | 'Em Progresso' | 'Finalizada' | 'Suspensa';
+export type CategoriaAtribuicaoActividade = 'Todos' | 'Administradores' | 'Directores' | 'Professores' | 'Estudantes' | 'Encarregados';
+
+export interface ActividadePendente {
+  id: string;
+  tenant_id: string;
+  titulo: string;
+  detalhes: string;
+  responsavel_id: string;
+  responsavel_nome: string;
+  responsavel_cargo: string;
+  responsavel_email?: string;
+  severidade: SeveridadeActividade;
+  status: StatusActividade;
+  criado_por_id: string;
+  criado_por_nome: string;
+  escola_id?: string;
+  turma_id?: string;
+  data_criacao: string;
+  data_prazo?: string;
+  data_finalizacao?: string;
+  nota_finalizacao?: string;
+  finalizado_por_id?: string;
+  finalizado_por_nome?: string;
+  concluido_por_id?: string;
+  concluido_por_nome?: string;
+  concluido_em?: string;
+  categoria_atribuicao?: CategoriaAtribuicaoActividade;
+  modulo_origem?: string;
+  dedup_key?: string;
 }
 
 export interface TenantConfig {
@@ -248,6 +341,14 @@ export interface TenantConfig {
   ano_letivo_atual: string;
   escala_avaliacao: '0-20' | '0-10' | 'A-F';
   notificacoes_email: boolean;
+  fuso_horario?: string;
+  pais?: string;
+  num_avaliacoes?: number;
+  metodo_calculo?: string;
+  taxa_propina_base?: number;
+  taxa_multa_atraso?: number;
+  moeda_padrao?: string;
+  taxa_iva?: number;
   smtp_provider?: 'system' | 'custom';
   smtp_type?: 'manual' | 'gmail';
   smtp_host?: string;
@@ -258,6 +359,7 @@ export interface TenantConfig {
   smtp_sender_email?: string;
   smtp_sender_name?: string;
   smtp_status?: 'ativo' | 'inativo';
+  notification_modules?: any[];
   pautas_num_avaliacoes?: number;
   pautas_tipo_periodo?: 'Trimestral' | 'Semestral';
   pautas_metodo_calculo?: 'Aritmética' | 'Ponderada';
@@ -350,6 +452,32 @@ export interface HistoricoLeitura {
   ultima_leitura_em: string;
 }
 
+export interface ModuleActions {
+  visualizar: boolean;
+  criar: boolean;
+  editar: boolean;
+  excluir: boolean;
+  exportar: boolean;
+  aprovar: boolean;
+}
+
+export interface ModulePermissionConfig {
+  habilitado: boolean;
+  acoes: ModuleActions;
+}
+
+export interface UserCategoryPermission {
+  id: string;
+  tenant_id?: string;
+  nome: string;
+  codigo: string;
+  descricao: string;
+  cor_badge: string;
+  is_system?: boolean;
+  modulos: Record<string, ModulePermissionConfig>;
+  criado_em?: string;
+}
+
 export interface Avaliacao {
   id: string;
   utilizador_id: string;
@@ -358,5 +486,6 @@ export interface Avaliacao {
   comentario?: string;
   criado_em: string;
 }
+
 
 

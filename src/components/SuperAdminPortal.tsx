@@ -20,12 +20,13 @@ import {
   setDoc,
   onSnapshot
 } from 'firebase/firestore';
-import { db, auth } from '../lib/firebase';
+import { db, auth, registerUserInFirebaseAuth } from '../lib/firebase';
 import { LANGUAGES, translate } from '../lib/translation';
 import { localDb, syncLocalDataToFirestore } from '../lib/localDb';
 import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { Tenant, Plano, Pagamento, LogAdmin, SmtpConfig, Notificacao } from '../types';
 import { SuperAdminFinancePanel } from './SuperAdminFinancePanel';
+import { SysEduLogo } from './SysEduLogo';
 import { 
   Building2, 
   CreditCard, 
@@ -1028,13 +1029,15 @@ export default function SuperAdminPortal({
         };
 
         const tempPassword = tenantForm.senha_temporaria || "Mudar@123";
+        const adminEmailClean = (tenantForm.email_admin || '').trim().toLowerCase();
         const tenantAdminUser = {
           id: "user-admin-" + generatedId,
           tenant_id: generatedId,
-          email: tenantForm.email_admin,
+          email: adminEmailClean,
           nome: `Administrador de ${tenantForm.nome}`,
           tipo: "admin" as const,
           senha: tempPassword,
+          senha_temporaria: tempPassword,
           requer_alteracao_senha: true, // Requires change on first login
           permissoes: ["R", "W", "D"],
           ativo: true,
@@ -1069,6 +1072,7 @@ export default function SuperAdminPortal({
           // Attempt Firestore save
           await setDoc(doc(db, 'tenants', generatedId), newTenant);
           await setDoc(doc(db, 'users', tenantAdminUser.id), tenantAdminUser);
+          await registerUserInFirebaseAuth(adminEmailClean, tempPassword);
           await setDoc(doc(db, 'configuracoes', tenantConfig.id), tenantConfig);
           await auditLog("Criar Conta", "Tenant", generatedId, `Gerado novo tenant ${tenantForm.nome} com slug ${slug}. Senha temporária configurada.`);
           
@@ -1122,7 +1126,9 @@ export default function SuperAdminPortal({
         plano_id: plans[0]?.id || 'plano-basico',
         status: 'ativo',
         data_vencimento: '',
-        senha_temporaria: ''
+        senha_temporaria: '',
+        idioma_padrao: 'pt',
+        ai_translation_enabled: false
       });
       loadData();
     } catch (err: any) {
@@ -1399,15 +1405,16 @@ export default function SuperAdminPortal({
     }
 
     try {
-      // Find and update the user's password in the 'users' collection
+      const adminResetEmail = (selectedTenantForPasswordReset.email_admin || '').trim().toLowerCase();
       const usersRef = collection(db, 'users');
-      const q = query(usersRef, where('email', '==', selectedTenantForPasswordReset.email_admin));
+      const q = query(usersRef, where('email', '==', adminResetEmail));
       const qSnap = await getDocs(q);
 
       if (!qSnap.empty) {
         const userDoc = qSnap.docs[0];
         await updateDoc(doc(db, 'users', userDoc.id), {
-          senha: newPassword
+          senha: newPassword,
+          senha_temporaria: newPassword
         });
       } else {
         // If the user document doesn't exist yet, we can create it
@@ -1415,15 +1422,17 @@ export default function SuperAdminPortal({
         await setDoc(doc(db, 'users', newUserId), {
           id: newUserId,
           tenant_id: selectedTenantForPasswordReset.id,
-          email: selectedTenantForPasswordReset.email_admin,
+          email: adminResetEmail,
           nome: selectedTenantForPasswordReset.nome,
           tipo: 'admin',
           senha: newPassword,
+          senha_temporaria: newPassword,
           permissoes: ["R", "W", "D"],
           ativo: true,
           created_at: new Date().toISOString()
         });
       }
+      await registerUserInFirebaseAuth(adminResetEmail, newPassword);
 
       // Save a security audit log
       await auditLog(
@@ -1830,11 +1839,9 @@ export default function SuperAdminPortal({
         </button>
 
         {/* Center / Brand */}
-        <div className="flex items-center gap-1.5 select-none shrink-0 overflow-hidden px-2">
-          <div className="bg-indigo-600 text-white p-1.5 rounded-lg">
-            <Building2 className="w-4 h-4" />
-          </div>
-          <span className="font-extrabold text-xs truncate max-w-[120px]">SaaS Educacional</span>
+        <div className="flex items-center gap-2 select-none shrink-0 overflow-hidden px-2">
+          <SysEduLogo variant="icon" size={24} />
+          <span className="font-extrabold text-xs truncate max-w-[120px]">SysEdu SaaS</span>
         </div>
 
         {/* Right Actions Container */}
@@ -1948,13 +1955,11 @@ export default function SuperAdminPortal({
         {/* Header / Brand */}
         <div className={`p-4 border-b border-slate-800 flex items-center bg-slate-950 h-[72px] shrink-0 transition-all duration-300 ${isExpanded ? 'justify-between' : 'justify-center'}`}>
           <div className="flex items-center gap-3 overflow-hidden">
-            <div className="bg-indigo-600 text-white p-2.5 rounded-xl shrink-0 flex items-center justify-center">
-              <Building2 className="w-5 h-5" />
-            </div>
+            <SysEduLogo variant="icon" size={isExpanded ? 32 : 28} />
             {isExpanded && (
               <div className="overflow-hidden animate-in fade-in duration-300">
-                <h2 className="font-sans font-extrabold text-sm text-white truncate">SaaS Educacional</h2>
-                <span className="text-[10px] text-indigo-400 font-mono tracking-wider font-bold">SUPER ADMIN</span>
+                <h2 className="font-sans font-extrabold text-sm text-white tracking-tight">SysEdu SaaS</h2>
+                <span className="text-[9px] text-[#10B981] font-mono tracking-wider font-bold animate-pulse">SUPER ADMIN</span>
               </div>
             )}
           </div>
@@ -2048,8 +2053,8 @@ export default function SuperAdminPortal({
               {activeTab === 'payments' && 'Faturamento & Histórico de Cobranças'}
               {activeTab === 'logs' && 'Logs de Auditoria de Segurança'}
               {activeTab === 'smtp' && 'Servidores SMTP por Escola'}
-              {activeTab === 'notificacoes_config' && 'Regras Globais de Notificação'}
-              {activeTab === 'logs_instituicoes' && 'Logs Criptografados por Unidade'}
+              {(activeTab as string) === 'notificacoes_config' && 'Regras Globais de Notificação'}
+              {(activeTab as string) === 'logs_instituicoes' && 'Logs Criptografados por Unidade'}
             </h1>
           </div>
           
@@ -2596,7 +2601,7 @@ export default function SuperAdminPortal({
                                             telefone: t.telefone,
                                             endereco: t.endereco,
                                             plano_id: t.plano_id,
-                                            status: t.status,
+                                            status: (t.status as any),
                                             data_vencimento: t.data_vencimento,
                                             senha_temporaria: '',
                                             idioma_padrao: t.idioma_padrao || 'pt',
@@ -2708,7 +2713,7 @@ export default function SuperAdminPortal({
                                 telefone: t.telefone,
                                 endereco: t.endereco,
                                 plano_id: t.plano_id,
-                                status: t.status,
+                                status: (t.status as any),
                                 data_vencimento: t.data_vencimento,
                                 senha_temporaria: '',
                                 idioma_padrao: t.idioma_padrao || 'pt',
@@ -2752,7 +2757,7 @@ export default function SuperAdminPortal({
                                         telefone: t.telefone,
                                         endereco: t.endereco,
                                         plano_id: t.plano_id,
-                                        status: t.status,
+                                        status: (t.status as any),
                                         data_vencimento: t.data_vencimento,
                                         senha_temporaria: '',
                                         idioma_padrao: t.idioma_padrao || 'pt',
@@ -3319,7 +3324,7 @@ export default function SuperAdminPortal({
                                 ...prev,
                                 `[${new Date().toLocaleTimeString('pt-BR')}] ❌ Erro ao enviar e-mail via Gmail API: ${error.message || error}`
                               ]);
-                              setTestStatus('error');
+                              setTestStatus('failed');
                             }
                             return;
                           }
@@ -3394,7 +3399,7 @@ export default function SuperAdminPortal({
             )}
 
             {/* TAB: GLOBAL NOTIFICATIONS CHECKLIST */}
-            {activeTab === 'notificacoes_config' && (
+            {(activeTab as string) === 'notificacoes_config' && (
               <div className="bg-white p-6 rounded-2xl border border-slate-150 shadow-xs space-y-6 animate-fadeIn">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
                   <div>
@@ -3626,7 +3631,7 @@ export default function SuperAdminPortal({
             )}
 
             {/* TAB: SECURE AUDIT LOGS BY INSTITUTION */}
-            {activeTab === 'logs_instituicoes' && (
+            {(activeTab as string) === 'logs_instituicoes' && (
               <div className="bg-white p-6 rounded-2xl border border-slate-150 shadow-xs space-y-6 animate-fadeIn">
                 <div>
                   <h3 className="font-bold text-slate-800 font-sans flex items-center gap-2 text-lg">
@@ -4805,7 +4810,8 @@ export default function SuperAdminPortal({
                           setIsOtpModalOpen(false);
                           
                           // Generate PDF!
-                          const doc = new jsPDF();
+                          const JsPdfCtor = (jsPDF as any)?.jsPDF || jsPDF;
+                          const doc = new JsPdfCtor();
 
                           // 1. Watermark with System Name & Logo
                           doc.setTextColor(240, 240, 240); // very light gray

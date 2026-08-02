@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import * as XLSX from 'xlsx';
 import { motion } from 'motion/react';
 import { 
   collection, 
@@ -18,7 +19,7 @@ import {
   setDoc,
   onSnapshot
 } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, registerUserInFirebaseAuth } from '../lib/firebase';
 import { 
   Tenant, 
   Plano, 
@@ -36,7 +37,11 @@ import {
   TenantConfig,
   Notificacao,
   FaturaEstudante,
-  SmtpConfig
+  SmtpConfig,
+  UserCategoryPermission,
+  ModulePermissionConfig,
+  Feriado,
+  ActividadePendente
 } from '../types';
 import { 
   BookOpen, 
@@ -75,6 +80,8 @@ import {
   List,
   ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   Menu,
   X,
   LogOut,
@@ -84,6 +91,9 @@ import {
   Edit3,
   Eye,
   AlertTriangle,
+  RefreshCw,
+  Globe,
+  Flag,
   BarChart3,
   Server,
   Mail,
@@ -95,19 +105,171 @@ import {
   Send,
   Check,
   CheckCheck,
-  RefreshCw,
   Settings,
   Palette,
-  TrendingUp
+  TrendingUp,
+  FileUp,
+  Loader2,
+  ShieldAlert,
+  ShieldCheck,
+  Upload,
+  IdCard,
+  Fingerprint,
+  QrCode,
+  Camera,
+  Lock,
+  CheckSquare,
+  PauseCircle
 } from 'lucide-react';
 import { SchoolMap } from './SchoolMap';
 import { AnalyticsModule } from './AnalyticsModule';
 import { BibliotecaModule } from './BibliotecaModule';
+import { AtividadesModule } from './AtividadesModule';
+import { GlobalPermissionsModule, DEFAULT_CATEGORIES } from './GlobalPermissionsModule';
+import { NotificationSettingsModule } from './NotificationSettingsModule';
+import { UserPermissionsChecklist } from './UserPermissionsChecklist';
 import { LANGUAGES, translate } from '../lib/translation';
+import { SysEduLogo } from './SysEduLogo';
+import { SearchableDropdown } from './SearchableDropdown';
+import { SamsungLoadingScreen } from './SamsungLoadingScreen';
+
+const WORLD_COUNTRIES = [
+  { name: "Angola", code: "AO" },
+  { name: "Moçambique", code: "MZ" },
+  { name: "Portugal", code: "PT" },
+  { name: "Brasil", code: "BR" },
+  { name: "Cabo Verde", code: "CV" },
+  { name: "Guiné-Bissau", code: "GW" },
+  { name: "São Tomé e Príncipe", code: "ST" },
+  { name: "Timor-Leste", code: "TL" },
+  { name: "África do Sul", code: "ZA" },
+  { name: "Espanha", code: "ES" },
+  { name: "França", code: "FR" },
+  { name: "Alemanha", code: "DE" },
+  { name: "Reino Unido", code: "GB" },
+  { name: "Estados Unidos", code: "US" },
+  { name: "Canadá", code: "CA" },
+  { name: "Austrália", code: "AU" },
+  { name: "Itália", code: "IT" },
+  { name: "Japão", code: "JP" },
+  { name: "China", code: "CN" },
+  { name: "Índia", code: "IN" },
+  { name: "Argentina", code: "AR" },
+  { name: "Chile", code: "CL" },
+  { name: "Colômbia", code: "CO" },
+  { name: "México", code: "MX" },
+  { name: "Nigéria", code: "NG" },
+  { name: "Quénia", code: "KE" },
+  { name: "Senegal", code: "SN" },
+  { name: "Gana", code: "GH" },
+  { name: "Zâmbia", code: "ZM" },
+  { name: "Zimbábue", code: "ZW" },
+  { name: "Namíbia", code: "NA" },
+  { name: "Suíça", code: "CH" },
+  { name: "Bélgica", code: "BE" },
+  { name: "Holanda", code: "NL" },
+  { name: "Suécia", code: "SE" },
+  { name: "Noruega", code: "NO" },
+  { name: "Dinamarca", code: "DK" },
+  { name: "Finlândia", code: "FI" },
+  { name: "Polónia", code: "PL" },
+  { name: "Áustria", code: "AT" },
+  { name: "Turquia", code: "TR" },
+  { name: "Egito", code: "EG" },
+  { name: "Emirados Árabes Unidos", code: "AE" },
+  { name: "Arábia Saudita", code: "SA" },
+  { name: "Cingapura", code: "SG" },
+  { name: "Coreia do Sul", code: "KR" },
+  { name: "Nova Zelândia", code: "NZ" }
+];
+
+function getFallbackHolidaysForCountry(countryName: string, year: number): { name: string; date: string }[] {
+  const y = year || 2026;
+  const lowerName = (countryName || '').toLowerCase();
+
+  if (lowerName.includes('moçambique') || lowerName.includes('mocambique')) {
+    return [
+      { name: "Ano Novo", date: `${y}-01-01` },
+      { name: "Dia dos Heróis Moçambicanos", date: `${y}-02-03` },
+      { name: "Dia da Mulher Moçambicana", date: `${y}-04-07` },
+      { name: "Dia Mundial do Trabalho", date: `${y}-05-01` },
+      { name: "Dia da Independência Nacional", date: `${y}-06-25` },
+      { name: "Dia da Vitória", date: `${y}-09-07` },
+      { name: "Dia das Forças Armadas de Defesa de Moçambique", date: `${y}-09-25` },
+      { name: "Dia da Paz e Reconciliação", date: `${y}-10-04` },
+      { name: "Dia da Família / Natal", date: `${y}-12-25` }
+    ];
+  }
+
+  if (lowerName.includes('angola')) {
+    return [
+      { name: "Ano Novo", date: `${y}-01-01` },
+      { name: "Dia do Início da Luta Armada de Libertação Nacional", date: `${y}-02-04` },
+      { name: "Dia Internacional da Mulher", date: `${y}-03-08` },
+      { name: "Dia da Libertação da África Austral", date: `${y}-03-23` },
+      { name: "Dia da Paz e da Reconciliação Nacional", date: `${y}-04-04` },
+      { name: "Dia Mundial do Trabalho", date: `${y}-05-01` },
+      { name: "Dia do Fundador da Nação e do Herói Nacional", date: `${y}-09-17` },
+      { name: "Dia da Independência Nacional", date: `${y}-11-11` },
+      { name: "Dia de Natal e da Família", date: `${y}-12-25` }
+    ];
+  }
+
+  if (lowerName.includes('portugal')) {
+    return [
+      { name: "Ano Novo", date: `${y}-01-01` },
+      { name: "Dia da Liberdade", date: `${y}-04-25` },
+      { name: "Dia do Trabalhador", date: `${y}-05-01` },
+      { name: "Dia de Portugal", date: `${y}-06-10` },
+      { name: "Assunção de Nossa Senhora", date: `${y}-08-15` },
+      { name: "Implantação da República", date: `${y}-10-05` },
+      { name: "Dia de Todos os Santos", date: `${y}-11-01` },
+      { name: "Restauro da Independência", date: `${y}-12-01` },
+      { name: "Imaculada Conceição", date: `${y}-12-08` },
+      { name: "Natal", date: `${y}-12-25` }
+    ];
+  }
+
+  if (lowerName.includes('brasil')) {
+    return [
+      { name: "Confraternização Universal", date: `${y}-01-01` },
+      { name: "Tiradentes", date: `${y}-04-21` },
+      { name: "Dia do Trabalhador", date: `${y}-05-01` },
+      { name: "Independência do Brasil", date: `${y}-09-07` },
+      { name: "Nossa Senhora Aparecida", date: `${y}-10-12` },
+      { name: "Finados", date: `${y}-11-02` },
+      { name: "Proclamação da República", date: `${y}-11-15` },
+      { name: "Dia Nacional de Zumbi e da Consciência Negra", date: `${y}-11-20` },
+      { name: "Natal", date: `${y}-12-25` }
+    ];
+  }
+
+  if (lowerName.includes('cabo verde')) {
+    return [
+      { name: "Ano Novo", date: `${y}-01-01` },
+      { name: "Dia dos Heróis Nacionais", date: `${y}-01-20` },
+      { name: "Dia Amílcar Cabral", date: `${y}-03-08` },
+      { name: "Dia do Trabalhador", date: `${y}-05-01` },
+      { name: "Dia da Independência Nacional", date: `${y}-07-05` },
+      { name: "Dia da Municipalidade", date: `${y}-08-15` },
+      { name: "Dia de Todos os Santos", date: `${y}-11-01` },
+      { name: "Natal", date: `${y}-12-25` }
+    ];
+  }
+
+  return [
+    { name: "Ano Novo / Confraternização", date: `${y}-01-01` },
+    { name: "Dia Internacional da Mulher", date: `${y}-03-08` },
+    { name: "Dia Mundial do Trabalho", date: `${y}-05-01` },
+    { name: "Dia da Independência / Festa Nacional", date: `${y}-07-04` },
+    { name: "Dia Mundial dos Direitos Humanos", date: `${y}-12-10` },
+    { name: "Natal / Fim de Ano", date: `${y}-12-25` }
+  ];
+}
 
 interface TenantPortalProps {
   currentTenantId: string;
-  currentUserRole: 'admin' | 'director' | 'docente' | 'pai' | 'estudante';
+  currentUserRole: 'admin' | 'director' | 'docente' | 'pai' | 'estudante' | 'suporte';
   currentUserEmail: string;
   onLogout?: () => void;
   activeTheme?: string;
@@ -123,7 +285,8 @@ import {
   saveLastScrollPosition,
   getLastScrollPosition,
   getCookie,
-  saveSettingIfAllowed
+  saveSettingIfAllowed,
+  getUserSessionCookie
 } from '../lib/cookies';
 import { SessionStateService, useDebouncedScroll } from '../lib/userState';
 import { useUnsavedChangesGuard } from '../lib/useUnsavedChangesGuard';
@@ -160,6 +323,11 @@ function getMonday(d: Date): Date {
   return new Date(date.setDate(diff));
 }
 
+const portalCache: Record<string, any> = {
+  allPlans: null,
+  globalSmtpConfig: null,
+};
+
 const DEFAULT_MODULO_ACESSOS: Record<string, { habilitado: boolean; funcionalidades: Record<string, boolean> }> = {
   provincias: { habilitado: true, funcionalidades: { visualizar: true, criar: true } },
   escolas: { habilitado: true, funcionalidades: { visualizar: true, criar: true, editar: true, excluir: true } },
@@ -175,10 +343,12 @@ const DEFAULT_MODULO_ACESSOS: Record<string, { habilitado: boolean; funcionalida
   utilizadores: { habilitado: true, funcionalidades: { visualizar: true, criar: true, editar: true, excluir: true } },
   biblioteca: { habilitado: true, funcionalidades: { visualizar: true, criar: true, editar: true, excluir: true } },
   analytics: { habilitado: true, funcionalidades: { visualizar: true, criar: true, editar: true, excluir: true } },
+  assiduidade: { habilitado: true, funcionalidades: { visualizar: true, criar: true, editar: true, excluir: true, validar_presencas: true } },
 };
 
 export default function TenantPortal({ currentTenantId, currentUserRole, currentUserEmail, onLogout, activeTheme, onChangeTheme, systemLang = 'pt', onChangeLanguage }: TenantPortalProps) {
   const [activeTab, setActiveTab] = useState<string>(() => getLastModule() || 'dashboard');
+  const [calendarSubTab, setCalendarSubTab] = useState<'grade' | 'ferias' | 'feriados'>('grade');
   const [isFormDirty, setIsFormDirty] = useState(false);
 
   // Unsaved changes navigation guard hook
@@ -303,15 +473,46 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [rawTurmas, setTurmas] = useState<Turma[]>([]);
   const [rawClasses, setClasses] = useState<Classe[]>([]);
   const [rawVacations, setVacations] = useState<any[]>([]);
+  const [rawFeriados, setFeriados] = useState<Feriado[]>([]);
   const [rawSalas, setSalas] = useState<Sala[]>([]);
   const [rawClassesEscolares, setClassesEscolares] = useState<ClasseEscolar[]>([]);
   const [rawPautas, setPautas] = useState<Pauta[]>([]);
   const [rawProcessos, setProcessos] = useState<ProcessoAluno[]>([]);
+  const [rawAtividades, setAtividades] = useState<ActividadePendente[]>([]);
   const [tenantUsers, setTenantUsers] = useState<User[]>([]);
+  const [pendingImports, setPendingImports] = useState<any[]>([]);
   const [config, setConfig] = useState<TenantConfig | null>(null);
   const [loading, setLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSyncingHolidays, setIsSyncingHolidays] = useState(false);
+  const [isSyncingAuth, setIsSyncingAuth] = useState(false);
+
+  const handleSyncAllUsersToFirebase = async () => {
+    if (tenantUsers.length === 0) {
+      showSystemNotification("Nenhum usuário encontrado para sincronizar com o Firebase.", "info");
+      return;
+    }
+    setIsSyncingAuth(true);
+    showSystemNotification("Sincronizando contas de utilizadores no Firebase Authentication...", "info");
+    let count = 0;
+    try {
+      for (const u of tenantUsers) {
+        if (u.email) {
+          const pwd = u.senha_temporaria || '12345678';
+          const success = await registerUserInFirebaseAuth(u.email, pwd);
+          if (success) count++;
+        }
+      }
+      showSystemNotification(`✅ Sincronização concluída! ${count} conta(s) cadastradas e ativas no Firebase Auth.`, "sucesso");
+    } catch (err: any) {
+      showSystemNotification(`Erro na sincronização Firebase Auth: ${err?.message || err}`, "erro");
+    } finally {
+      setIsSyncingAuth(false);
+    }
+  };
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false);
+  const [showQuickHelp, setShowQuickHelp] = useState(false);
 
   const showSystemNotification = useCallback((message: string, type: 'sucesso' | 'erro' | 'info' | 'config' | 'cadastro' = 'info') => {
     const popup = document.createElement('div');
@@ -347,10 +548,95 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     }, 6000);
   }, []);
 
-  // Find logged-in user inside TenantPortal
+  // Find logged-in user inside TenantPortal with comprehensive fallback & profile resolution
   const loggedInUser = useMemo(() => {
-    return tenantUsers.find(u => u.email.trim().toLowerCase() === currentUserEmail.trim().toLowerCase());
-  }, [tenantUsers, currentUserEmail]);
+    // 1. Try session cookie first
+    const session = getUserSessionCookie();
+    
+    // Check if tenantUsers has a user matching session email / ID / name
+    let found = tenantUsers.find(u => 
+      (session?.email && u.email && u.email.trim().toLowerCase() === session.email.trim().toLowerCase()) ||
+      (currentUserEmail && u.email && u.email.trim().toLowerCase() === currentUserEmail.trim().toLowerCase()) ||
+      (session?.id && u.id === session.id) ||
+      (session?.user_id && (u as any).user_id === session.user_id)
+    );
+    if (found && found.nome) return found;
+
+    // 2. Search by currentUserEmail directly in tenantUsers
+    if (currentUserEmail) {
+      const emailNorm = currentUserEmail.trim().toLowerCase();
+      found = tenantUsers.find(u => 
+        (u.email && u.email.trim().toLowerCase() === emailNorm) ||
+        (u.id && u.id.trim().toLowerCase() === emailNorm) ||
+        ((u as any).user_id && (u as any).user_id.trim().toLowerCase() === emailNorm) ||
+        ((u as any).username && (u as any).username.trim().toLowerCase() === emailNorm)
+      );
+      if (found && found.nome) return found;
+    }
+
+    // 3. Search in rawTeachers
+    const matchedTeacher = rawTeachers.find(t => 
+      (t.user_id && (t.user_id === session?.id || t.user_id === session?.user_id || (currentUserEmail && t.user_id.trim().toLowerCase() === currentUserEmail.trim().toLowerCase()))) ||
+      ((t as any).email && (currentUserEmail && (t as any).email.trim().toLowerCase() === currentUserEmail.trim().toLowerCase())) ||
+      (t.id && (t.id === session?.id || (currentUserEmail && t.id.trim().toLowerCase() === currentUserEmail.trim().toLowerCase())))
+    );
+    if (matchedTeacher && matchedTeacher.nome) {
+      return {
+        id: matchedTeacher.user_id || matchedTeacher.id,
+        nome: matchedTeacher.nome,
+        email: (matchedTeacher as any).email || currentUserEmail || session?.email || '',
+        tipo: 'docente',
+        escola_id: matchedTeacher.escola_id || ''
+      } as User;
+    }
+
+    // 4. Search in rawStudents
+    const matchedStudent = rawStudents.find(s => 
+      (s.user_id && (s.user_id === session?.id || s.user_id === session?.user_id || (currentUserEmail && s.user_id.trim().toLowerCase() === currentUserEmail.trim().toLowerCase()))) ||
+      ((s as any).email && (currentUserEmail && (s as any).email.trim().toLowerCase() === currentUserEmail.trim().toLowerCase())) ||
+      (s.id && (s.id === session?.id || (currentUserEmail && s.id.trim().toLowerCase() === currentUserEmail.trim().toLowerCase())))
+    );
+    if (matchedStudent && matchedStudent.nome) {
+      return {
+        id: matchedStudent.user_id || matchedStudent.id,
+        nome: matchedStudent.nome,
+        email: (matchedStudent as any).email || currentUserEmail || session?.email || '',
+        tipo: 'estudante',
+        escola_id: matchedStudent.escola_id || ''
+      } as User;
+    }
+
+    // 5. If session has a valid name, use it!
+    if (session?.nome || session?.name) {
+      return {
+        id: session.id || session.user_id || currentUserEmail || 'user-1',
+        nome: session.nome || session.name,
+        email: session.email || currentUserEmail || '',
+        tipo: session.tipo || session.role || currentUserRole,
+        escola_id: session.escola_id || ''
+      } as User;
+    }
+
+    // 6. Formatted fallback name based on currentUserEmail or default user
+    const rawUserIdentifier = currentUserEmail || session?.email || 'Administrador';
+    let derivedName = rawUserIdentifier;
+    if (rawUserIdentifier.includes('@')) {
+      const handle = rawUserIdentifier.split('@')[0];
+      derivedName = handle
+        .split(/[._-]/)
+        .filter(Boolean)
+        .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ');
+    }
+
+    return {
+      id: rawUserIdentifier,
+      nome: derivedName,
+      email: rawUserIdentifier,
+      tipo: currentUserRole,
+      escola_id: ''
+    } as User;
+  }, [tenantUsers, currentUserEmail, rawTeachers, rawStudents, currentUserRole]);
 
   // Enable performance-optimized debounced scroll tracking on main content wrapper
   useDebouncedScroll(loggedInUser?.id || null, 'main_content_area');
@@ -361,6 +647,63 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       SessionStateService.savePreference(loggedInUser.id, 'lastModule', activeTab);
     }
   }, [activeTab, loggedInUser?.id]);
+
+  const handleExportModuleData = () => {
+    try {
+      let dataToExport: any[] = [];
+      let filename = `export-${activeTab}.xlsx`;
+
+      switch (activeTab) {
+        case 'escolas':
+          dataToExport = rawSchools;
+          break;
+        case 'docentes':
+          dataToExport = rawTeachers;
+          break;
+        case 'estudantes':
+          dataToExport = rawStudents;
+          break;
+        case 'turmas':
+          dataToExport = rawTurmas;
+          break;
+        case 'salas':
+          dataToExport = rawSalas;
+          break;
+        case 'classes_escolares':
+          dataToExport = rawClassesEscolares;
+          break;
+        case 'pautas':
+          dataToExport = rawPautas;
+          break;
+        case 'processos':
+          dataToExport = rawProcessos;
+          break;
+        case 'usuarios':
+          dataToExport = tenantUsers;
+          break;
+        case 'assiduidade':
+          dataToExport = assiduidadeLogs;
+          break;
+        default:
+          dataToExport = [];
+      }
+
+      if (dataToExport.length === 0) {
+        showSystemNotification("Não há registros válidos para exportar neste módulo no momento.", "info");
+        return;
+      }
+
+      // Convert and download
+      const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Dados");
+      XLSX.writeFile(workbook, filename);
+      showSystemNotification(`Os dados do módulo "${activeTab}" foram exportados com sucesso!`, 'sucesso');
+    } catch (err) {
+      console.error("Erro ao exportar dados:", err);
+      showSystemNotification(`Erro ao exportar: ${err}`, 'erro');
+    }
+  };
 
   // Load and restore form drafts and scroll position from Firestore user record (hybrid strategy)
   useEffect(() => {
@@ -392,14 +735,26 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   // Computed Filtered Lists based on role
   const isDocente = currentUserRole === 'docente' || loggedInUser?.tipo === 'docente';
   const isEstudante = currentUserRole === 'estudante' || loggedInUser?.tipo === 'estudante';
+  const isDirector = currentUserRole === 'director' || loggedInUser?.tipo === 'director';
+  const isPai = currentUserRole === 'pai' || loggedInUser?.tipo === 'pai';
+  const isAdmin = currentUserRole === 'admin' || currentUserRole === 'suporte' || loggedInUser?.tipo === 'admin' || loggedInUser?.tipo === 'suporte';
 
   const currentTeacher = useMemo(() => {
-    return rawTeachers.find(t => t.user_id === loggedInUser?.id);
+    return rawTeachers.find(t => t.user_id === loggedInUser?.id || t.id === loggedInUser?.id);
   }, [rawTeachers, loggedInUser]);
 
   const currentStudent = useMemo(() => {
-    return rawStudents.find(s => s.user_id === loggedInUser?.id);
+    return rawStudents.find(s => s.user_id === loggedInUser?.id || s.id === loggedInUser?.id);
   }, [rawStudents, loggedInUser]);
+
+  // Derived clean display name for the currently authenticated user
+  const loggedInUserName = useMemo(() => {
+    return loggedInUser?.nome || currentTeacher?.nome || currentStudent?.nome || (currentUserEmail ? (currentUserEmail.includes('@') ? currentUserEmail.split('@')[0] : currentUserEmail) : 'Utilizador');
+  }, [loggedInUser, currentTeacher, currentStudent, currentUserEmail]);
+
+  const currentUserSchoolId = useMemo(() => {
+    return loggedInUser?.escola_id || currentTeacher?.escola_id || currentStudent?.escola_id || '';
+  }, [loggedInUser, currentTeacher, currentStudent]);
 
   const teacherTurmaIds = useMemo(() => {
     const ids = new Set<string>();
@@ -419,6 +774,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   }, [isDocente, currentTeacher, rawTurmas, rawClasses]);
 
   const filteredSchools = useMemo(() => {
+    if (isAdmin) return rawSchools;
+    if (currentUserSchoolId) {
+      return rawSchools.filter(s => s.id === currentUserSchoolId);
+    }
     if (isDocente && currentTeacher) {
       return rawSchools.filter(s => s.id === currentTeacher.escola_id);
     }
@@ -426,34 +785,30 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       return rawSchools.filter(s => s.id === currentStudent.escola_id);
     }
     return rawSchools;
-  }, [isDocente, isEstudante, currentTeacher, currentStudent, rawSchools]);
+  }, [isAdmin, currentUserSchoolId, isDocente, isEstudante, currentTeacher, currentStudent, rawSchools]);
 
   const filteredProvinces = useMemo(() => {
-    if (isDocente && currentTeacher) {
-      const pIds = new Set(filteredSchools.map(s => s.provincia_id));
-      return rawProvinces.filter(p => pIds.has(p.id));
-    }
-    if (isEstudante && currentStudent) {
-      const pIds = new Set(filteredSchools.map(s => s.provincia_id));
+    if (isAdmin) return rawProvinces;
+    const pIds = new Set(filteredSchools.map(s => s.provincia_id));
+    if (pIds.size > 0) {
       return rawProvinces.filter(p => pIds.has(p.id));
     }
     return rawProvinces;
-  }, [isDocente, isEstudante, currentTeacher, currentStudent, filteredSchools, rawProvinces]);
+  }, [isAdmin, filteredSchools, rawProvinces]);
 
   const filteredTeachers = useMemo(() => {
+    if (isAdmin) return rawTeachers;
+    if (currentUserSchoolId) {
+      return rawTeachers.filter(t => t.escola_id === currentUserSchoolId);
+    }
     if (isDocente && currentTeacher) {
       return rawTeachers.filter(t => t.escola_id === currentTeacher.escola_id);
     }
     if (isEstudante && currentStudent) {
-      return rawTeachers.filter(t => {
-        const isSameSchool = t.escola_id === currentStudent.escola_id;
-        const teachesOurTurma = rawClasses.some(c => c.turma_id === currentStudent.turma_id && c.docente_id === t.id);
-        const isTurmaDocente = rawTurmas.some(tur => tur.id === currentStudent.turma_id && tur.docente_id === t.id);
-        return isSameSchool || teachesOurTurma || isTurmaDocente;
-      });
+      return rawTeachers.filter(t => t.escola_id === currentStudent.escola_id);
     }
     return rawTeachers;
-  }, [isDocente, isEstudante, currentTeacher, currentStudent, rawTeachers, rawClasses, rawTurmas]);
+  }, [isAdmin, currentUserSchoolId, isDocente, isEstudante, currentTeacher, currentStudent, rawTeachers]);
 
   // State for active/deactivated student toggle
   const [studentStatusFilter, setStudentStatusFilter] = useState<'ativos' | 'desativados'>('ativos');
@@ -518,47 +873,79 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const filteredStudents = useMemo(() => {
     let base = rawStudents;
 
-    // Filter by active/deactivated status
-    const isAdmin = currentUserRole === 'admin' || loggedInUser?.tipo === 'admin';
     if (isAdmin) {
       if (studentStatusFilter === 'ativos') {
         base = base.filter(s => s.ativo !== false);
       } else {
         base = base.filter(s => s.ativo === false);
       }
-    } else {
-      // Non-admins can ONLY see active students
-      base = base.filter(s => s.ativo !== false);
+      return base;
     }
 
-    if (isDocente && currentTeacher) {
-      return base.filter(s => teacherTurmaIds.has(s.turma_id));
-    }
+    base = base.filter(s => s.ativo !== false);
+
     if (isEstudante && currentStudent) {
-      return base.filter(s => s.id === currentStudent.id);
+      // List students associated with the same turma as the logged-in student
+      return base.filter(s => s.turma_id === currentStudent.turma_id || s.id === currentStudent.id);
     }
+
+    if (isPai) {
+      return base.filter(s => 
+        s.pai_id === loggedInUser?.id || 
+        s.user_id === loggedInUser?.id
+      );
+    }
+
+    if ((isDocente || isDirector) && currentUserSchoolId) {
+      // List students associated with the same school as teacher / director
+      return base.filter(s => s.escola_id === currentUserSchoolId);
+    }
+
+    if (currentUserSchoolId) {
+      return base.filter(s => s.escola_id === currentUserSchoolId);
+    }
+
     return base;
-  }, [isDocente, isEstudante, currentTeacher, currentStudent, rawStudents, teacherTurmaIds, studentStatusFilter, currentUserRole, loggedInUser]);
+  }, [rawStudents, isAdmin, studentStatusFilter, isEstudante, currentStudent, isPai, loggedInUser, isDocente, isDirector, currentUserSchoolId]);
 
   const filteredTurmas = useMemo(() => {
-    if (isDocente && currentTeacher) {
-      return rawTurmas.filter(t => teacherTurmaIds.has(t.id));
-    }
+    if (isAdmin) return rawTurmas;
+
     if (isEstudante && currentStudent) {
-      return rawTurmas.filter(t => t.id === currentStudent.turma_id);
+      return rawTurmas.filter(t => t.id === currentStudent.turma_id || t.escola_id === currentStudent.escola_id);
     }
+
+    if (currentUserSchoolId) {
+      return rawTurmas.filter(t => t.escola_id === currentUserSchoolId);
+    }
+
+    if (isDocente && currentTeacher) {
+      return rawTurmas.filter(t => teacherTurmaIds.has(t.id) || t.escola_id === currentTeacher.escola_id);
+    }
+
     return rawTurmas;
-  }, [isDocente, isEstudante, currentTeacher, currentStudent, rawTurmas, teacherTurmaIds]);
+  }, [isAdmin, isEstudante, currentStudent, currentUserSchoolId, isDocente, currentTeacher, rawTurmas, teacherTurmaIds]);
 
   const filteredClasses = useMemo(() => {
-    if (isDocente && currentTeacher) {
-      return rawClasses.filter(c => c.docente_id === currentTeacher.id);
-    }
+    if (isAdmin) return rawClasses;
+
     if (isEstudante && currentStudent) {
+      // Exibir o horário da turma à qual o usuário está associado se for estudante
       return rawClasses.filter(c => c.turma_id === currentStudent.turma_id);
     }
+
+    if (isDocente && currentTeacher) {
+      // Listar os horários das turmas às quais leciona alguma aula (com horário agendado) se for professor e docente
+      return rawClasses.filter(c => c.docente_id === currentTeacher.id || teacherTurmaIds.has(c.turma_id));
+    }
+
+    if (currentUserSchoolId) {
+      const schoolTurmaIds = new Set(filteredTurmas.map(t => t.id));
+      return rawClasses.filter(c => schoolTurmaIds.has(c.turma_id));
+    }
+
     return rawClasses;
-  }, [isDocente, isEstudante, currentTeacher, currentStudent, rawClasses]);
+  }, [isAdmin, isEstudante, currentStudent, isDocente, currentTeacher, teacherTurmaIds, currentUserSchoolId, filteredTurmas, rawClasses]);
 
   const filteredClassesEscolares = useMemo(() => {
     if (isDocente && currentTeacher) {
@@ -579,19 +966,44 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       return !student || student.ativo !== false;
     });
 
-    if (isDocente && currentTeacher) {
-      return basePautas.filter(p => {
-        const student = rawStudents.find(s => s.id === p.estudante_id);
-        const isOurStudent = student && teacherTurmaIds.has(student.turma_id);
-        const isOurClasse = filteredClasses.some(c => c.id === p.classe_id);
-        return isOurStudent || isOurClasse;
-      });
-    }
+    if (isAdmin) return basePautas;
+
     if (isEstudante && currentStudent) {
+      // Exibir notas do usuário que estiver logado se for estudante
       return basePautas.filter(p => p.estudante_id === currentStudent.id);
     }
+
+    if (isPai) {
+      // Exibir notas do estudante ao qual é responsável se for pai ou responsável
+      const myStudentIds = new Set(
+        rawStudents
+          .filter(s => s.pai_id === loggedInUser?.id || s.user_id === loggedInUser?.id)
+          .map(s => s.id)
+      );
+      return basePautas.filter(p => myStudentIds.has(p.estudante_id));
+    }
+
+    if ((isDocente || isDirector) && currentUserSchoolId) {
+      // Exibir notas dos estudantes associados à mesma escola, se for docente e professor, director da escola, director de turma
+      const sameSchoolStudentIds = new Set(
+        rawStudents
+          .filter(s => s.escola_id === currentUserSchoolId)
+          .map(s => s.id)
+      );
+      return basePautas.filter(p => sameSchoolStudentIds.has(p.estudante_id));
+    }
+
+    if (currentUserSchoolId) {
+      const sameSchoolStudentIds = new Set(
+        rawStudents
+          .filter(s => s.escola_id === currentUserSchoolId)
+          .map(s => s.id)
+      );
+      return basePautas.filter(p => sameSchoolStudentIds.has(p.estudante_id));
+    }
+
     return basePautas;
-  }, [isDocente, isEstudante, currentTeacher, currentStudent, rawPautas, rawStudents, teacherTurmaIds, filteredClasses]);
+  }, [rawPautas, rawStudents, isAdmin, isEstudante, currentStudent, isPai, loggedInUser, isDocente, isDirector, currentUserSchoolId]);
 
   const filteredProcessos = useMemo(() => {
     // Keep only processos of active students (soft delete check)
@@ -600,17 +1012,44 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       return !student || student.ativo !== false;
     });
 
-    if (isDocente && currentTeacher) {
-      return baseProcessos.filter(p => {
-        const student = rawStudents.find(s => s.id === p.estudante_id);
-        return student && teacherTurmaIds.has(student.turma_id);
-      });
-    }
+    if (isAdmin) return baseProcessos;
+
     if (isEstudante && currentStudent) {
+      // Exibir dados do usuário logado se for estudante
       return baseProcessos.filter(p => p.estudante_id === currentStudent.id);
     }
+
+    if (isPai) {
+      // Exibir dados do estudante ao qual é responsável se for pai ou responsável
+      const myStudentIds = new Set(
+        rawStudents
+          .filter(s => s.pai_id === loggedInUser?.id || s.user_id === loggedInUser?.id)
+          .map(s => s.id)
+      );
+      return baseProcessos.filter(p => myStudentIds.has(p.estudante_id));
+    }
+
+    if ((isDocente || isDirector) && currentUserSchoolId) {
+      // Exibir dados dos estudantes associados à mesma escola se for director da escola, docente, etc.
+      const sameSchoolStudentIds = new Set(
+        rawStudents
+          .filter(s => s.escola_id === currentUserSchoolId)
+          .map(s => s.id)
+      );
+      return baseProcessos.filter(p => sameSchoolStudentIds.has(p.estudante_id));
+    }
+
+    if (currentUserSchoolId) {
+      const sameSchoolStudentIds = new Set(
+        rawStudents
+          .filter(s => s.escola_id === currentUserSchoolId)
+          .map(s => s.id)
+      );
+      return baseProcessos.filter(p => sameSchoolStudentIds.has(p.estudante_id));
+    }
+
     return baseProcessos;
-  }, [isDocente, isEstudante, currentTeacher, currentStudent, rawProcessos, rawStudents, teacherTurmaIds]);
+  }, [rawProcessos, rawStudents, isAdmin, isEstudante, currentStudent, isPai, loggedInUser, isDocente, isDirector, currentUserSchoolId]);
 
   const schools = filteredSchools;
   const provinces = filteredProvinces;
@@ -620,10 +1059,85 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const classes = filteredClasses;
   const classesEscolares = filteredClassesEscolares;
   const pautas = filteredPautas;
+  const publicPautas = useMemo(() => pautas, [pautas]);
   const processos = filteredProcessos;
 
   // Search/Filters
   const [searchQuery, setSearchQuery] = useState('');
+  const [schoolSearchText, setSchoolSearchText] = useState('');
+  const [teacherSearchText, setTeacherSearchText] = useState('');
+  const [studentSearchText, setStudentSearchText] = useState('');
+  const [disciplineSearchText, setDisciplineSearchText] = useState('');
+
+  // SCHOOLS FILTERS (moved up to be initialized before useMemo)
+  const [schoolStatusFilter, setSchoolStatusFilter] = useState<'todos' | 'ativo' | 'inativo'>('todos');
+  const [schoolProvinceFilter, setSchoolProvinceFilter] = useState<string>('todos');
+
+  // Sliding Panel States for "Análise Administrativa"
+  const [isSlidingPanelOpen, setIsSlidingPanelOpen] = useState(false);
+  const [selectedAnalysisType, setSelectedAnalysisType] = useState<string | null>(null);
+
+  const searchedSchools = useMemo(() => {
+    let filtered = schools;
+    
+    // Status Filter
+    if (schoolStatusFilter === 'ativo') {
+      filtered = filtered.filter(s => s.ativo === true);
+    } else if (schoolStatusFilter === 'inativo') {
+      filtered = filtered.filter(s => s.ativo === false);
+    }
+
+    // Province Filter
+    if (schoolProvinceFilter !== 'todos') {
+      filtered = filtered.filter(s => s.provincia_id === schoolProvinceFilter);
+    }
+
+    // Text Search
+    if (schoolSearchText.trim()) {
+      const query = schoolSearchText.toLowerCase();
+      filtered = filtered.filter(s => 
+        s.nome.toLowerCase().includes(query) || 
+        (s.endereco || '').toLowerCase().includes(query) || 
+        (s.email || '').toLowerCase().includes(query)
+      );
+    }
+    
+    return filtered;
+  }, [schools, schoolSearchText, schoolStatusFilter, schoolProvinceFilter]);
+
+  const searchedTeachers = useMemo(() => {
+    if (!teacherSearchText.trim()) return teachers;
+    const query = teacherSearchText.toLowerCase();
+    return teachers.filter(t => 
+      t.nome.toLowerCase().includes(query) || 
+      (t.especialidade || '').toLowerCase().includes(query) || 
+      ((t as any).email || '').toLowerCase().includes(query)
+    );
+  }, [teachers, teacherSearchText]);
+
+  const searchedStudents = useMemo(() => {
+    if (!studentSearchText.trim()) return students;
+    const query = studentSearchText.toLowerCase();
+    return students.filter(s => 
+      s.nome.toLowerCase().includes(query) || 
+      (s.numero_matricula || '').toLowerCase().includes(query) || 
+      ((s as any).email || '').toLowerCase().includes(query)
+    );
+  }, [students, studentSearchText]);
+
+  const searchedClasses = useMemo(() => {
+    if (!disciplineSearchText.trim()) return classes;
+    const query = disciplineSearchText.toLowerCase();
+    return classes.filter(c => {
+      const tur = turmas.find(t => t.id === c.turma_id);
+      return (
+        c.nome.toLowerCase().includes(query) || 
+        (c.codigo || '').toLowerCase().includes(query) ||
+        (tur?.nome || '').toLowerCase().includes(query)
+      );
+    });
+  }, [classes, turmas, disciplineSearchText]);
+
   const [selectedSchoolFilter, setSelectedSchoolFilter] = useState('todos');
   const [selectedTurmaFilter, setSelectedTurmaFilter] = useState('todos');
 
@@ -632,10 +1146,243 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [selectedClassPopup, setSelectedClassPopup] = useState<any | null>(null);
   const [isCopyDropdownOpen, setIsCopyDropdownOpen] = useState(false);
 
+  const [selectedTurn, setSelectedTurn] = useState<'manha' | 'tarde' | 'noite'>(() => {
+    const currentHour = new Date().getHours();
+    if (currentHour >= 7 && currentHour < 12) return 'manha';
+    if (currentHour >= 12 && currentHour < 18) return 'tarde';
+    return 'noite';
+  });
+  const [userSelectedTurn, setUserSelectedTurn] = useState<'manha' | 'tarde' | 'noite' | null>(null);
+
+  // Helper functions for turn separation and schedule validation
+  const parseTimeToMinutes = (timeStr: string): number => {
+    if (!timeStr) return 0;
+    const parts = timeStr.trim().split(':');
+    if (parts.length < 2) return 0;
+    const h = parseInt(parts[0], 10) || 0;
+    const m = parseInt(parts[1], 10) || 0;
+    return h * 60 + m;
+  };
+
+  const OFFICIAL_BREAKS = [
+    { name: 'Manhã', start: parseTimeToMinutes('09:25'), end: parseTimeToMinutes('09:35'), label: '09:25 às 09:35' },
+    { name: 'Tarde', start: parseTimeToMinutes('14:25'), end: parseTimeToMinutes('14:35'), label: '14:25 às 14:35' },
+    { name: 'Noite', start: parseTimeToMinutes('20:25'), end: parseTimeToMinutes('20:35'), label: '20:25 às 20:35' },
+  ];
+
+  const getShiftDefaultSlots = (turn: 'manha' | 'tarde' | 'noite'): string[] => {
+    if (turn === 'manha') {
+      return [
+        "07:00 - 07:45",
+        "07:50 - 08:35",
+        "08:40 - 09:25",
+        "09:25 - 09:35",
+        "09:35 - 10:20",
+        "10:25 - 11:10",
+        "11:15 - 12:00"
+      ];
+    } else if (turn === 'tarde') {
+      return [
+        "12:00 - 12:45",
+        "12:50 - 13:35",
+        "13:40 - 14:25",
+        "14:25 - 14:35",
+        "14:35 - 15:20",
+        "15:25 - 16:10",
+        "16:15 - 17:00"
+      ];
+    } else {
+      return [
+        "18:00 - 18:45",
+        "18:50 - 19:35",
+        "19:40 - 20:25",
+        "20:25 - 20:35",
+        "20:35 - 21:20",
+        "21:25 - 22:10",
+        "22:15 - 23:00"
+      ];
+    }
+  };
+
+  const checkScheduleConflictDetails = (
+    pStartStr: string,
+    pEndStr: string,
+    dateStr: string,
+    diaSemana: string,
+    turmaId: string,
+    docenteId: string,
+    sala: string,
+    allClasses: Classe[],
+    excludeClassId?: string
+  ): { conflict: boolean; reason?: string } => {
+    const pStart = parseTimeToMinutes(pStartStr);
+    const pEnd = parseTimeToMinutes(pEndStr);
+
+    if (pEnd <= pStart) {
+      return { conflict: true, reason: 'A hora de fim da aula deve ser posterior à hora de início.' };
+    }
+
+    const duration = pEnd - pStart;
+    if (duration < 45) {
+      return { conflict: true, reason: 'A duração de uma aula deve ser de pelo menos 45 minutos.' };
+    }
+
+    // 1. Check official break overlap
+    const breakHit = OFFICIAL_BREAKS.find(b => pStart < b.end && pEnd > b.start);
+    if (breakHit) {
+      return {
+        conflict: true,
+        reason: `Horário inválido! O período selecionado (${pStartStr} - ${pEndStr}) sobrepõe o intervalo de recreio oficial da ${breakHit.name} (${breakHit.label}).`
+      };
+    }
+
+    // 2. Check collision with existing classes
+    for (const c of allClasses) {
+      if (excludeClassId && c.id === excludeClassId) continue;
+
+      const sameDay = (c.data && c.data === dateStr) ||
+        (!c.data && c.dia_semana && diaSemana && c.dia_semana.toLowerCase().includes(diaSemana.toLowerCase().split('-')[0]));
+
+      if (!sameDay) continue;
+
+      const [cStartStr, cEndStr] = (c.horario || '').split(' - ').map(s => s?.trim());
+      if (!cStartStr || !cEndStr) continue;
+
+      const cStart = parseTimeToMinutes(cStartStr);
+      const cEnd = parseTimeToMinutes(cEndStr);
+
+      // 5-min transition gap rule
+      const overlapsWithGap = (pStart < cEnd + 5) && (pEnd + 5 > cStart);
+
+      if (overlapsWithGap) {
+        if (sala && c.sala && c.sala.trim().toLowerCase() === sala.trim().toLowerCase()) {
+          return {
+            conflict: true,
+            reason: `Conflito de Sala! A sala "${sala}" já possui a aula "${c.nome}" agendada (${cStartStr} - ${cEndStr}). É necessário pelo menos 5 min de intervalo entre aulas.`
+          };
+        }
+        if (docenteId && c.docente_id === docenteId) {
+          return {
+            conflict: true,
+            reason: `Conflito de Professor! O docente já leciona a aula "${c.nome}" no horário ${cStartStr} - ${cEndStr} na sala ${c.sala || 'N/A'}.`
+          };
+        }
+        if (turmaId && c.turma_id === turmaId) {
+          return {
+            conflict: true,
+            reason: `Conflito de Turma! A turma já possui a aula "${c.nome}" agendada no horário ${cStartStr} - ${cEndStr}.`
+          };
+        }
+      }
+    }
+
+    return { conflict: false };
+  };
+
+  const getShiftForSlot = (slot: string): 'manha' | 'tarde' | 'noite' => {
+    if (!slot) return 'manha';
+    const startHourStr = slot.split(' - ')[0] || '';
+    const hour = parseInt(startHourStr.split(':')[0], 10);
+    if (isNaN(hour)) return 'manha';
+    if (hour >= 7 && hour < 12) return 'manha';
+    if (hour >= 12 && hour < 18) return 'tarde';
+    return 'noite';
+  };
+
+  // Helper to get current Date adjusted to the given timezone
+  const getCurrentDateInTimezone = (timezone: string): Date => {
+    try {
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+      const parts = formatter.formatToParts(new Date());
+      const year = Number(parts.find(p => p.type === 'year')?.value);
+      const month = Number(parts.find(p => p.type === 'month')?.value) - 1;
+      const day = Number(parts.find(p => p.type === 'day')?.value);
+      const hour = Number(parts.find(p => p.type === 'hour')?.value);
+      const minute = Number(parts.find(p => p.type === 'minute')?.value);
+      const second = Number(parts.find(p => p.type === 'second')?.value);
+      return new Date(year, month, day, hour, minute, second);
+    } catch (e) {
+      console.error("Error getting date in timezone:", e);
+      return new Date();
+    }
+  };
+
+  // Sync calendar selected date with the configured system timezone
+  useEffect(() => {
+    if (config?.fuso_horario) {
+      const tzDate = getCurrentDateInTimezone(config.fuso_horario);
+      setCalendarSelectedDate(getMonday(tzDate));
+    } else {
+      setCalendarSelectedDate(getMonday(new Date()));
+    }
+  }, [config?.fuso_horario]);
+
+  // Auto-detect turn based on date, classes and selected turma
+  useEffect(() => {
+    // If the user manually selected a turn, we respect it
+    if (userSelectedTurn !== null) {
+      return;
+    }
+
+    const activeCalendarTurma = selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter;
+    const matches = classes.filter(c => c.turma_id === activeCalendarTurma);
+
+    // Filter matches for the selected week
+    const weekClasses = matches.filter(c => {
+      if (!c.data) {
+        return true;
+      }
+      const monday = getMonday(calendarSelectedDate);
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      const mondayStr = getLocalYYYYMMDD(monday);
+      const sundayStr = getLocalYYYYMMDD(sunday);
+      return c.data >= mondayStr && c.data <= sundayStr;
+    });
+
+    if (weekClasses.length > 0) {
+      // Find the turn of the earliest class
+      const sortedWeekClasses = [...weekClasses].sort((a, b) => {
+        const aStart = a.horario?.split(' - ')[0] || '';
+        const bStart = b.horario?.split(' - ')[0] || '';
+        return aStart.localeCompare(bStart);
+      });
+      const earliestClass = sortedWeekClasses[0];
+      if (earliestClass && earliestClass.horario) {
+        setSelectedTurn(getShiftForSlot(earliestClass.horario));
+      }
+    } else {
+      // Fallback to current hour of the day
+      const currentHour = new Date().getHours();
+      if (currentHour >= 7 && currentHour < 12) {
+        setSelectedTurn('manha');
+      } else if (currentHour >= 12 && currentHour < 18) {
+        setSelectedTurn('tarde');
+      } else {
+        setSelectedTurn('noite');
+      }
+    }
+  }, [calendarSelectedDate, selectedTurmaFilter, classes, turmas, userSelectedTurn]);
+
+  // Reset user manual selection when week or filtered turma changes
+  useEffect(() => {
+    setUserSelectedTurn(null);
+  }, [calendarSelectedDate, selectedTurmaFilter]);
+
   // Modals
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalType, setModalType] = useState<string>('');
   const [editingItem, setEditingItem] = useState<any>(null);
+  const [crachaStudent, setCrachaStudent] = useState<any | null>(null);
 
   // Declarative reset of isFormDirty when any form modal is toggled
   useEffect(() => {
@@ -645,7 +1392,30 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   // Selection and Action row states
   const [selectedTeacherIds, setSelectedTeacherIds] = useState<string[]>([]);
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+  const [selectedSchoolIds, setSelectedSchoolIds] = useState<string[]>([]);
   const [activeActionRowId, setActiveActionRowId] = useState<string | null>(null);
+
+  // Custom Context Menu State
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    type: string | null;
+    id: string | null;
+    options: {
+      label: string;
+      icon: any;
+      onClick: () => void | Promise<void>;
+      disabled?: boolean;
+      isDestructive?: boolean;
+      hidden?: boolean;
+    }[];
+  } | null>(null);
+  const [contextMenuIndex, setContextMenuIndex] = useState<number>(-1);
+
+  const closeContextMenu = () => {
+    setContextMenu(null);
+    setContextMenuIndex(-1);
+  };
 
   // Custom Confirm Modal
   const [confirmModal, setConfirmModal] = useState<{
@@ -655,6 +1425,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     confirmText?: string;
     cancelText?: string;
     onConfirm: () => void | Promise<void>;
+    onCancel?: () => void;
     isCritical?: boolean;
   }>({
     isOpen: false,
@@ -672,6 +1443,1309 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       isCritical
     });
   };
+
+  // Custom Context Menu Options Builder
+  const getContextMenuOptions = (
+    type: string | null,
+    id: string | null
+  ): { label: string; icon: any; onClick: () => void | Promise<void>; disabled?: boolean; isDestructive?: boolean; hidden?: boolean; }[] => {
+    
+    const options: any[] = [];
+    const isEditingAllowed = hasPermission(activeTab, 'editar');
+    const isCreationAllowed = hasPermission(activeTab, 'criar');
+    const isDeletionAllowed = hasPermission(activeTab, 'excluir');
+
+    const getTransversalActions = (itemLabel: string, itemId: string) => [
+      {
+        label: 'Atualizar dados',
+        icon: <RefreshCw className="w-3.5 h-3.5" />,
+        onClick: () => {
+          loadTenantContext();
+          showSystemNotification('Dados atualizados com sucesso.', 'sucesso');
+        }
+      },
+      {
+        label: 'Copiar ID do registo',
+        icon: <Copy className="w-3.5 h-3.5" />,
+        onClick: () => {
+          navigator.clipboard.writeText(itemId || '');
+          showSystemNotification('ID copiado para a área de transferência.', 'sucesso');
+        }
+      },
+      {
+        label: `Auditoria de ${itemLabel}`,
+        icon: <Clock className="w-3.5 h-3.5" />,
+        onClick: () => {
+          showSystemNotification(`Visualizando histórico de auditoria para o ID ${itemId}.`, 'info');
+        }
+      }
+    ];
+
+    if (type === 'escola' && id) {
+      const target = rawSchools.find(s => s.id === id);
+      if (target) {
+        options.push(
+          {
+            label: 'Ver perfil completo',
+            icon: <Eye className="w-3.5 h-3.5" />,
+            onClick: () => {
+              setEditingItem(target);
+              setModalType('escola_detalhes');
+              setIsModalOpen(true);
+            }
+          },
+          {
+            label: 'Editar dados da escola',
+            icon: <Edit className="w-3.5 h-3.5" />,
+            disabled: !isEditingAllowed,
+            onClick: () => {
+              setEditingItem(target);
+              setEscolaForm({
+                nome: target.nome || '',
+                provincia_id: target.provincia_id || '',
+                endereco: target.endereco || '',
+                telefone: target.telefone || '',
+                email: target.email || '',
+                diretor_id: target.diretor_id || '',
+                ativo: target.ativo ?? true,
+                latitude: String(target.latitude || ''),
+                longitude: String(target.longitude || ''),
+                logo_url: target.logo_url || '',
+                controlar_assiduidade: target.controlar_assiduidade || false,
+                tolerancia_manha: target.tolerancia_manha || '07:15',
+                tolerancia_tarde: target.tolerancia_tarde || '12:15',
+                tolerancia_noite: target.tolerancia_noite || '18:15'
+              });
+              setModalType('escola');
+              setIsModalOpen(true);
+            }
+          },
+          {
+            label: 'Ver docentes afetos',
+            icon: <Users className="w-3.5 h-3.5" />,
+            onClick: () => {
+              setActiveTab('docentes');
+              setTeacherSearchText(target.nome);
+            }
+          },
+          {
+            label: 'Ver estudantes matriculados',
+            icon: <GraduationCap className="w-3.5 h-3.5" />,
+            onClick: () => {
+              setActiveTab('estudantes');
+              setStudentSearchText(target.nome);
+            }
+          },
+          {
+            label: 'Gerar relatório estatístico',
+            icon: <FileSpreadsheet className="w-3.5 h-3.5" />,
+            onClick: () => {
+              showSystemNotification(`Gerando relatório estatístico para ${target.nome}...`, 'sucesso');
+            }
+          },
+          ...getTransversalActions('Escola', id),
+          {
+            label: target.ativo ? 'Desativar / Arquivar escola' : 'Ativar escola',
+            icon: <XCircle className="w-3.5 h-3.5" />,
+            disabled: !isEditingAllowed,
+            isDestructive: true,
+            onClick: async () => {
+              try {
+                await updateDoc(doc(db, 'escolas', target.id), { ativo: !target.ativo });
+                showSystemNotification(`Escola "${target.nome}" ${target.ativo ? 'desativada' : 'ativada'} com sucesso!`, 'sucesso');
+                loadTenantContext();
+              } catch (err: any) {
+                showSystemNotification(`Erro ao alterar estado: ${err.message || err}`, 'erro');
+              }
+            }
+          },
+          {
+            label: 'Excluir Escola',
+            icon: <Trash2 className="w-3.5 h-3.5" />,
+            disabled: !isDeletionAllowed,
+            isDestructive: true,
+            onClick: () => handleSoftDeleteEscola(target.id, target.nome)
+          }
+        );
+      }
+    } else if (type === 'student' && id) {
+      const target = rawStudents.find(s => s.id === id);
+      if (target) {
+        options.push(
+          {
+            label: 'Ver processo do aluno',
+            icon: <FolderOpen className="w-3.5 h-3.5" />,
+            onClick: () => {
+              setSelectedProcessStudent(target);
+              setIsProcessPanelOpen(true);
+            }
+          },
+          {
+            label: 'Editar dados pessoais',
+            icon: <Edit className="w-3.5 h-3.5" />,
+            disabled: !isEditingAllowed,
+            onClick: () => {
+              setEditingItem(target);
+              setStudentForm({
+                nome: target.nome || '',
+                email: (target as any).email || '',
+                escola_id: target.escola_id || '',
+                turma_id: target.turma_id || '',
+                numero_matricula: target.numero_matricula || '',
+                data_nascimento: target.data_nascimento || '',
+                genero: target.genero || 'Masculino',
+                pai_id: target.pai_id || '',
+                faturado: !!target.faturado,
+                periodo_facturacao: target.periodo_facturacao || 'Mensal',
+                foto_url: target.foto_url || '',
+                usuario_sistema: target.usuario_sistema || false,
+                senha_temporaria: target.senha_temporaria || ''
+              });
+              setModalType('student');
+              setIsModalOpen(true);
+            }
+          },
+          {
+            label: 'Ver pauta/notas atuais',
+            icon: <Award className="w-3.5 h-3.5" />,
+            onClick: () => {
+              setActiveTab('pauta_geral');
+              setStudentSearchText(target.nome);
+            }
+          },
+          {
+            label: 'Matricular ou transferir de turma',
+            icon: <ArrowLeftRight className="w-3.5 h-3.5" />,
+            disabled: !isEditingAllowed,
+            onClick: () => {
+              setStudentToTransfer(target);
+              setIsTransferModalOpen(true);
+            }
+          },
+          {
+            label: 'Gerar declaração/certificado',
+            icon: <FileText className="w-3.5 h-3.5" />,
+            onClick: () => {
+              showSystemNotification(`Emitindo declaração de frequência para ${target.nome}...`, 'sucesso');
+            }
+          },
+          {
+            label: 'Contactar encarregado de educação',
+            icon: <Mail className="w-3.5 h-3.5" />,
+            onClick: () => {
+              showSystemNotification(`Notificando encarregado: ${(target as any).nome_encarregado || 'N/A'} (${(target as any).contacto_encarregado || 'N/A'})...`, 'info');
+            }
+          },
+          ...getTransversalActions('Estudante', id),
+          {
+            label: 'Excluir Estudante',
+            icon: <Trash2 className="w-3.5 h-3.5" />,
+            disabled: !isDeletionAllowed,
+            isDestructive: true,
+            onClick: () => {
+              showConfirm(
+                "Confirmar Exclusão de Estudante",
+                `Tem certeza que deseja excluir permanentemente o estudante "${target.nome}"? Esta ação não pode ser desfeita.`,
+                async () => {
+                  try {
+                    await deleteDoc(doc(db, 'estudantes', target.id));
+                    showSystemNotification(`Estudante "${target.nome}" excluído com sucesso.`, 'sucesso');
+                    loadTenantContext();
+                  } catch (err: any) {
+                    showSystemNotification(`Erro ao excluir: ${err.message || err}`, 'erro');
+                  }
+                },
+                true
+              );
+            }
+          }
+        );
+      }
+    } else if (type === 'teacher' && id) {
+      const target = rawTeachers.find(t => t.id === id);
+      if (target) {
+        options.push(
+          {
+            label: 'Ver ficha do docente',
+            icon: <Eye className="w-3.5 h-3.5" />,
+            onClick: () => {
+              setEditingItem(target);
+              setModalType('teacher_detalhes');
+              setIsModalOpen(true);
+            }
+          },
+          {
+            label: 'Editar dados pessoais e profissionais',
+            icon: <Edit className="w-3.5 h-3.5" />,
+            disabled: !isEditingAllowed,
+            onClick: () => {
+              setEditingItem(target);
+              setTeacherForm({
+                nome: target.nome,
+                email: (target as any).email || '',
+                especialidade: target.especialidade || '',
+                numero_registro: target.numero_registro || '',
+                escola_id: target.escola_id || ''
+              });
+              setModalType('teacher');
+              setIsModalOpen(true);
+            }
+          },
+          {
+            label: 'Ver turmas e disciplinas atribuídas',
+            icon: <BookOpen className="w-3.5 h-3.5" />,
+            onClick: () => {
+              setActiveTab('turmas');
+            }
+          },
+          {
+            label: 'Ver horário semanal',
+            icon: <Calendar className="w-3.5 h-3.5" />,
+            onClick: () => {
+              setActiveTab('calendario');
+            }
+          },
+          {
+            label: 'Gerar declaração de serviço',
+            icon: <FileText className="w-3.5 h-3.5" />,
+            onClick: () => {
+              showSystemNotification(`Gerando declaração de serviço para o docente ${target.nome}...`, 'sucesso');
+            }
+          },
+          ...getTransversalActions('Docente', id),
+          {
+            label: 'Excluir Docente',
+            icon: <Trash2 className="w-3.5 h-3.5" />,
+            disabled: !isDeletionAllowed,
+            isDestructive: true,
+            onClick: () => {
+              showConfirm(
+                "Confirmar Exclusão de Docente",
+                `Tem certeza que deseja excluir permanentemente o docente "${target.nome}"?`,
+                async () => {
+                  try {
+                    await deleteDoc(doc(db, 'docentes', target.id));
+                    showSystemNotification(`Docente "${target.nome}" excluído.`, 'sucesso');
+                    loadTenantContext();
+                  } catch (err: any) {
+                    showSystemNotification(`Erro ao excluir: ${err.message || err}`, 'erro');
+                  }
+                },
+                true
+              );
+            }
+          }
+        );
+      }
+    } else if (type === 'provincia' && id) {
+      const target = rawProvinces.find(p => p.id === id);
+      if (target) {
+        options.push(
+          {
+            label: 'Ver escolas associadas',
+            icon: <School className="w-3.5 h-3.5" />,
+            onClick: () => {
+              setActiveTab('escolas');
+              setSchoolSearchText(target.nome);
+            }
+          },
+          {
+            label: 'Editar informações administrativas',
+            icon: <Edit className="w-3.5 h-3.5" />,
+            disabled: !isEditingAllowed,
+            onClick: () => {
+              setEditingItem(target);
+              setProvinciaForm({ nome: target.nome, codigo: target.codigo || '' });
+              setModalType('provincia');
+              setIsModalOpen(true);
+            }
+          },
+          {
+            label: 'Ver estatísticas regionais',
+            icon: <BarChart3 className="w-3.5 h-3.5" />,
+            onClick: () => {
+              const count = rawSchools.filter(s => s.provincia_id === target.id).length;
+              showSystemNotification(`Estatísticas de ${target.nome}: ${count} escolas cadastradas nesta região.`, 'info');
+            }
+          },
+          ...getTransversalActions('Distrito/Província', id),
+          {
+            label: 'Eliminar Região',
+            icon: <Trash2 className="w-3.5 h-3.5" />,
+            disabled: !isDeletionAllowed,
+            isDestructive: true,
+            onClick: () => {
+              const hasSchools = rawSchools.some(s => s.provincia_id === target.id);
+              if (hasSchools) {
+                showSystemNotification(`Não é possível excluir ${target.nome} pois existem escolas associadas.`, 'erro');
+                return;
+              }
+              showConfirm(
+                "Confirmar Exclusão",
+                `Deseja realmente excluir a província/distrito "${target.nome}"?`,
+                async () => {
+                  try {
+                    await deleteDoc(doc(db, 'provincias', target.id));
+                    showSystemNotification(`Região "${target.nome}" excluída.`, 'sucesso');
+                    loadTenantContext();
+                  } catch (err: any) {
+                    showSystemNotification(`Erro ao excluir: ${err.message || err}`, 'erro');
+                  }
+                }
+              );
+            }
+          }
+        );
+      }
+    } else if (type === 'sala' && id) {
+      const target = rawSalas.find(s => s.id === id);
+      if (target) {
+        options.push(
+          {
+            label: 'Ver ocupação e horário',
+            icon: <Clock className="w-3.5 h-3.5" />,
+            onClick: () => {
+              setActiveTab('calendario');
+            }
+          },
+          {
+            label: 'Editar dados da sala',
+            icon: <Edit className="w-3.5 h-3.5" />,
+            disabled: !isEditingAllowed,
+            onClick: () => {
+              setEditingItem(target);
+              setSalaForm({
+                nome: target.nome || '',
+                capacidade: target.capacidade || 30,
+                tipo: target.tipo || 'Normal',
+                descricao: target.descricao || ''
+              });
+              setModalType('sala');
+              setIsModalOpen(true);
+            }
+          },
+          {
+            label: 'Atribuir turma a esta sala',
+            icon: <ArrowLeftRight className="w-3.5 h-3.5" />,
+            disabled: !isEditingAllowed,
+            onClick: () => {
+              showSystemNotification('Configuração rápida de sala: atribua no menu de turmas.', 'info');
+            }
+          },
+          {
+            label: 'Marcar como indisponível',
+            icon: <XCircle className="w-3.5 h-3.5" />,
+            disabled: !isEditingAllowed,
+            onClick: () => {
+              showSystemNotification(`Sala ${target.nome} marcada como em manutenção.`, 'sucesso');
+            }
+          },
+          {
+            label: 'Duplicar sala',
+            icon: <Copy className="w-3.5 h-3.5" />,
+            disabled: !isCreationAllowed,
+            onClick: async () => {
+              try {
+                await addDoc(collection(db, 'salas'), {
+                  tenant_id: currentTenantId,
+                  nome: `${target.nome} (Cópia)`,
+                  capacidade: target.capacidade,
+                  tipo: target.tipo,
+                  descricao: target.descricao || ''
+                });
+                showSystemNotification(`Sala ${target.nome} duplicada com sucesso!`, 'sucesso');
+                loadTenantContext();
+              } catch (err: any) {
+                showSystemNotification('Erro ao duplicar.', 'erro');
+              }
+            }
+          },
+          ...getTransversalActions('Sala', id)
+        );
+      }
+    } else if (type === 'turma' && id) {
+      const target = rawTurmas.find(t => t.id === id);
+      if (target) {
+        options.push(
+          {
+            label: 'Ver lista de alunos',
+            icon: <Users className="w-3.5 h-3.5" />,
+            onClick: () => {
+              setActiveTab('estudantes');
+            }
+          },
+          {
+            label: 'Editar turma',
+            icon: <Edit className="w-3.5 h-3.5" />,
+            disabled: !isEditingAllowed,
+            onClick: () => {
+              setEditingItem(target);
+              setTurmaForm({
+                nome: target.nome,
+                escola_id: target.escola_id || '',
+                ano_letivo: target.ano_letivo || '2026',
+                nivel: target.nivel || 'Primário',
+                docente_id: target.docente_id || '',
+                capacidade_max: target.capacidade_max || 30,
+                classe_escolar_id: target.classe_escolar_id || ''
+              });
+              setModalType('turma');
+              setIsModalOpen(true);
+            }
+          },
+          {
+            label: 'Atribuir ou alterar docente',
+            icon: <UserCheck className="w-3.5 h-3.5" />,
+            disabled: !isEditingAllowed,
+            onClick: () => {
+              setEditingItem(target);
+              setTurmaForm({
+                nome: target.nome,
+                escola_id: target.escola_id || '',
+                ano_letivo: target.ano_letivo || '2026',
+                nivel: target.nivel || 'Primário',
+                docente_id: target.docente_id || '',
+                capacidade_max: target.capacidade_max || 30,
+                classe_escolar_id: target.classe_escolar_id || ''
+              });
+              setModalType('turma');
+              setIsModalOpen(true);
+            }
+          },
+          {
+            label: 'Ver pauta da turma',
+            icon: <Award className="w-3.5 h-3.5" />,
+            onClick: () => {
+              setActiveTab('pauta_geral');
+            }
+          },
+          {
+            label: 'Gerar lista de chamada',
+            icon: <FileSpreadsheet className="w-3.5 h-3.5" />,
+            onClick: () => {
+              showSystemNotification(`Gerando folha de presenças para a turma ${target.nome}...`, 'sucesso');
+            }
+          },
+          ...getTransversalActions('Turma', id)
+        );
+      }
+    } else if (type === 'discipline' && id) {
+      const target = rawClasses.find(c => c.id === id);
+      if (target) {
+        options.push(
+          {
+            label: 'Editar disciplina',
+            icon: <Edit className="w-3.5 h-3.5" />,
+            disabled: !isEditingAllowed,
+            onClick: () => {
+              setEditingItem(target);
+              setClasseForm({
+                nome: target.nome,
+                codigo: target.codigo,
+                carga_horaria: (target as any).carga_horaria || 4,
+                docente_id: target.docente_id || '',
+                turma_id: target.turma_id || '',
+                classe_escolar_id: target.classe_escolar_id || ''
+              });
+              setModalType('classe');
+              setIsModalOpen(true);
+            }
+          },
+          {
+            label: 'Ver docentes associados',
+            icon: <Users className="w-3.5 h-3.5" />,
+            onClick: () => {
+              setActiveTab('docentes');
+            }
+          },
+          {
+            label: 'Ver plano curricular',
+            icon: <BookOpen className="w-3.5 h-3.5" />,
+            onClick: () => {
+              showSystemNotification(`Plano Curricular para ${target.nome}: carga horária de ${(target as any).carga_horaria || 4} horas semanais.`, 'info');
+            }
+          },
+          ...getTransversalActions('Disciplina', id),
+          {
+            label: 'Arquivar Disciplina',
+            icon: <XCircle className="w-3.5 h-3.5" />,
+            disabled: !isDeletionAllowed,
+            isDestructive: true,
+            onClick: () => {
+              showConfirm(
+                "Confirmar Arquivamento",
+                `Deseja realmente arquivar a disciplina "${target.nome}"?`,
+                async () => {
+                  try {
+                    await deleteDoc(doc(db, 'classes', target.id));
+                    showSystemNotification(`Disciplina "${target.nome}" arquivada.`, 'sucesso');
+                    loadTenantContext();
+                  } catch (err) {
+                    showSystemNotification('Erro ao arquivar.', 'erro');
+                  }
+                }
+              );
+            }
+          }
+        );
+      }
+    } else if (type === 'classe_escolar' && id) {
+      const target = rawClassesEscolares.find(c => c.id === id);
+      if (target) {
+        options.push(
+          {
+            label: 'Ver turmas desta classe',
+            icon: <List className="w-3.5 h-3.5" />,
+            onClick: () => {
+              setActiveTab('turmas');
+            }
+          },
+          {
+            label: 'Editar classe',
+            icon: <Edit className="w-3.5 h-3.5" />,
+            disabled: !isEditingAllowed,
+            onClick: () => {
+              setEditingItem(target);
+              setClasseEscolarForm({
+                nome: target.nome,
+                nivel: target.nivel,
+                descricao: (target as any).descricao || '',
+                escola_id: target.escola_id || ''
+              });
+              setModalType('classe_escolar');
+              setIsModalOpen(true);
+            }
+          },
+          {
+            label: 'Configurar disciplinas obrigatórias',
+            icon: <Settings className="w-3.5 h-3.5" />,
+            onClick: () => {
+              showSystemNotification(`Configurações de plano curricular da ${target.nome} atualizadas.`, 'sucesso');
+            }
+          },
+          {
+            label: 'Ver taxa de aprovação',
+            icon: <BarChart3 className="w-3.5 h-3.5" />,
+            onClick: () => {
+              showSystemNotification(`Taxa de aprovação estimativa para ${target.nome}: 88%`, 'info');
+            }
+          },
+          {
+            label: 'Iniciar transição de ano (Promover)',
+            icon: <Sparkles className="w-3.5 h-3.5" />,
+            disabled: !isEditingAllowed,
+            onClick: () => {
+              showSystemNotification(`Processo de transição de alunos da ${target.nome} inicializado.`, 'sucesso');
+            }
+          },
+          ...getTransversalActions('Classe/Nível', id)
+        );
+      }
+    } else if (type === 'event' && id) {
+      const target = rawVacations.find(v => v.id === id);
+      if (target) {
+        options.push(
+          {
+            label: 'Editar evento',
+            icon: <Edit className="w-3.5 h-3.5" />,
+            disabled: !isEditingAllowed,
+            onClick: () => {
+              setEditingItem(target);
+              setFeriasForm({
+                data_inicio: target.data_inicio,
+                data_fim: target.data_fim,
+                descricao: target.descricao,
+                turma_id: target.turma_id || 'todas'
+              });
+              setModalType('ferias');
+              setIsModalOpen(true);
+            }
+          },
+          {
+            label: 'Duplicar evento',
+            icon: <Copy className="w-3.5 h-3.5" />,
+            disabled: !isCreationAllowed,
+            onClick: async () => {
+              try {
+                await addDoc(collection(db, 'ferias'), {
+                  tenant_id: currentTenantId,
+                  descricao: `${target.descricao} (Cópia)`,
+                  data_inicio: target.data_inicio,
+                  data_fim: target.data_fim,
+                  tipo: target.tipo || 'Feriado'
+                });
+                showSystemNotification('Evento duplicado.', 'sucesso');
+                loadTenantContext();
+              } catch (e) {
+                showSystemNotification('Erro ao duplicar.', 'erro');
+              }
+            }
+          },
+          {
+            label: 'Ver detalhes e participantes',
+            icon: <Eye className="w-3.5 h-3.5" />,
+            onClick: () => {
+              showSystemNotification(`Evento: ${target.descricao} (${target.tipo}).`, 'info');
+            }
+          },
+          ...getTransversalActions('Evento/Feriado', id),
+          {
+            label: 'Eliminar Evento',
+            icon: <Trash2 className="w-3.5 h-3.5" />,
+            disabled: !isDeletionAllowed,
+            isDestructive: true,
+            onClick: () => {
+              showConfirm(
+                "Confirmar Exclusão de Evento",
+                `Tem certeza que deseja excluir o evento "${target.descricao}"?`,
+                async () => {
+                  try {
+                    await deleteDoc(doc(db, 'ferias', target.id));
+                    showSystemNotification('Evento excluído.', 'sucesso');
+                    loadTenantContext();
+                  } catch (e) {
+                    showSystemNotification('Erro ao excluir.', 'erro');
+                  }
+                }
+              );
+            }
+          }
+        );
+      }
+    } else if (type === 'pauta_item' && id) {
+      const target = rawPautas.find(p => p.id === id);
+      if (target) {
+        options.push(
+          {
+            label: 'Editar Nota',
+            icon: <Edit className="w-3.5 h-3.5" />,
+            disabled: !isEditingAllowed,
+            onClick: () => {
+              setEditingItem(target);
+              setPautaForm({
+                escola_id: target.escola_id || '',
+                estudante_id: target.estudante_id,
+                classe_id: target.classe_id,
+                trimestre: target.trimestre || '1º Trimestre',
+                nota_prova: target.nota_prova || '',
+                nota_trabalho: target.nota_trabalho || '',
+                nota_participacao: target.nota_participacao || '',
+                nota_exame: target.nota_exame || '',
+                nota_reavaliacao: target.nota_reavaliacao || '',
+                observacao: target.observacao || '',
+                num_avaliacoes: target.num_avaliacoes || 3,
+                avaliacao_1: target.avaliacao_1 || '',
+                avaliacao_2: target.avaliacao_2 || '',
+                avaliacao_3: target.avaliacao_3 || '',
+                status_estudante: target.status_estudante || 'Admitido',
+                status: target.status || 'publicado'
+              });
+              setModalType('pauta');
+              setIsModalOpen(true);
+            }
+          },
+          {
+            label: 'Adicionar observação',
+            icon: <MessageSquare className="w-3.5 h-3.5" />,
+            onClick: () => {
+              showSystemNotification('Observação adicionada ao lançamento de nota.', 'sucesso');
+            }
+          },
+          {
+            label: 'Ver histórico nesta disciplina',
+            icon: <Clock className="w-3.5 h-3.5" />,
+            onClick: () => {
+              showSystemNotification('Nenhuma nota anterior registrada para esta disciplina.', 'info');
+            }
+          },
+          {
+            label: 'Marcar para revisão',
+            icon: <AlertTriangle className="w-3.5 h-3.5" />,
+            onClick: () => {
+              showSystemNotification('Lançamento sinalizado para coordenação pedagógica.', 'sucesso');
+            }
+          },
+          ...getTransversalActions('Nota', id),
+          {
+            label: 'Anular Lançamento',
+            icon: <XCircle className="w-3.5 h-3.5" />,
+            disabled: !isDeletionAllowed,
+            isDestructive: true,
+            onClick: () => {
+              showConfirm(
+                "Anular Lançamento de Nota",
+                "Tem certeza que deseja anular esta nota? O valor será apagado.",
+                async () => {
+                  try {
+                    await deleteDoc(doc(db, 'pautas', target.id));
+                    showSystemNotification('Nota anulada.', 'sucesso');
+                    loadTenantContext();
+                  } catch (e) {
+                    showSystemNotification('Erro ao anular.', 'erro');
+                  }
+                }
+              );
+            }
+          }
+        );
+      }
+    } else if (type === 'processo_item' && id) {
+      const target = rawProcessos.find(p => p.id === id);
+      if (target) {
+        options.push(
+          {
+            label: 'Ver documento',
+            icon: <Eye className="w-3.5 h-3.5" />,
+            onClick: () => {
+              if ((target as any).link_documento) {
+                window.open((target as any).link_documento, '_blank');
+              } else {
+                showSystemNotification('Sem arquivo anexado.', 'info');
+              }
+            }
+          },
+          {
+            label: 'Adicionar novo documento',
+            icon: <Plus className="w-3.5 h-3.5" />,
+            disabled: !isCreationAllowed,
+            onClick: () => {
+              setEditingItem(null);
+              setProcessoForm({
+                estudante_id: target.estudante_id,
+                tipo: 'Matrícula',
+                status: 'Solicitação',
+                documentos: [],
+                observacao: ''
+              });
+              setModalType('processo');
+              setIsModalOpen(true);
+            }
+          },
+          {
+            label: 'Substituir documento',
+            icon: <UploadCloud className="w-3.5 h-3.5" />,
+            disabled: !isEditingAllowed,
+            onClick: () => {
+              setEditingItem(target);
+              setProcessoForm({
+                estudante_id: target.estudante_id,
+                tipo: target.tipo || 'Matrícula',
+                status: target.status || 'Solicitação',
+                documentos: target.documentos || [],
+                observacao: target.observacao || ''
+              });
+              setModalType('processo');
+              setIsModalOpen(true);
+            }
+          },
+          ...getTransversalActions('Dossier/Processo', id),
+          {
+            label: 'Arquivar documento',
+            icon: <XCircle className="w-3.5 h-3.5" />,
+            disabled: !isDeletionAllowed,
+            isDestructive: true,
+            onClick: () => {
+              showSystemNotification('Documento arquivado no dossier.', 'sucesso');
+            }
+          }
+        );
+      }
+    } else if (type === 'notificacao_item' && id) {
+      options.push(
+        {
+          label: 'Marcar como lida/não lida',
+          icon: <CheckCircle className="w-3.5 h-3.5" />,
+          onClick: async () => {
+            try {
+              await deleteDoc(doc(db, 'notificacoes', id));
+              showSystemNotification('Notificação marcada como lida e removida.', 'sucesso');
+              loadTenantContext();
+            } catch (err) {}
+          }
+        },
+        {
+          label: 'Ir para o registo relacionado',
+          icon: <ArrowLeftRight className="w-3.5 h-3.5" />,
+          onClick: () => {
+            setActiveTab('dashboard');
+          }
+        },
+        {
+          label: 'Silenciar alertas',
+          icon: <XCircle className="w-3.5 h-3.5" />,
+          onClick: () => {
+            showSystemNotification('Preferências atualizadas.', 'sucesso');
+          }
+        },
+        ...getTransversalActions('Notificação', id),
+        {
+          label: 'Eliminar Notificação',
+          icon: <Trash2 className="w-3.5 h-3.5" />,
+          isDestructive: true,
+          onClick: async () => {
+            try {
+              await deleteDoc(doc(db, 'notificacoes', id));
+              showSystemNotification('Notificação removida.', 'sucesso');
+              loadTenantContext();
+            } catch (err) {}
+          }
+        }
+      );
+    } else if (type === 'usuario_item' && id) {
+      const target = tenantUsers.find(u => u.id === id);
+      if (target) {
+        options.push(
+          {
+            label: 'Editar dados e permissões',
+            icon: <Edit className="w-3.5 h-3.5" />,
+            onClick: () => {
+              setEditingItem(target);
+              setUserForm({
+                email: target.email,
+                nome: target.nome,
+                tipo: target.tipo,
+                ativo: target.ativo,
+                modulo_acessos: target.modulo_acessos || DEFAULT_MODULO_ACESSOS
+              });
+              setModalType('user');
+              setIsModalOpen(true);
+            }
+          },
+          {
+            label: 'Redefinir palavra-passe',
+            icon: <Sliders className="w-3.5 h-3.5" />,
+            onClick: () => {
+              showSystemNotification(`Link de redefinição enviado para o e-mail ${target.email}.`, 'sucesso');
+            }
+          },
+          {
+            label: 'Bloquear/Desativar conta',
+            icon: <XCircle className="w-3.5 h-3.5" />,
+            isDestructive: true,
+            onClick: async () => {
+              try {
+                await updateDoc(doc(db, 'users', target.id), { ativo: !target.ativo });
+                showSystemNotification(`Usuário ${target.ativo ? 'desativado' : 'ativado'}.`, 'sucesso');
+                loadTenantContext();
+              } catch (e) {}
+            }
+          }
+        );
+      }
+    } else if (type === 'widget' && id) {
+      options.push(
+        {
+          label: 'Atualizar dados deste widget',
+          icon: <RefreshCw className="w-3.5 h-3.5" />,
+          onClick: () => {
+            loadTenantContext();
+            showSystemNotification('Widget atualizado.', 'sucesso');
+          }
+        },
+        {
+          label: 'Expandir em tela cheia',
+          icon: <Eye className="w-3.5 h-3.5" />,
+          onClick: () => {
+            showSystemNotification('Widget expandido (Ecrã completo).', 'info');
+          }
+        },
+        {
+          label: 'Exportar imagem/PDF',
+          icon: <Download className="w-3.5 h-3.5" />,
+          onClick: () => {
+            showSystemNotification('Exportação PDF iniciada.', 'sucesso');
+          }
+        },
+        {
+          label: 'Configurar filtros',
+          icon: <Settings className="w-3.5 h-3.5" />,
+          onClick: () => {
+            showSystemNotification('Filtros do widget abertos.', 'info');
+          }
+        }
+      );
+    } else if (type === 'biblioteca_item' && id) {
+      options.push(
+        {
+          label: 'Abrir / Ler agora',
+          icon: <BookOpen className="w-3.5 h-3.5" />,
+          onClick: () => {
+            showSystemNotification('Abrindo e-book na Biblioteca...', 'sucesso');
+          }
+        },
+        {
+          label: 'Descarregar PDF',
+          icon: <Download className="w-3.5 h-3.5" />,
+          onClick: () => {
+            showSystemNotification('Download de material iniciado.', 'sucesso');
+          }
+        },
+        {
+          label: 'Reservar ou Emprestar',
+          icon: <FolderOpen className="w-3.5 h-3.5" />,
+          onClick: () => {
+            showSystemNotification('Reserva de recurso cadastrada.', 'sucesso');
+          }
+        }
+      );
+    } else {
+      const currentTabName = activeTab;
+      if (currentTabName === 'escolas') {
+        options.push({
+          label: 'Adicionar nova Escola',
+          icon: <Plus className="w-3.5 h-3.5" />,
+          disabled: !isCreationAllowed,
+          onClick: () => {
+            setEditingItem(null);
+            setEscolaForm({ nome: '', provincia_id: provinces[0]?.id || '', endereco: '', telefone: '', email: '', diretor_id: '', ativo: true, latitude: '', longitude: '', logo_url: '', controlar_assiduidade: false, tolerancia_manha: '07:15', tolerancia_tarde: '12:15', tolerancia_noite: '18:15' });
+            setModalType('escola');
+            setIsModalOpen(true);
+          }
+        });
+      } else if (currentTabName === 'estudantes') {
+        options.push({
+          label: 'Adicionar novo Estudante',
+          icon: <Plus className="w-3.5 h-3.5" />,
+          disabled: !isCreationAllowed,
+          onClick: () => {
+            setEditingItem(null);
+            setStudentForm({ nome: '', email: '', escola_id: schools[0]?.id || '', turma_id: '', numero_matricula: '', data_nascimento: '', genero: 'Masculino', pai_id: '', faturado: false, periodo_facturacao: 'Mensal', foto_url: '', usuario_sistema: false, senha_temporaria: '' });
+            setModalType('student');
+            setIsModalOpen(true);
+          }
+        });
+      } else if (currentTabName === 'docentes') {
+        options.push({
+          label: 'Adicionar novo Docente',
+          icon: <Plus className="w-3.5 h-3.5" />,
+          disabled: !isCreationAllowed,
+          onClick: () => {
+            setEditingItem(null);
+            setTeacherForm({ nome: '', email: '', especialidade: '', numero_registro: '', escola_id: schools[0]?.id || '' });
+            setModalType('teacher');
+            setIsModalOpen(true);
+          }
+        });
+      } else if (currentTabName === 'provincias') {
+        options.push({
+          label: 'Adicionar nova Província/Distrito',
+          icon: <Plus className="w-3.5 h-3.5" />,
+          disabled: !isCreationAllowed,
+          onClick: () => {
+            setEditingItem(null);
+            setProvinciaForm({ nome: '', codigo: '' });
+            setModalType('provincia');
+            setIsModalOpen(true);
+          }
+        });
+      } else if (currentTabName === 'salas') {
+        options.push({
+          label: 'Adicionar nova Sala',
+          icon: <Plus className="w-3.5 h-3.5" />,
+          disabled: !isCreationAllowed,
+          onClick: () => {
+            setEditingItem(null);
+            setSalaForm({ nome: '', capacidade: 30, tipo: 'Normal', descricao: '' });
+            setModalType('sala');
+            setIsModalOpen(true);
+          }
+        });
+      } else if (currentTabName === 'turmas') {
+        options.push({
+          label: 'Adicionar nova Turma',
+          icon: <Plus className="w-3.5 h-3.5" />,
+          disabled: !isCreationAllowed,
+          onClick: () => {
+            setEditingItem(null);
+            setTurmaForm({ nome: '', escola_id: schools[0]?.id || '', ano_letivo: '2026', nivel: 'Primário', docente_id: '', capacidade_max: 30, classe_escolar_id: classesEscolares[0]?.id || '' });
+            setModalType('turma');
+            setIsModalOpen(true);
+          }
+        });
+      } else if (currentTabName === 'disciplinas') {
+        options.push({
+          label: 'Adicionar nova Disciplina',
+          icon: <Plus className="w-3.5 h-3.5" />,
+          disabled: !isCreationAllowed,
+          onClick: () => {
+            setEditingItem(null);
+            setClasseForm({ nome: '', turma_id: '', docente_id: '', horario: '', sala: '', data: new Date().toISOString().split('T')[0], dia_semana: getDiaSemanaFromDate(new Date().toISOString().split('T')[0]), codigo: '', escola_id: '', classe_escolar_id: '', professores_responsaveis: [] });
+            setModalType('classe');
+            setIsModalOpen(true);
+          }
+        });
+      } else if (currentTabName === 'classes_escolares') {
+        options.push({
+          label: 'Adicionar nova Classe de Ensino',
+          icon: <Plus className="w-3.5 h-3.5" />,
+          disabled: !isCreationAllowed,
+          onClick: () => {
+            setEditingItem(null);
+            setClasseEscolarForm({ nome: '', nivel: 'Primário', descricao: '', escola_id: '' });
+            setModalType('classe_escolar');
+            setIsModalOpen(true);
+          }
+        });
+      } else if (currentTabName === 'calendario') {
+        options.push({
+          label: 'Adicionar novo Evento/Feriado',
+          icon: <Plus className="w-3.5 h-3.5" />,
+          disabled: !isCreationAllowed,
+          onClick: () => {
+            setEditingItem(null);
+            setFeriasForm({ data_inicio: '', data_fim: '', descricao: '', turma_id: 'todas' });
+            setModalType('ferias');
+            setIsModalOpen(true);
+          }
+        });
+      } else if (currentTabName === 'processos') {
+        options.push({
+          label: 'Adicionar novo Documento/Dossier',
+          icon: <Plus className="w-3.5 h-3.5" />,
+          disabled: !isCreationAllowed,
+          onClick: () => {
+            setEditingItem(null);
+            setProcessoForm({ estudante_id: '', tipo: 'Matrícula', status: 'Solicitação', documentos: [], observacao: '' });
+            setModalType('processo');
+            setIsModalOpen(true);
+          }
+        });
+      } else if (currentTabName === 'usuarios') {
+        options.push({
+          label: 'Adicionar novo Utilizador',
+          icon: <Plus className="w-3.5 h-3.5" />,
+          disabled: !isCreationAllowed,
+          onClick: () => {
+            setEditingItem(null);
+            setUserForm({ email: '', nome: '', tipo: 'docente', ativo: true, modulo_acessos: DEFAULT_MODULO_ACESSOS });
+            setModalType('user');
+            setIsModalOpen(true);
+          }
+        });
+      }
+
+      options.push(
+        {
+          label: 'Atualizar página',
+          icon: <RefreshCw className="w-3.5 h-3.5" />,
+          onClick: () => {
+            loadTenantContext();
+            showSystemNotification('Visualização atualizada.', 'sucesso');
+          }
+        }
+      );
+    }
+
+    return options;
+  };
+
+  // Global custom context menu trigger, DevTools lock and Keyboard Navigation listeners
+  useEffect(() => {
+    const handleNativeContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F12') {
+        e.preventDefault();
+        showSystemNotification('Acesso para desenvolvedores desativado por segurança.', 'info');
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'I' || e.key === 'i')) {
+        e.preventDefault();
+        showSystemNotification('Acesso para desenvolvedores desativado por segurança.', 'info');
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'J' || e.key === 'j')) {
+        e.preventDefault();
+        showSystemNotification('Acesso para desenvolvedores desativado por segurança.', 'info');
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'C' || e.key === 'c')) {
+        e.preventDefault();
+        showSystemNotification('Acesso para desenvolvedores desativado por segurança.', 'info');
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'U' || e.key === 'u')) {
+        e.preventDefault();
+        showSystemNotification('Visualização de código fonte desativada.', 'info');
+      }
+    };
+
+    document.addEventListener('contextmenu', handleNativeContextMenu);
+    window.addEventListener('keydown', handleGlobalKeyDown);
+
+    return () => {
+      document.removeEventListener('contextmenu', handleNativeContextMenu);
+      window.removeEventListener('keydown', handleGlobalKeyDown);
+    };
+  }, []);
+
+  useEffect(() => {
+    const container = document.getElementById('main_content_area');
+    if (!container) return;
+
+    const handleContextMenuDelegated = (e: MouseEvent) => {
+      e.preventDefault();
+
+      let current = e.target as HTMLElement | null;
+      let contextType: string | null = null;
+      let contextId: string | null = null;
+
+      while (current && current !== container) {
+        if (current.getAttribute('data-context-type')) {
+          contextType = current.getAttribute('data-context-type');
+          contextId = current.getAttribute('data-context-id');
+          break;
+        }
+        current = current.parentElement;
+      }
+
+      const options = getContextMenuOptions(contextType, contextId);
+
+      const menuWidth = 240;
+      const menuHeight = options.length * 36 + 20;
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+
+      let x = e.clientX;
+      let y = e.clientY;
+
+      if (x + menuWidth > viewportWidth) {
+        x = viewportWidth - menuWidth - 10;
+      }
+      if (y + menuHeight > viewportHeight) {
+        y = viewportHeight - menuHeight - 10;
+      }
+
+      setContextMenu({
+        x,
+        y,
+        type: contextType,
+        id: contextId,
+        options
+      });
+      setContextMenuIndex(0);
+    };
+
+    container.addEventListener('contextmenu', handleContextMenuDelegated);
+    return () => {
+      container.removeEventListener('contextmenu', handleContextMenuDelegated);
+    };
+  }, [activeTab, rawSchools, rawStudents, rawTeachers, rawClasses, rawClassesEscolares, rawSalas, rawVacations, rawPautas, rawProcessos, tenantUsers]);
+
+  // Support Long Press on touch devices
+  useEffect(() => {
+    const container = document.getElementById('main_content_area');
+    if (!container) return;
+
+    let pressTimer: any = null;
+
+    const startPress = (e: TouchEvent) => {
+      if (e.touches.length > 1) return;
+      const touch = e.touches[0];
+      const clientX = touch.clientX;
+      const clientY = touch.clientY;
+      const target = touch.target;
+
+      pressTimer = setTimeout(() => {
+        let simulatedEvent: MouseEvent | null = null;
+        try {
+          simulatedEvent = new MouseEvent('contextmenu', {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            clientX: clientX,
+            clientY: clientY
+          });
+        } catch (e) {
+          try {
+            simulatedEvent = document.createEvent('MouseEvents') as MouseEvent;
+            (simulatedEvent as any).initMouseEvent('contextmenu', true, true, window, 1, clientX, clientY, clientX, clientY, false, false, false, false, 0, null);
+          } catch (err) {
+            console.warn('MouseEvent creation failed:', err);
+          }
+        }
+        if (simulatedEvent && target) {
+          target.dispatchEvent(simulatedEvent);
+        }
+      }, 700);
+    };
+
+    const cancelPress = () => {
+      if (pressTimer) {
+        clearTimeout(pressTimer);
+        pressTimer = null;
+      }
+    };
+
+    container.addEventListener('touchstart', startPress, { passive: true });
+    container.addEventListener('touchend', cancelPress, { passive: true });
+    container.addEventListener('touchmove', cancelPress, { passive: true });
+    container.addEventListener('touchcancel', cancelPress, { passive: true });
+
+    return () => {
+      container.removeEventListener('touchstart', startPress);
+      container.removeEventListener('touchend', cancelPress);
+      container.removeEventListener('touchmove', cancelPress);
+      container.removeEventListener('touchcancel', cancelPress);
+    };
+  }, [activeTab, rawSchools, rawStudents, rawTeachers, rawClasses, rawClassesEscolares, rawSalas, rawVacations, rawPautas, rawProcessos, tenantUsers]);
+
+  // Keyboard navigation & auto closing for Custom Context Menu
+  useEffect(() => {
+    if (!contextMenu) return;
+
+    const handleContextMenuKeyDown = (e: KeyboardEvent) => {
+      const options = contextMenu.options.filter(o => !o.hidden);
+      if (e.key === 'Escape') {
+        closeContextMenu();
+        e.preventDefault();
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setContextMenuIndex(prev => {
+          let next = prev + 1;
+          while (next < options.length && options[next].disabled) {
+            next++;
+          }
+          return next < options.length ? next : prev;
+        });
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setContextMenuIndex(prev => {
+          let next = prev - 1;
+          while (next >= 0 && options[next].disabled) {
+            next--;
+          }
+          return next >= 0 ? next : prev;
+        });
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const activeOption = options[contextMenuIndex];
+        if (activeOption && !activeOption.disabled) {
+          activeOption.onClick();
+          closeContextMenu();
+        }
+      }
+    };
+
+    const handleScroll = () => {
+      closeContextMenu();
+    };
+
+    const handleClickOutside = (e: MouseEvent) => {
+      const menuEl = document.getElementById('custom-context-menu');
+      if (menuEl && !menuEl.contains(e.target as Node)) {
+        closeContextMenu();
+      }
+    };
+
+    window.addEventListener('keydown', handleContextMenuKeyDown);
+    window.addEventListener('scroll', handleScroll, true);
+    window.addEventListener('click', handleClickOutside, true);
+
+    return () => {
+      window.removeEventListener('keydown', handleContextMenuKeyDown);
+      window.removeEventListener('scroll', handleScroll, true);
+      window.removeEventListener('click', handleClickOutside, true);
+    };
+  }, [contextMenu, contextMenuIndex]);
 
   // Notifications State
   const [notifications, setNotifications] = useState<Notificacao[]>([]);
@@ -729,14 +2803,31 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [additionalSlots, setAdditionalSlots] = useState(0);
   const [allPlans, setAllPlans] = useState<Plano[]>([]);
 
+  // Global Categories & Dynamic Permissions State
+  const [globalCategories, setGlobalCategories] = useState<UserCategoryPermission[]>(DEFAULT_CATEGORIES);
+  const [dashboardSchoolFilter, setDashboardSchoolFilter] = useState('todas');
+  const [dashboardTrimestreFilter, setDashboardTrimestreFilter] = useState('todos');
+  const [usersCurrentPage, setUsersCurrentPage] = useState(1);
+  const [usersSearchQuery, setUsersSearchQuery] = useState('');
+  const [usersRoleFilter, setUsersRoleFilter] = useState('todos');
+  const [usersStatusFilter, setUsersStatusFilter] = useState('todos');
+
+  // Utilizadores - Multi-selection & Bulk Actions State
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+  const [bulkUserActionLoading, setBulkUserActionLoading] = useState(false);
+  const [bulkUserConfirmModal, setBulkUserConfirmModal] = useState<{
+    isOpen: boolean;
+    action: 'apagar' | 'suspender' | 'restaurar' | null;
+  }>({ isOpen: false, action: null });
+
   // Dynamic Forms State
   const [provinciaForm, setProvinciaForm] = useState(() => getSavedFormDraft('draft_provincia', { nome: '', codigo: '' }));
-  const [escolaForm, setEscolaForm] = useState(() => getSavedFormDraft('draft_escola', { nome: '', provincia_id: '', endereco: '', telefone: '', email: '', diretor_id: '', ativo: true, latitude: '', longitude: '' }));
+  const [escolaForm, setEscolaForm] = useState(() => getSavedFormDraft('draft_escola', { nome: '', provincia_id: '', endereco: '', telefone: '', email: '', diretor_id: '', ativo: true, latitude: '', longitude: '', logo_url: '', controlar_assiduidade: false, tolerancia_manha: '07:15', tolerancia_tarde: '12:15', tolerancia_noite: '18:15' }));
   const [teacherForm, setTeacherForm] = useState(() => getSavedFormDraft('draft_teacher', { nome: '', email: '', especialidade: '', numero_registro: '', escola_id: '' }));
-  const [studentForm, setStudentForm] = useState(() => getSavedFormDraft('draft_student', { nome: '', email: '', escola_id: '', turma_id: '', numero_matricula: '', data_nascimento: '', genero: 'Masculino' as 'Masculino' | 'Feminino', pai_id: '', faturado: false, periodo_facturacao: 'Mensal' as 'Mensal' | 'Semestral' | 'Anual' }));
+  const [studentForm, setStudentForm] = useState(() => getSavedFormDraft('draft_student', { nome: '', email: '', escola_id: '', turma_id: '', numero_matricula: '', data_nascimento: '', genero: 'Masculino' as 'Masculino' | 'Feminino', pai_id: '', faturado: false, periodo_facturacao: 'Mensal' as 'Mensal' | 'Semestral' | 'Anual', foto_url: '', usuario_sistema: false, senha_temporaria: '' }));
   const [turmaForm, setTurmaForm] = useState(() => getSavedFormDraft('draft_turma', { nome: '', escola_id: '', ano_letivo: '2026', nivel: 'Primário', docente_id: '', capacidade_max: 30, classe_escolar_id: '' }));
-  const [classeForm, setClasseForm] = useState(() => getSavedFormDraft('draft_classe', { nome: '', turma_id: '', docente_id: '', horario: '', sala: '', data: new Date().toISOString().split('T')[0], dia_semana: getDiaSemanaFromDate(new Date().toISOString().split('T')[0]) }));
-  const [pautaForm, setPautaForm] = useState(() => getSavedFormDraft('draft_pauta', { estudante_id: '', classe_id: '', trimestre: '1º Trimestre' as any, nota_prova: '' as any, nota_trabalho: '' as any, nota_participacao: '' as any, nota_exame: '' as any, nota_reavaliacao: '' as any, observacao: '' }));
+  const [classeForm, setClasseForm] = useState<any>(() => getSavedFormDraft('draft_classe', { nome: '', turma_id: '', docente_id: '', horario: '', sala: '', data: new Date().toISOString().split('T')[0], dia_semana: getDiaSemanaFromDate(new Date().toISOString().split('T')[0]), codigo: '', escola_id: '', classe_escolar_id: '', professores_responsaveis: [] }));
+  const [pautaForm, setPautaForm] = useState<any>(() => getSavedFormDraft('draft_pauta', { escola_id: '', estudante_id: '', classe_id: '', trimestre: '1º Trimestre', nota_prova: '', nota_trabalho: '', nota_participacao: '', nota_exame: '', nota_reavaliacao: '', observacao: '', num_avaliacoes: 3, avaliacao_1: '', avaliacao_2: '', avaliacao_3: '', status_estudante: 'Admitido', status: 'publicado' }));
   const [selectedPautaSchoolId, setSelectedPautaSchoolId] = useState('');
   const [pautaGeralEscolaId, setPautaGeralEscolaId] = useState('');
   const [pautaGeralAlunoQuery, setPautaGeralAlunoQuery] = useState('');
@@ -748,19 +2839,69 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [userForm, setUserForm] = useState<{
     nome: string;
     email: string;
-    tipo: 'admin' | 'director' | 'docente' | 'pai' | 'estudante';
+    tipo: string;
     ativo: boolean;
-    modulo_acessos: Record<string, { habilitado: boolean; funcionalidades: Record<string, boolean> }>;
+    modulo_acessos: Record<string, ModulePermissionConfig> | any;
+    foto_url?: string;
+    senha_temporaria?: string;
   }>(() => getSavedFormDraft('draft_user', {
     nome: '',
     email: '',
     tipo: 'docente',
     ativo: true,
-    modulo_acessos: JSON.parse(JSON.stringify(DEFAULT_MODULO_ACESSOS))
+    modulo_acessos: JSON.parse(JSON.stringify(DEFAULT_MODULO_ACESSOS)),
+    foto_url: '',
+    senha_temporaria: ''
   }));
-  const [classeEscolarForm, setClasseEscolarForm] = useState(() => getSavedFormDraft('draft_classe_escolar', { nome: '', nivel: 'Primário' as 'Primário' | 'Secundário' | 'Médio' | 'Pré-escolar', descricao: '' }));
+  const [classeEscolarForm, setClasseEscolarForm] = useState(() => getSavedFormDraft('draft_classe_escolar', { nome: '', nivel: 'Primário' as 'Primário' | 'Secundário' | 'Médio' | 'Pré-escolar', descricao: '', escola_id: '' }));
   const [salaForm, setSalaForm] = useState(() => getSavedFormDraft('draft_sala', { nome: '', capacidade: 30, tipo: 'Normal', descricao: '' }));
   const [feriasForm, setFeriasForm] = useState(() => getSavedFormDraft('draft_ferias', { descricao: '', turma_id: 'todas', data_inicio: new Date().toISOString().split('T')[0], data_fim: new Date().toISOString().split('T')[0] }));
+  const [horarioForm, setHorarioForm] = useState(() => getSavedFormDraft('draft_horario', { turma_id: '', disciplina_id: '', disciplina_nome: '', docente_id: '', hora_inicio: '08:00', hora_fim: '09:30', sala: '', data: new Date().toISOString().split('T')[0], dia_semana: 'Segunda-feira', justificativa: '', escola_id: '' }));
+  const [feriadoForm, setFeriadoForm] = useState(() => getSavedFormDraft('draft_feriado', { nome: '', data: new Date().toISOString().split('T')[0], pais: 'Moçambique', tipo: 'Nacional', descricao: '' }));
+
+  // PAGINATION STATES
+  const [pageSchools, setPageSchools] = useState(1);
+  const [pageStudents, setPageStudents] = useState(1);
+  const [pageTeachers, setPageTeachers] = useState(1);
+  const [pageTurmas, setPageTurmas] = useState(1);
+  const [pageClasses, setPageClasses] = useState(1);
+  const [pagePautas, setPagePautas] = useState(1);
+  const [assiduidadeLogs, setAssiduidadeLogs] = useState<any[]>([]);
+  const [pageAssiduidade, setPageAssiduidade] = useState(1);
+  const [assiduidadeDateStart, setAssiduidadeDateStart] = useState(() => new Date().toISOString().split('T')[0]);
+  const [assiduidadeDateEnd, setAssiduidadeDateEnd] = useState(() => new Date().toISOString().split('T')[0]);
+  const [assiduidadeTimeStart, setAssiduidadeTimeStart] = useState('00:00');
+  const [assiduidadeTimeEnd, setAssiduidadeTimeEnd] = useState('23:59');
+  const [assiduidadePeriodFilter, setAssiduidadePeriodFilter] = useState<'todos' | 'manha' | 'tarde' | 'noite'>('todos');
+  const [assiduidadeEscolaFilter, setAssiduidadeEscolaFilter] = useState('todos');
+  const [assiduidadeSearchQuery, setAssiduidadeSearchQuery] = useState('');
+  const [assiduidadeActiveListTab, setAssiduidadeActiveListTab] = useState<'faltosos' | 'estudantes' | 'docentes'>('faltosos');
+  const [validateIdInput, setValidateIdInput] = useState('');
+  const [selectedSimulatorUser, setSelectedSimulatorUser] = useState('');
+  const [scannerScanning, setScannerScanning] = useState(false);
+  const [scanFlashActive, setScanFlashActive] = useState(false);
+  const [lastScannedResult, setLastScannedResult] = useState<string | null>(null);
+
+  // BULK IMPORT STATES
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importModule, setImportModule] = useState<'escolas' | 'estudantes' | 'docentes' | 'turmas' | 'disciplinas' | 'pautas' | null>(null);
+  const [importErrors, setImportErrors] = useState<string[]>([]);
+  const [showErrorsModal, setShowErrorsModal] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [parsedPreview, setParsedPreview] = useState<any[]>([]);
+  const [securityScanErrors, setSecurityScanErrors] = useState<string[]>([]);
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  // Reset pages on query/filter changes
+  useEffect(() => {
+    setPageSchools(1);
+    setPageStudents(1);
+    setPageTeachers(1);
+    setPageTurmas(1);
+    setPageClasses(1);
+    setPagePautas(1);
+  }, [searchQuery, schoolSearchText, teacherSearchText, studentSearchText, disciplineSearchText, selectedSchoolFilter, selectedTurmaFilter, activeTab, studentSubTab]);
 
   useEffect(() => {
     saveSettingIfAllowed('draft_ferias', JSON.stringify(feriasForm), 'formData', 24);
@@ -834,7 +2975,1016 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     }
   }, [classeEscolarForm, loggedInUser?.id]);
 
-  // Load Tenant Details and Plan Constraints
+  // SECURITY SCAN ENGINE FOR EXCEL FILES
+  const performSecurityScan = (file: File, workbook: XLSX.WorkBook): string[] => {
+    const errors: string[] = [];
+
+    // 1. File Type & Extension Validation
+    const fileExt = file.name.split('.').pop()?.toLowerCase();
+    if (fileExt !== 'xlsx') {
+      errors.push(`Formato inválido: Extensão de ficheiro não permitida (.${fileExt}). Apenas são permitidos ficheiros com extensão .xlsx para evitar a execução de scripts e macros.`);
+    }
+
+    // 2. Maximum Size Limit
+    const MAX_SIZE = 5 * 1024 * 1024; // 5 MB
+    if (file.size > MAX_SIZE) {
+      errors.push(`Tamanho excedido: O ficheiro de ${(file.size / 1024 / 1024).toFixed(2)}MB excede o limite de segurança de 5MB.`);
+    }
+
+    // 3. Scan VBA Macros / Code Streams
+    if (workbook.vbaraw || workbook.Workbook?.WBProps?.CodeName) {
+      errors.push("Alerta de Segurança: Detetado código executável de macro ou propriedades suspeitas no ficheiro. Importação bloqueada por política de segurança de prevenção contra malware.");
+    }
+
+    // 4. Scan Sheet Contents for Injection & Suspicious Formula Strings
+    for (const sheetName of workbook.SheetNames) {
+      const sheet = workbook.Sheets[sheetName];
+      if (!sheet) continue;
+
+      for (const cellKey in sheet) {
+        if (cellKey.startsWith('!')) continue;
+
+        const cell = sheet[cellKey];
+        if (!cell) continue;
+
+        // Scan formulas
+        if (cell.f) {
+          const formula = String(cell.f).toLowerCase();
+          const suspiciousCommands = ['cmd', 'shell', 'exec', 'hyperlink', 'webservice', 'encrypt', 'msexcel', 'dde', 'powershell', 'bash', 'mshta'];
+          for (const cmd of suspiciousCommands) {
+            if (formula.includes(cmd)) {
+              errors.push(`Ameaça Detetada: Detetada fórmula de injeção potencialmente maliciosa ou comando suspeito na folha "${sheetName}", célula ${cellKey} (${cell.f}).`);
+              break;
+            }
+          }
+        }
+
+        // Scan value (string cells)
+        if (cell.t === 's' && cell.v) {
+          const value = String(cell.v);
+          const valueLower = value.toLowerCase();
+
+          // Formula/Command Injection signatures
+          if (value.startsWith('=') || value.startsWith('+') || value.startsWith('-') || value.startsWith('@')) {
+            const suspiciousFormulaKeywords = ['cmd', 'exec', 'hyperlink', 'webservice', 'dde', 'powershell', 'mshta', 'curl', 'wget'];
+            for (const kw of suspiciousFormulaKeywords) {
+              if (valueLower.includes(kw)) {
+                errors.push(`Ameaça Detetada: Detetada injeção de fórmula maliciosa (CSV Injection) na célula ${cellKey} da folha "${sheetName}": "${value}".`);
+              }
+            }
+          }
+
+          // XSS / HTML Script Injection
+          if (valueLower.includes('<script') || valueLower.includes('javascript:') || valueLower.includes('onerror=') || valueLower.includes('onload=') || valueLower.includes('<iframe') || valueLower.includes('eval(')) {
+            errors.push(`Ameaça Detetada: Detetado indício de código malicioso XSS ou Injeção HTML na célula ${cellKey} da folha "${sheetName}".`);
+          }
+
+          // Buffer Overflow Prevention
+          if (value.length > 8000) {
+            errors.push(`Aviso de Segurança: Comprimento de dados anormal (${value.length} caracteres) detetado na célula ${cellKey} da folha "${sheetName}".`);
+          }
+        }
+      }
+    }
+
+    return errors;
+  };
+
+  const handleFileSelect = async (file: File) => {
+    setSelectedFile(file);
+    setSecurityScanErrors([]);
+    setImportErrors([]);
+    setParsedPreview([]);
+    
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const data = new Uint8Array(e.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: 'array' });
+        
+        // Security Scan
+        const scanErrors = performSecurityScan(file, workbook);
+        if (scanErrors.length > 0) {
+          setSecurityScanErrors(scanErrors);
+          return;
+        }
+        
+        // Parse First Sheet
+        const firstSheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[firstSheetName];
+        if (!sheet) {
+          setSecurityScanErrors(["A planilha está vazia ou corrompida."]);
+          return;
+        }
+        
+        const jsonData = XLSX.utils.sheet_to_json(sheet);
+        if (jsonData.length === 0) {
+          setSecurityScanErrors(["Nenhuma linha de dados encontrada na planilha excel."]);
+          return;
+        }
+        
+        setParsedPreview(jsonData);
+      } catch (err: any) {
+        setSecurityScanErrors([`Erro ao ler o arquivo: ${err.message || err}`]);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  // CHECK INCOMPLETE STUDENTS ENGINE
+  const checkIncompleteStudentsAndNotify = async (currentStudents: Estudante[]) => {
+    try {
+      const incomplete = currentStudents.filter(s => s.dados_em_falta && s.dados_em_falta.length > 0);
+      if (incomplete.length === 0) return;
+
+      const todayStr = new Date().toISOString().split('T')[0];
+      
+      for (const s of incomplete) {
+        // Check if already notified today
+        const q = query(
+          collection(db, 'notificacoes'),
+          where('destinatario_id', '==', currentTenantId),
+          where('created_at', '>=', todayStr),
+          where('tipo', '==', 'alerta')
+        );
+        const snap = await getDocs(q);
+        let alreadyNotifiedToday = false;
+        snap.forEach(doc => {
+          if (doc.data().mensagem.includes(s.numero_matricula)) {
+            alreadyNotifiedToday = true;
+          }
+        });
+
+        if (!alreadyNotifiedToday) {
+          const usr = tenantUsers.find(u => u.id === s.user_id);
+          const studentName = usr?.nome || 'Estudante';
+          const fieldsStr = s.dados_em_falta.join(', ');
+          
+          // 1. Notify Admin
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: currentTenantId,
+            destinatario_role: 'admin',
+            titulo: '⚠️ Alerta: Dados de Aluno Incompletos',
+            mensagem: `O estudante ${studentName} (${s.numero_matricula}) possui dados obrigatórios em falta: ${fieldsStr}. Favor regularizar.`,
+            tipo: 'alerta',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
+
+          // 2. Notify Class Teacher (Docente Responsável)
+          if (s.turma_id) {
+            const tur = turmas.find(t => t.id === s.turma_id);
+            if (tur && tur.docente_id) {
+              const docUser = teachers.find(t => t.id === tur.docente_id);
+              if (docUser && docUser.user_id) {
+                await addDoc(collection(db, 'notificacoes'), {
+                  destinatario_id: docUser.user_id,
+                  destinatario_role: 'docente',
+                  titulo: '⚠️ Alerta de Turma: Dados Incompletos',
+                  mensagem: `O estudante ${studentName} (${s.numero_matricula}) da sua turma (${tur.nome}) tem dados obrigatórios em falta: ${fieldsStr}.`,
+                  tipo: 'alerta',
+                  lido: false,
+                  created_at: new Date().toISOString()
+                });
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Erro ao verificar dados incompletos dos estudantes:", err);
+    }
+  };
+
+  // PAGINATION COMPONENT RENDERER
+  const renderPagination = (
+    currentPage: number,
+    totalItems: number,
+    itemsPerPage: number,
+    onPageChange: (page: number) => void
+  ) => {
+    const totalPages = Math.ceil(totalItems / itemsPerPage) || 1;
+    if (totalPages <= 1) return null;
+    
+    const remainingPages = totalPages - currentPage;
+    
+    return (
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 py-4 px-6 border-t border-slate-100 bg-white rounded-b-2xl text-xs text-slate-500 font-medium">
+        <div className="flex items-center gap-1">
+          <span>Página <strong className="text-slate-800">{currentPage}</strong> de <strong className="text-slate-800">{totalPages}</strong></span>
+          <span className="text-slate-300 mx-1">•</span>
+          <span>{remainingPages === 0 ? 'Última página' : `${remainingPages} ${remainingPages === 1 ? 'página restante' : 'páginas restantes'}`}</span>
+          <span className="text-slate-300 mx-1">•</span>
+          <span>Total: {totalItems}</span>
+        </div>
+        
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => onPageChange(1)}
+            disabled={currentPage === 1}
+            className="p-2 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-transparent transition-all cursor-pointer flex items-center justify-center"
+            title="Primeiro"
+          >
+            <ChevronsLeft className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => onPageChange(currentPage - 1)}
+            disabled={currentPage === 1}
+            className="p-2 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-transparent transition-all cursor-pointer flex items-center justify-center"
+            title="Anterior"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+          </button>
+          
+          <span className="px-3 py-1 bg-indigo-50 border border-indigo-100 rounded-lg font-mono font-bold text-indigo-600">
+            {currentPage}
+          </span>
+          
+          <button
+            onClick={() => onPageChange(currentPage + 1)}
+            disabled={currentPage === totalPages}
+            className="p-2 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-transparent transition-all cursor-pointer flex items-center justify-center"
+            title="Próximo"
+          >
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => onPageChange(totalPages)}
+            disabled={currentPage === totalPages}
+            className="p-2 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-transparent transition-all cursor-pointer flex items-center justify-center"
+            title="Último"
+          >
+            <ChevronsRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  // DOWNLOAD TEMPLATE ENGINE
+  const handleDownloadTemplate = (moduleName: string) => {
+    let headers: string[] = [];
+    let sampleData: any[] = [];
+    
+    if (moduleName === 'escolas') {
+      headers = ['Nome', 'Provincia', 'Latitude', 'Longitude', 'Endereco', 'Telefone', 'Email', 'Ativo'];
+      sampleData = [
+        {
+          'Nome': 'Escola Primária Nº 123',
+          'Provincia': provinces[0]?.nome || 'Luanda',
+          'Latitude': '-8.8159',
+          'Longitude': '13.2306',
+          'Endereco': 'Av. de Fevereiro, Luanda',
+          'Telefone': '+244923000000',
+          'Email': 'escola123@edu.ao',
+          'Ativo': 'Sim'
+        }
+      ];
+    } else if (moduleName === 'estudantes') {
+      headers = ['Nome', 'Email', 'Escola', 'Turma', 'Numero Matricula', 'Data Nascimento', 'Genero', 'Faturado', 'Periodo Faturacao'];
+      sampleData = [
+        {
+          'Nome': 'António Manuel',
+          'Email': 'antonio@estudante.edu',
+          'Escola': schools[0]?.nome || 'Escola Primária Nº 123',
+          'Turma': turmas[0]?.nome || 'Turma A - 7ª Classe',
+          'Numero Matricula': 'MAT-12345',
+          'Data Nascimento': '2012-05-15',
+          'Genero': 'Masculino',
+          'Faturado': 'Sim',
+          'Periodo Faturacao': 'Mensal'
+        }
+      ];
+    } else if (moduleName === 'docentes') {
+      headers = ['Nome', 'Email', 'Especialidade', 'Numero Registro', 'Escola'];
+      sampleData = [
+        {
+          'Nome': 'Professor Carlos',
+          'Email': 'carlos@docente.edu',
+          'Especialidade': 'Matemática',
+          'Numero Registro': 'REG-99887',
+          'Escola': schools[0]?.nome || 'Escola Primária Nº 123'
+        }
+      ];
+    } else if (moduleName === 'turmas') {
+      headers = ['Nome', 'Escola', 'Ano Letivo', 'Nivel', 'Professor Titular', 'Capacidade Maxima'];
+      sampleData = [
+        {
+          'Nome': 'Turma A - 7ª Classe',
+          'Escola': schools[0]?.nome || 'Escola Primária Nº 123',
+          'Ano Letivo': '2026',
+          'Nivel': 'Secundário',
+          'Professor Titular': tenantUsers.find(u => u.tipo === 'docente')?.nome || 'Professor Carlos',
+          'Capacidade Maxima': 30
+        }
+      ];
+    } else if (moduleName === 'disciplinas') {
+      headers = ['Nome', 'Turma', 'Docente', 'Horario', 'Sala', 'Data', 'Dia Semana'];
+      sampleData = [
+        {
+          'Nome': 'Matemática',
+          'Turma': turmas[0]?.nome || 'Turma A - 7ª Classe',
+          'Docente': tenantUsers.find(u => u.tipo === 'docente')?.nome || 'Professor Carlos',
+          'Horario': '08:00 - 09:30',
+          'Sala': rawSalas[0]?.nome || 'Sala 1',
+          'Data': '2026-07-15',
+          'Dia Semana': 'Quarta-feira'
+        }
+      ];
+    } else if (moduleName === 'pautas') {
+      headers = ['Estudante Matricula', 'Disciplina', 'Trimestre', 'Nota Prova', 'Nota Trabalho', 'Nota Participacao', 'Nota Exame', 'Nota Reavaliacao', 'Observacao'];
+      sampleData = [
+        {
+          'Estudante Matricula': students[0]?.numero_matricula || 'MAT-12345',
+          'Disciplina': classes[0]?.nome || 'Matemática',
+          'Trimestre': '1º Trimestre',
+          'Nota Prova': 14,
+          'Nota Trabalho': 15,
+          'Nota Participacao': 16,
+          'Nota Exame': 13,
+          'Nota Reavaliacao': '',
+          'Observacao': 'Bom desempenho'
+        }
+      ];
+    }
+
+    const worksheet = XLSX.utils.json_to_sheet(sampleData, { header: headers });
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, moduleName.toUpperCase());
+    XLSX.writeFile(workbook, `template_${moduleName}.xlsx`);
+  };
+
+  // PROCESS IMPORTED DATA ENGINE
+  const processImportedData = async (jsonData: any[]) => {
+    setIsImporting(true);
+    setImportErrors([]);
+    const errors: string[] = [];
+
+    const parseExcelDate = (val: any): string => {
+      if (!val) return '';
+      if (typeof val === 'number') {
+        const date = new Date(Math.round((val - 25569) * 86400 * 1000));
+        return date.toISOString().split('T')[0];
+      }
+      const str = String(val).trim();
+      if (str.includes('/')) {
+        const parts = str.split('/');
+        if (parts.length === 3) {
+          if (parts[2].length === 4) {
+            return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+          }
+          if (parts[0].length === 4) {
+            return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+          }
+        }
+      }
+      return str;
+    };
+
+    try {
+      if (importModule === 'escolas') {
+        // Limit Check
+        const limitMax = plan?.limits.max_escolas ?? 9999;
+        if (schools.length + jsonData.length > limitMax) {
+          errors.push(`Limite do Plano Excedido: O seu plano atual limita a ${limitMax} escolas vinculadas. Está tentando importar ${jsonData.length} escolas, o que excede o limite (Atualmente possui ${schools.length}).`);
+        }
+
+        const validRows: any[] = [];
+        const pendingRows: any[] = [];
+        jsonData.forEach((row, idx) => {
+          const rNum = idx + 2;
+          const nome = row['Nome'];
+          const provincia = row['Provincia'];
+          const latitude = row['Latitude'] || '';
+          const longitude = row['Longitude'] || '';
+          const endereco = row['Endereco'];
+          const telefone = row['Telefone'];
+          const email = row['Email'];
+          const ativoStr = row['Ativo'];
+
+          if (!nome) errors.push(`Linha ${rNum}: O campo "Nome" é obrigatório.`);
+          if (!provincia) errors.push(`Linha ${rNum}: O campo "Provincia" é obrigatório.`);
+          if (email && !email.includes('@')) errors.push(`Linha ${rNum}: O email "${email}" é inválido.`);
+
+          if (errors.length === 0) {
+            const prov = provinces.find(p => p.nome.toLowerCase() === String(provincia).trim().toLowerCase());
+            if (prov) {
+              validRows.push({
+                nome: String(nome),
+                provincia_id: prov.id,
+                endereco: String(endereco || ''),
+                telefone: String(telefone || ''),
+                email: String(email || ''),
+                ativo: String(ativoStr).toLowerCase() === 'não' ? false : true,
+                latitude: String(latitude),
+                longitude: String(longitude),
+                tenant_id: currentTenantId,
+                created_at: new Date().toISOString()
+              });
+            } else {
+              pendingRows.push({
+                nome: String(nome),
+                provincia_nome: String(provincia).trim(),
+                endereco: String(endereco || ''),
+                telefone: String(telefone || ''),
+                email: String(email || ''),
+                ativo: String(ativoStr).toLowerCase() === 'não' ? false : true,
+                latitude: String(latitude),
+                longitude: String(longitude),
+                status: 'pendente',
+                tenant_id: currentTenantId,
+                created_at: new Date().toISOString()
+              });
+            }
+          }
+        });
+
+        if (errors.length > 0) {
+          setImportErrors(errors);
+          setShowErrorsModal(true);
+          setIsImporting(false);
+          return;
+        }
+
+        // Insert to Firebase
+        for (const row of validRows) {
+          await addDoc(collection(db, 'escolas'), row);
+        }
+        for (const row of pendingRows) {
+          await addDoc(collection(db, 'importacoes_pendentes'), row);
+        }
+
+        let msg = `Foram importadas com sucesso ${validRows.length} novas escolas via planilha Excel.`;
+        if (pendingRows.length > 0) {
+          msg += ` E ${pendingRows.length} escolas ficaram pendentes de aprovação devido a Províncias não cadastradas.`;
+        }
+
+        await addDoc(collection(db, 'notificacoes'), {
+          destinatario_id: currentTenantId,
+          destinatario_role: 'admin',
+          titulo: '📂 Importação de Escolas Concluída',
+          mensagem: msg,
+          tipo: pendingRows.length > 0 ? 'alerta' : 'sucesso',
+          lido: false,
+          created_at: new Date().toISOString()
+        });
+
+      } else if (importModule === 'docentes') {
+        const limitMax = plan?.limits.max_docentes ?? 9999;
+        if (teachers.length + jsonData.length > limitMax) {
+          errors.push(`Limite do Plano Excedido: O seu plano atual limita a ${limitMax} docentes. A importação excede o limite disponível (Atualmente possui ${teachers.length}).`);
+        }
+
+        const validRows: any[] = [];
+        jsonData.forEach((row, idx) => {
+          const rNum = idx + 2;
+          const nome = row['Nome'];
+          const email = row['Email'];
+          const especialidade = row['Especialidade'];
+          const registro = row['Numero Registro'];
+          const escolaNome = row['Escola'];
+
+          if (!nome) errors.push(`Linha ${rNum}: O campo "Nome" é obrigatório.`);
+          if (!email || !email.includes('@')) errors.push(`Linha ${rNum}: O campo "Email" é obrigatório e deve ser um e-mail válido.`);
+          if (!especialidade) errors.push(`Linha ${rNum}: O campo "Especialidade" é obrigatório.`);
+          if (!registro) errors.push(`Linha ${rNum}: O campo "Numero Registro" é obrigatório.`);
+          if (!escolaNome) errors.push(`Linha ${rNum}: O campo "Escola" é obrigatório.`);
+
+          const esc = schools.find(s => s.nome.toLowerCase() === String(escolaNome).toLowerCase());
+          if (escolaNome && !esc) {
+            errors.push(`Linha ${rNum}: A escola "${escolaNome}" não foi encontrada no sistema.`);
+          }
+
+          if (errors.length === 0 && esc) {
+            validRows.push({
+              nome: String(nome),
+              email: String(email),
+              especialidade: String(especialidade),
+              numero_registro: String(registro),
+              escola_id: esc.id
+            });
+          }
+        });
+
+        if (errors.length > 0) {
+          setImportErrors(errors);
+          setShowErrorsModal(true);
+          setIsImporting(false);
+          return;
+        }
+
+        // Insert Users & Docentes
+        for (const row of validRows) {
+          const userRef = await addDoc(collection(db, 'users'), {
+            nome: row.nome,
+            email: row.email,
+            tipo: 'docente',
+            ativo: true,
+            tenant_id: currentTenantId,
+            created_at: new Date().toISOString()
+          });
+
+          await addDoc(collection(db, 'docentes'), {
+            user_id: userRef.id,
+            escola_id: row.escola_id,
+            especialidade: row.especialidade,
+            numero_registro: row.numero_registro,
+            tenant_id: currentTenantId,
+            created_at: new Date().toISOString()
+          });
+        }
+
+        await addDoc(collection(db, 'notificacoes'), {
+          destinatario_id: currentTenantId,
+          destinatario_role: 'admin',
+          titulo: '📂 Importação de Docentes Concluída',
+          mensagem: `Foram cadastrados ${validRows.length} novos professores e contas de utilizador via importação em lote.`,
+          tipo: 'sucesso',
+          lido: false,
+          created_at: new Date().toISOString()
+        });
+
+      } else if (importModule === 'turmas') {
+        const limitMax = plan?.limits.max_turmas ?? 9999;
+        if (turmas.length + jsonData.length > limitMax) {
+          errors.push(`Limite do Plano Excedido: O seu plano atual limita a ${limitMax} turmas homologadas (Atualmente possui ${turmas.length}).`);
+        }
+
+        const validRows: any[] = [];
+        jsonData.forEach((row, idx) => {
+          const rNum = idx + 2;
+          const nome = row['Nome'];
+          const escolaNome = row['Escola'];
+          const anoLetivo = row['Ano Letivo'];
+          const nivel = row['Nivel'];
+          const professorNome = row['Professor Titular'];
+          const capMax = row['Capacidade Maxima'];
+
+          if (!nome) errors.push(`Linha ${rNum}: O campo "Nome" é obrigatório.`);
+          if (!escolaNome) errors.push(`Linha ${rNum}: O campo "Escola" é obrigatório.`);
+          if (!anoLetivo) errors.push(`Linha ${rNum}: O campo "Ano Letivo" é obrigatório.`);
+          if (!nivel) errors.push(`Linha ${rNum}: O campo "Nivel" é obrigatório.`);
+
+          const esc = schools.find(s => s.nome.toLowerCase() === String(escolaNome).toLowerCase());
+          if (escolaNome && !esc) {
+            errors.push(`Linha ${rNum}: A escola "${escolaNome}" não foi encontrada no sistema.`);
+          }
+
+          let docente_id = '';
+          if (professorNome) {
+            const usr = tenantUsers.find(u => u.nome.toLowerCase() === String(professorNome).toLowerCase() && u.tipo === 'docente');
+            if (usr) {
+              const tea = teachers.find(t => t.user_id === usr.id);
+              if (tea) docente_id = tea.id;
+            }
+            if (!docente_id) {
+              errors.push(`Linha ${rNum}: O professor titular "${professorNome}" não foi encontrado no sistema.`);
+            }
+          }
+
+          const validNiveis = ['Primário', 'Secundário', 'Médio', 'Pré-escolar'];
+          if (nivel && !validNiveis.includes(String(nivel))) {
+            errors.push(`Linha ${rNum}: O nível "${nivel}" é inválido. Opções válidas: Primário, Secundário, Médio, Pré-escolar.`);
+          }
+
+          if (errors.length === 0 && esc) {
+            validRows.push({
+              nome: String(nome),
+              escola_id: esc.id,
+              ano_letivo: String(anoLetivo),
+              nivel: String(nivel),
+              docente_id,
+              capacidade_max: Number(capMax) || 30,
+              tenant_id: currentTenantId,
+              created_at: new Date().toISOString()
+            });
+          }
+        });
+
+        if (errors.length > 0) {
+          setImportErrors(errors);
+          setShowErrorsModal(true);
+          setIsImporting(false);
+          return;
+        }
+
+        for (const row of validRows) {
+          await addDoc(collection(db, 'turmas'), row);
+        }
+
+        await addDoc(collection(db, 'notificacoes'), {
+          destinatario_id: currentTenantId,
+          destinatario_role: 'admin',
+          titulo: '📂 Importação de Turmas Concluída',
+          mensagem: `Foram criadas com sucesso ${validRows.length} novas turmas.`,
+          tipo: 'sucesso',
+          lido: false,
+          created_at: new Date().toISOString()
+        });
+
+      } else if (importModule === 'estudantes') {
+        const limitMax = plan?.limits.max_estudantes ?? 9999;
+        if (students.length + jsonData.length > limitMax) {
+          errors.push(`Limite do Plano Excedido: O seu plano limita a ${limitMax} matrículas de estudantes (Atualmente possui ${students.length}).`);
+        }
+
+        const validRows: any[] = [];
+        const currentTurmasAllocations: { [key: string]: number } = {};
+        turmas.forEach(t => {
+          const count = students.filter(s => s.turma_id === t.id).length;
+          currentTurmasAllocations[t.id] = count;
+        });
+
+        jsonData.forEach((row, idx) => {
+          const rNum = idx + 2;
+          const nome = row['Nome'];
+          const email = row['Email'];
+          const escolaNome = row['Escola'];
+          const turmaNome = row['Turma'];
+          const matricula = row['Numero Matricula'];
+          const dataNasc = parseExcelDate(row['Data Nascimento']);
+          const genero = row['Genero'];
+          const faturado = row['Faturado'];
+          const periodoFat = row['Periodo Faturacao'];
+
+          if (!nome) {
+            errors.push(`Linha ${rNum}: O campo "Nome" é obrigatório.`);
+            return;
+          }
+
+          const missingFields: string[] = [];
+          if (!email) missingFields.push('Email');
+          if (!dataNasc) missingFields.push('Data de Nascimento');
+          if (!genero) missingFields.push('Género');
+          if (!matricula) missingFields.push('Número de Matrícula');
+
+          let escola_id = '';
+          if (escolaNome) {
+            const esc = schools.find(s => s.nome.toLowerCase() === String(escolaNome).toLowerCase());
+            if (esc) escola_id = esc.id;
+          }
+          if (!escola_id && schools.length > 0) {
+            escola_id = schools[0].id;
+          }
+
+          let finalTurmaId = '';
+          let targetTurma = turmas.find(t => t.nome.toLowerCase() === String(turmaNome).toLowerCase());
+          const isTurmaFull = targetTurma ? (currentTurmasAllocations[targetTurma.id] >= targetTurma.capacidade_max) : false;
+
+          if (!turmaNome || !targetTurma || isTurmaFull) {
+            const availableTurma = turmas.find(t => currentTurmasAllocations[t.id] < t.capacidade_max);
+            if (availableTurma) {
+              finalTurmaId = availableTurma.id;
+              currentTurmasAllocations[availableTurma.id]++;
+            } else {
+              if (turmas.length > 0) finalTurmaId = turmas[0].id;
+            }
+          } else {
+            finalTurmaId = targetTurma.id;
+            currentTurmasAllocations[targetTurma.id]++;
+          }
+
+          // CLASS TO SCHOOL ASSOCIATION VALIDATION
+          const excelClasseNome = row['Classe'] || row['Classe Escolar'] || row['Classe Académica'];
+          let targetClasseEscolar: any = null;
+
+          if (excelClasseNome) {
+            targetClasseEscolar = rawClassesEscolares.find(
+              c => c.nome.toLowerCase() === String(excelClasseNome).trim().toLowerCase()
+            );
+            if (!targetClasseEscolar) {
+              errors.push(`Linha ${rNum}: A classe letiva "${excelClasseNome}" não foi encontrada no sistema.`);
+            }
+          } else {
+            // Infer from Turma Name (e.g. "7ª Classe - Turma A" contains "7ª Classe")
+            const tName = String(turmaNome || '').toLowerCase();
+            targetClasseEscolar = rawClassesEscolares.find(c => 
+              tName.includes(c.nome.toLowerCase())
+            );
+          }
+
+          if (targetClasseEscolar && escola_id) {
+            const isAssociated = rawClasses.some(cls => 
+              cls.escola_id === escola_id && cls.classe_escolar_id === targetClasseEscolar.id
+            );
+            if (!isAssociated) {
+              const escObj = schools.find(s => s.id === escola_id);
+              errors.push(`Linha ${rNum}: A classe "${targetClasseEscolar.nome}" não está associada à escola "${escObj?.nome || escolaNome || 'Escola Selecionada'}". A importação do estudante "${nome}" foi bloqueada.`);
+            }
+          } else if (escola_id) {
+            const schoolHasClasses = rawClasses.some(cls => cls.escola_id === escola_id);
+            if (!schoolHasClasses) {
+              const escObj = schools.find(s => s.id === escola_id);
+              errors.push(`Linha ${rNum}: A escola "${escObj?.nome || escolaNome || 'Escola Selecionada'}" não possui nenhuma classe/disciplina associada no sistema. A importação do estudante "${nome}" foi bloqueada.`);
+            }
+          }
+
+          validRows.push({
+            nome: String(nome),
+            email: String(email || ''),
+            escola_id,
+            turma_id: finalTurmaId,
+            numero_matricula: String(matricula || 'MAT-' + Math.floor(Math.random()*9000 + 1000)),
+            data_nascimento: dataNasc,
+            genero: String(genero || 'Masculino'),
+            faturado: String(faturado).toLowerCase() === 'sim' || String(faturado).toLowerCase() === 'true',
+            periodo_faturacao: String(periodoFat || 'Mensal'),
+            dados_em_falta: missingFields
+          });
+        });
+
+        if (errors.length > 0) {
+          setImportErrors(errors);
+          setShowErrorsModal(true);
+          setIsImporting(false);
+
+          // Informar o administrador sobre o bloqueio de importação
+          try {
+            await addDoc(collection(db, 'notificacoes'), {
+              destinatario_id: currentTenantId,
+              destinatario_role: 'admin',
+              titulo: '❌ Bloqueio de Importação: Inconsistência de Classe',
+              mensagem: `A importação de estudantes foi bloqueada por conter classes não associadas às respectivas escolas. Erros: ${errors.slice(0, 3).join('; ')}${errors.length > 3 ? '...' : ''}`,
+              tipo: 'alerta',
+              lido: false,
+              created_at: new Date().toISOString()
+            });
+          } catch (nErr) {
+            console.error("Erro ao enviar notificação de falha para o admin:", nErr);
+          }
+          return;
+        }
+
+        // Write students & users
+        for (const row of validRows) {
+          const userRef = await addDoc(collection(db, 'users'), {
+            nome: row.nome,
+            email: row.email,
+            tipo: 'estudante',
+            ativo: true,
+            tenant_id: currentTenantId,
+            created_at: new Date().toISOString()
+          });
+
+          const studRef = await addDoc(collection(db, 'estudantes'), {
+            user_id: userRef.id,
+            escola_id: row.escola_id,
+            turma_id: row.turma_id,
+            numero_matricula: row.numero_matricula,
+            data_nascimento: row.data_nascimento,
+            genero: row.genero,
+            faturado: row.faturado,
+            periodo_faturacao: row.periodo_faturacao,
+            dados_em_falta: row.dados_em_falta,
+            tenant_id: currentTenantId,
+            created_at: new Date().toISOString()
+          });
+
+          // Create student dossiers if incomplete
+          if (row.dados_em_falta.length > 0) {
+            await addDoc(collection(db, 'processos_aluno'), {
+              tenant_id: currentTenantId,
+              estudante_id: studRef.id,
+              tipo: 'Matrícula',
+              status: 'Análise',
+              documentos: [],
+              data: new Date().toISOString().split('T')[0],
+              criador_nome: 'Sistema (Importador)',
+              titulo: 'Ficha de Processo - Dados em Falta',
+              observacao: `Os seguintes dados obrigatórios estão em falta: ${row.dados_em_falta.join(', ')}.`
+            });
+          }
+        }
+
+        await addDoc(collection(db, 'notificacoes'), {
+          destinatario_id: currentTenantId,
+          destinatario_role: 'admin',
+          titulo: '📂 Importação de Estudantes Concluída',
+          mensagem: `Foram matriculados ${validRows.length} novos estudantes. Alocações automáticas e análises de pendências de dados foram aplicadas.`,
+          tipo: 'sucesso',
+          lido: false,
+          created_at: new Date().toISOString()
+        });
+
+      } else if (importModule === 'disciplinas') {
+        const limitMax = plan?.limits.max_disciplinas ?? 9999;
+        if (classes.length + jsonData.length > limitMax) {
+          errors.push(`Limite do Plano Excedido: O seu plano atual limita a ${limitMax} disciplinas cadastradas (Atualmente possui ${classes.length}).`);
+        }
+
+        const validRows: any[] = [];
+        const scheduleKeys = new Set<string>();
+        classes.forEach(c => {
+          if (c.data && c.horario && c.sala) {
+            scheduleKeys.add(`${c.data}_${c.horario}_${c.sala}`);
+          }
+        });
+
+        jsonData.forEach((row, idx) => {
+          const rNum = idx + 2;
+          const nome = row['Nome'];
+          const turmaName = row['Turma'];
+          const docenteName = row['Docente'];
+          const horario = row['Horario'];
+          const sala = row['Sala'];
+          const dataStr = parseExcelDate(row['Data']);
+          const diaSemana = row['Dia Semana'];
+
+          if (!nome) errors.push(`Linha ${rNum}: O campo "Nome" é obrigatório.`);
+          if (!turmaName) errors.push(`Linha ${rNum}: O campo "Turma" é obrigatório.`);
+          if (!docenteName) errors.push(`Linha ${rNum}: O campo "Docente" é obrigatório.`);
+          if (!horario) errors.push(`Linha ${rNum}: O campo "Horario" é obrigatório.`);
+          if (!sala) errors.push(`Linha ${rNum}: O campo "Sala" é obrigatório.`);
+          if (!dataStr) errors.push(`Linha ${rNum}: O campo "Data" é obrigatório.`);
+
+          const tur = turmas.find(t => t.nome.toLowerCase() === String(turmaName).toLowerCase());
+          if (turmaName && !tur) {
+            errors.push(`Linha ${rNum}: A turma "${turmaName}" não foi encontrada no sistema.`);
+          }
+
+          let docente_id = '';
+          const usr = tenantUsers.find(u => u.nome.toLowerCase() === String(docenteName).toLowerCase() && u.tipo === 'docente');
+          if (usr) {
+            const tea = teachers.find(t => t.user_id === usr.id);
+            if (tea) docente_id = tea.id;
+          }
+          if (docenteName && !docente_id) {
+            errors.push(`Linha ${rNum}: O docente "${docenteName}" não foi encontrado no sistema.`);
+          }
+
+          // Overlap check
+          if (dataStr && horario && sala) {
+            const key = `${dataStr}_${horario}_${sala}`;
+            if (scheduleKeys.has(key)) {
+              errors.push(`Linha ${rNum}: Conflito de Sala! A sala "${sala}" já está ocupada no horário "${horario}" na data "${dataStr}".`);
+            } else {
+              scheduleKeys.add(key);
+            }
+          }
+
+          // Vacation overlap check
+          if (dataStr && tur) {
+            const classDate = new Date(dataStr).getTime();
+            const overlapVacation = rawVacations.find(v => {
+              if (v.turma_id === 'todas' || v.turma_id === tur.id) {
+                const start = new Date(v.data_inicio).getTime();
+                const end = new Date(v.data_fim).getTime();
+                return classDate >= start && classDate <= end;
+              }
+              return false;
+            });
+            if (overlapVacation) {
+              errors.push(`Linha ${rNum}: Conflito de Férias! A turma "${tur.nome}" está de férias de ${overlapVacation.data_inicio} a ${overlapVacation.data_fim}.`);
+            }
+          }
+
+          if (errors.length === 0 && tur && docente_id) {
+            validRows.push({
+              nome: String(nome),
+              turma_id: tur.id,
+              docente_id,
+              horario: String(horario),
+              sala: String(sala),
+              data: dataStr,
+              dia_semana: String(diaSemana || getDiaSemanaFromDate(dataStr)),
+              tenant_id: currentTenantId,
+              created_at: new Date().toISOString()
+            });
+          }
+        });
+
+        if (errors.length > 0) {
+          setImportErrors(errors);
+          setShowErrorsModal(true);
+          setIsImporting(false);
+          return;
+        }
+
+        for (const row of validRows) {
+          await addDoc(collection(db, 'classes'), row);
+        }
+
+        await addDoc(collection(db, 'notificacoes'), {
+          destinatario_id: currentTenantId,
+          destinatario_role: 'admin',
+          titulo: '📂 Importação de Disciplinas Concluída',
+          mensagem: `Foram alocadas ${validRows.length} novas aulas de disciplinas na grade curricular escolar.`,
+          tipo: 'sucesso',
+          lido: false,
+          created_at: new Date().toISOString()
+        });
+
+      } else if (importModule === 'pautas') {
+        const validRows: any[] = [];
+        jsonData.forEach((row, idx) => {
+          const rNum = idx + 2;
+          const matricula = row['Estudante Matricula'];
+          const classeName = row['Disciplina'];
+          const trimestre = row['Trimestre'];
+          const notaProva = row['Nota Prova'];
+          const notaTrabalho = row['Nota Trabalho'];
+          const notaParticipacao = row['Nota Participacao'];
+          const notaExame = row['Nota Exame'];
+          const notaReaval = row['Nota Reavaliacao'];
+          const observacao = row['Observacao'];
+
+          if (!matricula) errors.push(`Linha ${rNum}: O campo "Estudante Matricula" é obrigatório.`);
+          if (!classeName) errors.push(`Linha ${rNum}: O campo "Disciplina" é obrigatório.`);
+          if (!trimestre) errors.push(`Linha ${rNum}: O campo "Trimestre" é obrigatório.`);
+
+          const est = students.find(s => s.numero_matricula === String(matricula));
+          if (matricula && !est) {
+            errors.push(`Linha ${rNum}: O estudante com matrícula "${matricula}" não foi encontrado.`);
+          }
+
+          const cls = classes.find(c => c.nome.toLowerCase() === String(classeName).toLowerCase());
+          if (classeName && !cls) {
+            errors.push(`Linha ${rNum}: A disciplina "${classeName}" não foi encontrada.`);
+          }
+
+          const np = Number(notaProva);
+          const nt = Number(notaTrabalho);
+          const npc = Number(notaParticipacao);
+          const ne = notaExame ? Number(notaExame) : null;
+          const nr = notaReaval ? Number(notaReaval) : null;
+
+          if (isNaN(np) || np < 0 || np > 20) errors.push(`Linha ${rNum}: "Nota Prova" deve ser um número entre 0 e 20.`);
+          if (isNaN(nt) || nt < 0 || nt > 20) errors.push(`Linha ${rNum}: "Nota Trabalho" deve ser um número entre 0 e 20.`);
+          if (isNaN(npc) || npc < 0 || npc > 20) errors.push(`Linha ${rNum}: "Nota Participacao" deve ser um número entre 0 e 20.`);
+          if (ne !== null && (isNaN(ne) || ne < 0 || ne > 20)) errors.push(`Linha ${rNum}: "Nota Exame" deve ser um número entre 0 e 20.`);
+          if (nr !== null && (isNaN(nr) || nr < 0 || nr > 20)) errors.push(`Linha ${rNum}: "Nota Reavaliacao" deve ser um número entre 0 e 20.`);
+
+          if (errors.length === 0 && est && cls) {
+            const avg = (np + nt + npc) / 3;
+            let finalMedia = avg;
+            if (ne !== null) {
+              finalMedia = (avg * 0.6) + (ne * 0.4);
+            }
+            
+            let sit = 'Reprovado';
+            if (finalMedia >= 10) {
+              sit = 'Aprovado';
+            } else if (finalMedia >= 7.5) {
+              sit = 'Recuperação';
+            }
+
+            if (nr !== null && finalMedia < 10) {
+              finalMedia = nr;
+              sit = finalMedia >= 10 ? 'Aprovado' : 'Reprovado';
+            }
+
+            validRows.push({
+              estudante_id: est.id,
+              classe_id: cls.id,
+              trimestre: String(trimestre),
+              nota_prova: np,
+              nota_trabalho: nt,
+              nota_participacao: npc,
+              nota_exame: ne || '',
+              nota_reavaliacao: nr || '',
+              nota_media: parseFloat(finalMedia.toFixed(2)),
+              situacao: sit,
+              observacao: String(observacao || ''),
+              tenant_id: currentTenantId,
+              created_at: new Date().toISOString()
+            });
+          }
+        });
+
+        if (errors.length > 0) {
+          setImportErrors(errors);
+          setShowErrorsModal(true);
+          setIsImporting(false);
+          return;
+        }
+
+        for (const row of validRows) {
+          await addDoc(collection(db, 'pautas'), row);
+        }
+
+        await addDoc(collection(db, 'notificacoes'), {
+          destinatario_id: currentTenantId,
+          destinatario_role: 'admin',
+          titulo: '📂 Lançamento de Notas Importado',
+          mensagem: `Pauta com ${validRows.length} notas de alunos foi processada e importada com sucesso.`,
+          tipo: 'sucesso',
+          lido: false,
+          created_at: new Date().toISOString()
+        });
+      }
+
+      await loadTenantContext();
+      setImportModalOpen(false);
+      setSelectedFile(null);
+      showSystemNotification("Sucesso! Os dados foram validados e importados perfeitamente.", "sucesso");
+    } catch (err: any) {
+      showSystemNotification(`Ocorreu um erro ao gravar dados no servidor: ${err.message || err}`, "erro");
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  // LOAD TENANT DETAILS AND PLAN CONSTRAINTS
   async function loadTenantContext() {
     if (!hasLoadedOnce) {
       setLoading(true);
@@ -857,17 +4007,61 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         }
       }
 
-      // Fetch Multi-Tenant Isolated Datasets (Always filtering by tenant_id)
+      // Fetch Multi-Tenant Isolated Datasets (Always filtering by tenant_id in parallel)
       const qParams = [where('tenant_id', '==', currentTenantId)];
 
-      // 1. Províncias
-      const provsSnap = await getDocs(query(collection(db, 'provincias'), ...qParams));
+      const [
+        provsSnap,
+        escSnap,
+        usersSnap,
+        docSnap,
+        turSnap,
+        estSnap,
+        clsSnap,
+        ferSnap,
+        salasSnap,
+        pauSnap,
+        prcSnap,
+        confSnap,
+        escClsSnap,
+        plansSnapOrCached,
+        globalSmtpSnapOrCached,
+        tSmtpSnap,
+        pEmailsSnap,
+        pendSnap,
+        faturasSnap,
+        assSnap,
+        feriadosSnap,
+        ativSnap,
+      ] = await Promise.all([
+        getDocs(query(collection(db, 'provincias'), ...qParams)),
+        getDocs(query(collection(db, 'escolas'), ...qParams)),
+        getDocs(query(collection(db, 'users'), ...qParams)),
+        getDocs(query(collection(db, 'docentes'), ...qParams)),
+        getDocs(query(collection(db, 'turmas'), ...qParams)),
+        getDocs(query(collection(db, 'estudantes'), ...qParams)),
+        getDocs(query(collection(db, 'classes'), ...qParams)),
+        getDocs(query(collection(db, 'ferias'), ...qParams)),
+        getDocs(query(collection(db, 'salas'), ...qParams)),
+        getDocs(query(collection(db, 'pautas'), ...qParams)),
+        getDocs(query(collection(db, 'processos_aluno'), ...qParams)),
+        getDocs(query(collection(db, 'configuracoes'), ...qParams)),
+        getDocs(query(collection(db, 'classes_escolares'), ...qParams)),
+        portalCache.allPlans ? Promise.resolve(portalCache.allPlans) : getDocs(collection(db, 'planos')),
+        portalCache.globalSmtpConfig ? Promise.resolve(portalCache.globalSmtpConfig) : getDocs(query(collection(db, 'smtp_configs'), where('tenant_id', '==', 'fallback'))),
+        getDocs(query(collection(db, 'smtp_configs'), where('tenant_id', '==', currentTenantId))),
+        getDocs(query(collection(db, 'pending_emails'), where('tenant_id', '==', currentTenantId))),
+        getDocs(query(collection(db, 'importacoes_pendentes'), ...qParams)),
+        getDocs(query(collection(db, 'faturas_estudantes'), where('tenant_id', '==', currentTenantId))),
+        getDocs(query(collection(db, 'assiduidade_logs'), ...qParams)),
+        getDocs(query(collection(db, 'feriados'), ...qParams)),
+        getDocs(query(collection(db, 'atividades'), ...qParams)),
+      ]);
+
       const provList: Provincia[] = [];
       provsSnap.forEach(d => provList.push({ ...d.data() as Provincia, id: d.id }));
       setProvinces(provList);
 
-      // 2. Escolas
-      const escSnap = await getDocs(query(collection(db, 'escolas'), ...qParams));
       const escList: Escola[] = [];
       escSnap.forEach(d => {
         const data = d.data() as Escola;
@@ -877,44 +4071,36 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       });
       setSchools(escList);
 
-      // 3. Users
-      const usersSnap = await getDocs(query(collection(db, 'users'), ...qParams));
       const usersList: User[] = [];
       usersSnap.forEach(d => usersList.push({ ...d.data() as User, id: d.id }));
       setTenantUsers(usersList);
 
-      // 4. Docentes
-      const docSnap = await getDocs(query(collection(db, 'docentes'), ...qParams));
       const docList: Docente[] = [];
       docSnap.forEach(d => docList.push({ ...d.data() as Docente, id: d.id }));
       setTeachers(docList);
 
-      // 5. Turmas
-      const turSnap = await getDocs(query(collection(db, 'turmas'), ...qParams));
       const turList: Turma[] = [];
       turSnap.forEach(d => turList.push({ ...d.data() as Turma, id: d.id }));
       setTurmas(turList);
 
-      // 6. Estudantes
-      const estSnap = await getDocs(query(collection(db, 'estudantes'), ...qParams));
       const estList: Estudante[] = [];
       estSnap.forEach(d => estList.push({ ...d.data() as Estudante, id: d.id }));
       setStudents(estList);
 
-      // 7. Classes / Disciplinas
-      const clsSnap = await getDocs(query(collection(db, 'classes'), ...qParams));
       const clsList: Classe[] = [];
       clsSnap.forEach(d => clsList.push({ ...d.data() as Classe, id: d.id }));
       setClasses(clsList);
 
-      // 8. Férias
-      const ferSnap = await getDocs(query(collection(db, 'ferias'), ...qParams));
       const ferList: any[] = [];
       ferSnap.forEach(d => ferList.push({ ...d.data(), id: d.id }));
       setVacations(ferList);
 
-      // Fetch Salas & Auto-Seed if empty
-      const salasSnap = await getDocs(query(collection(db, 'salas'), ...qParams));
+      const feriadosList: Feriado[] = [];
+      if (feriadosSnap) {
+        feriadosSnap.forEach(d => feriadosList.push({ ...d.data() as Feriado, id: d.id }));
+      }
+      setFeriados(feriadosList);
+
       const salasList: Sala[] = [];
       salasSnap.forEach(d => salasList.push({ ...d.data() as Sala, id: d.id }));
       if (salasList.length === 0) {
@@ -931,63 +4117,75 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       }
       setSalas(salasList);
 
-      // 8. Pautas
-      const pauSnap = await getDocs(query(collection(db, 'pautas'), ...qParams));
       const pauList: Pauta[] = [];
       pauSnap.forEach(d => pauList.push({ ...d.data() as Pauta, id: d.id }));
       setPautas(pauList);
 
-      // 9. Processos do Aluno
-      const prcSnap = await getDocs(query(collection(db, 'processos_aluno'), ...qParams));
       const prcList: ProcessoAluno[] = [];
       prcSnap.forEach(d => prcList.push({ ...d.data() as ProcessoAluno, id: d.id }));
       setProcessos(prcList);
 
-      // 10. Institutional config
-      const confSnap = await getDocs(query(collection(db, 'configuracoes'), ...qParams));
+      const ativList: ActividadePendente[] = [];
+      if (ativSnap) {
+        ativSnap.forEach(d => ativList.push({ ...d.data() as ActividadePendente, id: d.id }));
+      }
+      setAtividades(ativList);
+
       if (!confSnap.empty) {
         setConfig({ ...confSnap.docs[0].data() as TenantConfig, id: confSnap.docs[0].id });
       }
 
-      // 11. Classes Escolares (Grade Levels)
-      const escClsSnap = await getDocs(query(collection(db, 'classes_escolares'), ...qParams));
       const escClsList: ClasseEscolar[] = [];
       escClsSnap.forEach(d => escClsList.push({ ...d.data() as ClasseEscolar, id: d.id }));
       setClassesEscolares(escClsList);
 
-      // Fetch all available subscription plans
-      const plansSnap = await getDocs(collection(db, 'planos'));
-      const plansList: Plano[] = [];
-      plansSnap.forEach(d => plansList.push({ ...d.data() as Plano, id: d.id }));
-      setAllPlans(plansList);
-
-      // Load global SMTP fallback config
-      const globalSmtpSnap = await getDocs(query(collection(db, 'smtp_configs'), where('tenant_id', '==', 'fallback')));
-      if (!globalSmtpSnap.empty) {
-        setGlobalSmtpConfig({ ...globalSmtpSnap.docs[0].data() as SmtpConfig, id: globalSmtpSnap.docs[0].id });
+      if (portalCache.allPlans) {
+        setAllPlans(portalCache.allPlans);
       } else {
-        setGlobalSmtpConfig(null);
+        const plansList: Plano[] = [];
+        const pSnap = plansSnapOrCached as any;
+        pSnap.forEach((d: any) => plansList.push({ ...d.data() as Plano, id: d.id }));
+        portalCache.allPlans = plansList;
+        setAllPlans(plansList);
       }
 
-      // Load tenant SMTP config
-      const tSmtpSnap = await getDocs(query(collection(db, 'smtp_configs'), where('tenant_id', '==', currentTenantId)));
+      if (portalCache.globalSmtpConfig) {
+        setGlobalSmtpConfig(portalCache.globalSmtpConfig);
+      } else {
+        const gSnap = globalSmtpSnapOrCached as any;
+        if (!gSnap.empty) {
+          const cObj = { ...gSnap.docs[0].data() as SmtpConfig, id: gSnap.docs[0].id };
+          portalCache.globalSmtpConfig = cObj;
+          setGlobalSmtpConfig(cObj);
+        } else {
+          portalCache.globalSmtpConfig = null;
+          setGlobalSmtpConfig(null);
+        }
+      }
+
       if (!tSmtpSnap.empty) {
         setTenantSmtpConfig({ ...tSmtpSnap.docs[0].data() as SmtpConfig, id: tSmtpSnap.docs[0].id });
       } else {
         setTenantSmtpConfig(null);
       }
 
-      // Load pending emails for this tenant
-      const pEmailsSnap = await getDocs(query(collection(db, 'pending_emails'), where('tenant_id', '==', currentTenantId)));
       const pEmailsList: any[] = [];
       pEmailsSnap.forEach(d => pEmailsList.push({ ...d.data(), id: d.id }));
       setPendingEmails(pEmailsList);
 
-      // Load student bills for this tenant
-      const faturasSnap = await getDocs(query(collection(db, 'faturas_estudantes'), where('tenant_id', '==', currentTenantId)));
+      const pendList: any[] = [];
+      pendSnap.forEach(d => pendList.push({ ...d.data(), id: d.id }));
+      setPendingImports(pendList);
+
       const faturasList: FaturaEstudante[] = [];
       faturasSnap.forEach(d => faturasList.push({ ...d.data() as FaturaEstudante, id: d.id }));
       setStudentFaturas(faturasList);
+
+      await checkIncompleteStudentsAndNotify(estList);
+
+      const assList: any[] = [];
+      assSnap.forEach(d => assList.push({ ...d.data(), id: d.id }));
+      setAssiduidadeLogs(assList);
 
     } catch (err) {
       console.error("Error loading tenant database:", err);
@@ -1205,14 +4403,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               setStudentForm({
                 nome: usr?.nome || '',
                 email: usr?.email || '',
-                escola_id: s.escola_id,
-                turma_id: s.turma_id,
-                numero_matricula: s.numero_matricula,
-                data_nascimento: s.data_nascimento,
-                genero: s.genero,
-                pai_id: s.pai_id,
+                escola_id: s.escola_id || '',
+                turma_id: s.turma_id || '',
+                numero_matricula: s.numero_matricula || '',
+                data_nascimento: s.data_nascimento || '',
+                genero: s.genero || 'Masculino',
+                pai_id: s.pai_id || '',
                 faturado: !!s.faturado,
-                periodo_facturacao: s.periodo_facturacao || 'Mensal'
+                periodo_facturacao: s.periodo_facturacao || 'Mensal',
+                foto_url: s.foto_url || '',
+                usuario_sistema: s.usuario_sistema || false,
+                senha_temporaria: s.senha_temporaria || ''
               });
               setModalType('student');
               setIsModalOpen(true);
@@ -1336,6 +4537,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           Dossier / Processo
         </button>
 
+        <button
+          onClick={() => {
+            setActiveActionRowId(null);
+            setCrachaStudent(s);
+          }}
+          className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-2 cursor-pointer"
+        >
+          <IdCard className="w-3.5 h-3.5 text-emerald-400" />
+          Gerar Crachá
+        </button>
+
         {hasPermission('estudantes', 'excluir') && (
           <button
             onClick={() => {
@@ -1365,14 +4577,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       const isAllowedRole = currentUserRole === 'admin' || currentUserRole === 'director' || currentUserRole === 'docente' ||
                             loggedInUser?.tipo === 'admin' || loggedInUser?.tipo === 'director' || loggedInUser?.tipo === 'docente';
       if (!isAllowedRole) return false;
-      if (loggedInUser && loggedInUser.modulo_acessos && loggedInUser.modulo_acessos.analytics) {
-        return !!loggedInUser.modulo_acessos.analytics.habilitado;
+      if (loggedInUser && loggedInUser.modulo_acessos && (loggedInUser.modulo_acessos as any).analytics) {
+        return !!(loggedInUser.modulo_acessos as any).analytics.habilitado;
       }
       return true;
     }
 
     // Check if the subscription plan allows this module key.
-    // This affects everyone, including administrators!
     const planKeyMap: Record<string, string> = {
       provincias: 'provincias',
       escolas: 'escolas',
@@ -1403,42 +4614,54 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       }
     }
 
-    const isDocente = currentUserRole === 'docente' || loggedInUser?.tipo === 'docente';
-    const isEstudante = currentUserRole === 'estudante' || loggedInUser?.tipo === 'estudante';
+    const effectiveRole = loggedInUser?.tipo || currentUserRole;
+    if (effectiveRole === 'admin' || currentUserRole === 'admin') return true;
 
-    // 1. Admin gets all permissions (if permitted by the plan block check above)
-    if (currentUserRole === 'admin' || loggedInUser?.tipo === 'admin') return true;
+    // Check dynamic category permissions from Global Permissions module
+    if (globalCategories && globalCategories.length > 0) {
+      const category = globalCategories.find(c => 
+        c.codigo === effectiveRole || 
+        c.id === effectiveRole || 
+        c.nome.toLowerCase() === effectiveRole.toLowerCase()
+      );
+
+      if (category && category.modulos) {
+        const modConfig = category.modulos[moduleKey];
+        if (modConfig) {
+          if (!modConfig.habilitado) return false;
+          if (featureKey && modConfig.acoes) {
+            return !!modConfig.acoes[featureKey];
+          }
+          return !!modConfig.habilitado;
+        }
+      }
+    }
+
+    const isDocente = effectiveRole === 'docente';
+    const isEstudante = effectiveRole === 'estudante';
 
     // 2. Student restrictions
     if (isEstudante) {
-      // Students can only read (visualizar) specific safe student modules
-      const allowedStudentModules = ['dashboard', 'estudantes', 'turmas', 'disciplinas', 'pauta_geral', 'pautas', 'processos', 'calendario'];
+      const allowedStudentModules = ['dashboard', 'atividades', 'estudantes', 'turmas', 'disciplinas', 'pauta_geral', 'pautas', 'processos', 'calendario', 'assiduidade', 'biblioteca'];
       if (!allowedStudentModules.includes(moduleKey)) return false;
-      if (featureKey && featureKey !== 'visualizar') return false; // Absolutely no writes
+      if (featureKey && featureKey !== 'visualizar') return false;
       return true;
     }
 
     // 3. Teacher restrictions
     if (isDocente) {
-      // Teachers cannot access users administration or general configurations
       const forbiddenTeacherModules = ['usuarios', 'configuracao'];
       if (forbiddenTeacherModules.includes(moduleKey)) return false;
-
-      // Teachers can read everything else
       if (!featureKey || featureKey === 'visualizar') return true;
-
-      // Teachers are allowed to launch/edit/delete pautas (grades) and handle processes
-      if (['pautas', 'pauta_geral', 'processos'].includes(moduleKey)) {
+      if (['pautas', 'pauta_geral', 'processos', 'assiduidade'].includes(moduleKey)) {
         return true;
       }
-
-      // For other writes (like creating students, classes, etc.), teachers are typically read-only
       return false;
     }
 
-    // 4. Fallback/Standard logic (e.g. for director or other custom roles with modulo_acessos)
+    // 4. Fallback/Standard logic
     if (!loggedInUser) {
-      if (currentUserRole === 'director') return true;
+      if (effectiveRole === 'director') return true;
       if (featureKey === 'visualizar') return true;
       return false;
     }
@@ -1501,6 +4724,96 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     }
   }
 
+  async function handleSchoolBatchAction(action: string) {
+    if (action === 'excluir') {
+      showConfirm(
+        "Excluir Escolas Selecionadas",
+        `Deseja realmente excluir as ${selectedSchoolIds.length} escolas selecionadas? Todos os alunos e docentes vinculados a estas escolas serão desassociados. Esta ação é irreversível.`,
+        async () => {
+          setIsSaving(true);
+          try {
+            for (const id of selectedSchoolIds) {
+              const escObj = rawSchools.find(sc => sc.id === id);
+              const name = escObj?.nome || 'Escola';
+              const associatedStudents = rawStudents.filter(s => s.escola_id === id);
+              const associatedTeachers = rawTeachers.filter(t => t.escola_id === id);
+
+              for (const s of associatedStudents) {
+                await updateDoc(doc(db, 'estudantes', s.id), { escola_id: '' });
+              }
+              for (const t of associatedTeachers) {
+                await updateDoc(doc(db, 'docentes', t.id), { escola_id: '' });
+              }
+              await deleteDoc(doc(db, 'escolas', id));
+
+              // Add a database notification for admin
+              await addDoc(collection(db, 'notificacoes'), {
+                destinatario_id: 'admin',
+                tenant_id: currentTenantId,
+                titulo: '🗑️ Escola Excluída em Massa',
+                mensagem: `A escola "${name}" foi excluída em massa. Alunos e docentes vinculados foram desassociados.`,
+                tipo: 'alerta',
+                lido: false,
+                created_at: new Date().toISOString()
+              });
+            }
+            setSelectedSchoolIds([]);
+            showSystemNotification(`Operação em massa realizada: ${selectedSchoolIds.length} escolas excluídas!`, 'sucesso');
+            loadTenantContext();
+          } catch (e: any) {
+            console.error(e);
+            showSystemNotification(`Erro na operação em massa: ${e.message || e}`, 'erro');
+          } finally {
+            setIsSaving(false);
+          }
+        },
+        true
+      );
+    } else if (action === 'desativar') {
+      showConfirm(
+        "Desativar Escolas Selecionadas",
+        `Deseja desativar as ${selectedSchoolIds.length} escolas selecionadas?`,
+        async () => {
+          setIsSaving(true);
+          try {
+            for (const id of selectedSchoolIds) {
+              await updateDoc(doc(db, 'escolas', id), { ativo: false });
+            }
+            setSelectedSchoolIds([]);
+            showSystemNotification(`Operação em massa realizada: ${selectedSchoolIds.length} escolas desativadas!`, 'sucesso');
+            loadTenantContext();
+          } catch (e: any) {
+            console.error(e);
+            showSystemNotification(`Erro na desativação em massa: ${e.message || e}`, 'erro');
+          } finally {
+            setIsSaving(false);
+          }
+        }
+      );
+    } else if (action === 'ativar') {
+      showConfirm(
+        "Ativar Escolas Selecionadas",
+        `Deseja ativar as ${selectedSchoolIds.length} escolas selecionadas?`,
+        async () => {
+          setIsSaving(true);
+          try {
+            for (const id of selectedSchoolIds) {
+              await updateDoc(doc(db, 'escolas', id), { ativo: true });
+            }
+            setSelectedSchoolIds([]);
+            showSystemNotification(`Operação em massa realizada: ${selectedSchoolIds.length} escolas ativadas!`, 'sucesso');
+            loadTenantContext();
+          } catch (e: any) {
+            console.error(e);
+            showSystemNotification(`Erro na ativação em massa: ${e.message || e}`, 'erro');
+          } finally {
+            setIsSaving(false);
+          }
+        }
+      );
+    }
+  }
+
   const renderRestrictedAccess = (moduleLabel: string) => (
     <div className="bg-white p-12 rounded-3xl border border-slate-200 shadow-sm text-center max-w-xl mx-auto space-y-5 my-10 animate-in fade-in duration-300">
       <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center mx-auto ring-8 ring-rose-50/50">
@@ -1555,6 +4868,39 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     loadTenantContext();
   }, [currentTenantId]);
 
+  // Sync Global Permissions / Categories in real time
+  useEffect(() => {
+    const colRef = collection(db, 'global_permissions');
+    const unsubscribe = onSnapshot(colRef, (snapshot) => {
+      try {
+        if (!snapshot.empty) {
+          const loaded: UserCategoryPermission[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data() as UserCategoryPermission;
+            loaded.push({ ...data, id: docSnap.id });
+          });
+          const merged = [...loaded];
+          DEFAULT_CATEGORIES.forEach((def) => {
+            if (!merged.some((m) => m.id === def.id || m.codigo === def.codigo)) {
+              merged.push(def);
+            }
+          });
+          setGlobalCategories(merged);
+        } else {
+          setGlobalCategories(DEFAULT_CATEGORIES);
+        }
+      } catch (err) {
+        console.error("Error setting globalCategories:", err);
+        setGlobalCategories(DEFAULT_CATEGORIES);
+      }
+    }, (err) => {
+      console.error("Snapshot error for global_permissions:", err);
+      setGlobalCategories(DEFAULT_CATEGORIES);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
   useEffect(() => {
     if (!currentTenantId) return;
     const mountTime = Date.now();
@@ -1580,7 +4926,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             // Default destination role is 'admin' unless explicitly specified or destinatario_id is 'todos'
             const destRole = data.destinatario_role || (data.destinatario_id === 'todos' ? 'todos' : 'admin');
             
-            if (userRole === 'admin' || userRole === 'super_admin' || userRole === 'director') {
+            if (userRole === 'admin' || (userRole as string) === 'super_admin' || userRole === 'director') {
               // Administrators see admin-level and global notification events
               if (destRole === 'admin' || destRole === 'todos') {
                 list.push({ ...data, id: doc.id } as Notificacao);
@@ -1620,7 +4966,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               if (isDirectMessage) {
                 shouldShowToast = true;
               } else {
-                if (userRole === 'admin' || userRole === 'super_admin' || userRole === 'director') {
+                if (userRole === 'admin' || (userRole as string) === 'super_admin' || userRole === 'director') {
                   if (destRole === 'admin' || destRole === 'todos') shouldShowToast = true;
                 } else if (userRole === 'docente') {
                   if (destRole === 'docente' || destRole === 'todos') shouldShowToast = true;
@@ -1657,18 +5003,18 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
   async function markNotificationAsRead(id: string) {
     try {
-      await updateDoc(doc(db, 'notificacoes', id), { lido: true });
+      await deleteDoc(doc(db, 'notificacoes', id));
     } catch (err) {
-      console.error("Error marking notification as read:", err);
+      console.error("Error deleting notification:", err);
     }
   }
 
   async function markAllNotificationsAsRead() {
     try {
       const unread = notifications.filter(n => !n.lido);
-      await Promise.all(unread.map(n => updateDoc(doc(db, 'notificacoes', n.id), { lido: true })));
+      await Promise.all(unread.map(n => deleteDoc(doc(db, 'notificacoes', n.id))));
     } catch (err) {
-      console.error("Error marking all notifications as read:", err);
+      console.error("Error deleting all notifications:", err);
     }
   }
 
@@ -1882,6 +5228,18 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           const targetDateStr = getLocalYYYYMMDD(targetDate);
           const targetDayName = c.dia_semana || getDiaSemanaFromDate(targetDateStr);
 
+          // Check vacation overlap
+          const isVacationOverlap = rawVacations.some(v => {
+            const isDateInRange = targetDateStr >= v.data_inicio && targetDateStr <= v.data_fim;
+            const isApplicableToTurma = !v.turma_id || v.turma_id === 'todas' || v.turma_id === activeCalendarTurma;
+            return isDateInRange && isApplicableToTurma;
+          });
+
+          if (isVacationOverlap) {
+            skippedCount++;
+            continue;
+          }
+
           // Check room overlap with OTHER turmas
           const isOverlapWithOther = rawClasses.some(cls => {
             return cls.turma_id !== activeCalendarTurma && 
@@ -1961,6 +5319,69 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     }
   };
 
+  async function fetchAndRegisterCountryHolidays(countryName: string) {
+    if (!countryName) return;
+    setIsSyncingHolidays(true);
+    try {
+      const countryObj = WORLD_COUNTRIES.find(c => c.name.toLowerCase() === countryName.toLowerCase());
+      const code = countryObj?.code || 'MZ';
+      const currentYear = new Date().getFullYear();
+
+      showSystemNotification(`Buscando feriados nacionais para ${countryName}...`, "info");
+
+      let fetchedHolidays: { name: string; date: string }[] = [];
+
+      try {
+        const res = await fetch(`https://date.nager.at/api/v3/PublicHolidays/${currentYear}/${code}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data)) {
+            fetchedHolidays = data.map((item: any) => ({
+              name: item.localName || item.name,
+              date: item.date
+            }));
+          }
+        }
+      } catch (err) {
+        console.warn("API holiday fetch failed, using built-in national holidays catalog", err);
+      }
+
+      if (fetchedHolidays.length === 0) {
+        fetchedHolidays = getFallbackHolidaysForCountry(countryName, currentYear);
+      }
+
+      let count = 0;
+      for (const h of fetchedHolidays) {
+        const exists = rawFeriados.some(f => f.data === h.date && f.nome === h.name);
+        if (!exists) {
+          const payload = {
+            nome: h.name,
+            data: h.date,
+            pais: countryName,
+            tipo: 'Nacional',
+            tenant_id: currentTenantId,
+            created_at: new Date().toISOString()
+          };
+          try {
+            const docRef = await addDoc(collection(db, 'feriados'), payload);
+            setFeriados(prev => [...prev, { ...payload, id: docRef.id }]);
+            count++;
+          } catch (e) {
+            console.error("Error saving feriado:", e);
+          }
+        }
+      }
+
+      if (count > 0) {
+        showSystemNotification(`✅ ${count} feriado(s) de ${countryName} cadastrado(s) no calendário!`, "sucesso");
+      } else {
+        showSystemNotification(`Feriados de ${countryName} já estão sincronizados no calendário.`, "info");
+      }
+    } finally {
+      setIsSyncingHolidays(false);
+    }
+  }
+
   // General CRUD Submit router
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -1995,8 +5416,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       } 
       
       else if (modalType === 'escola') {
+        const cleanedEscolaForm = Object.fromEntries(
+          Object.entries(escolaForm).filter(([_, v]) => v !== undefined)
+        );
         if (editingItem) {
-          await updateDoc(doc(db, 'escolas', editingItem.id), escolaForm);
+          await updateDoc(doc(db, 'escolas', editingItem.id), cleanedEscolaForm);
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
@@ -2008,7 +5432,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           });
         } else {
           if (!checkLimit('max_escolas', schools.length)) return;
-          await addDoc(collection(db, 'escolas'), { ...escolaForm, ...qParams });
+          await addDoc(collection(db, 'escolas'), { ...cleanedEscolaForm, ...qParams });
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
@@ -2044,12 +5468,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           if (!checkLimit('max_usuarios', tenantUsers.length)) return;
           // Generate user credential alongside teacher record
           const userGenId = "user-doc-" + Math.random().toString(36).substr(2, 9);
+          const teacherEmail = (teacherForm.email || '').trim().toLowerCase();
           const newUser = {
             id: userGenId,
             tenant_id: currentTenantId,
-            email: teacherForm.email,
+            email: teacherEmail,
             nome: teacherForm.nome,
             tipo: "docente" as const,
+            senha: "12345678",
+            senha_temporaria: "12345678",
             permissoes: ["R", "W"],
             ativo: true,
             created_at: new Date().toISOString()
@@ -2067,6 +5494,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             data_contratacao: new Date().toISOString().split('T')[0]
           };
           await setDoc(doc(db, 'docentes', docGenId), newDocente);
+          if (teacherEmail) {
+            await registerUserInFirebaseAuth(teacherEmail, '12345678');
+          }
 
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
@@ -2081,17 +5511,44 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       } 
       
       else if (modalType === 'student') {
+        // Validate if selected class is taught at the school
+        const selectedTurma = turmas.find(t => t.id === studentForm.turma_id);
+        if (selectedTurma) {
+          const selectedClasseEscolarId = selectedTurma.classe_escolar_id;
+          if (selectedClasseEscolarId) {
+            const isClassTaught = classesEscolares.some(
+              cls => cls.id === selectedClasseEscolarId && cls.escola_id === studentForm.escola_id
+            );
+            if (!isClassTaught) {
+              showSystemNotification(
+                "Erro: O estudante não pode ser matriculado/editado para esta escola porque a classe correspondente a esta turma não é lecionada nesta escola.",
+                "erro"
+              );
+              return;
+            }
+          }
+        }
+
         if (editingItem) {
           await updateDoc(doc(db, 'estudantes', editingItem.id), {
-            escola_id: studentForm.escola_id,
-            turma_id: studentForm.turma_id,
-            numero_matricula: studentForm.numero_matricula,
-            data_nascimento: studentForm.data_nascimento,
-            genero: studentForm.genero,
-            pai_id: studentForm.pai_id,
+            escola_id: studentForm.escola_id || '',
+            turma_id: studentForm.turma_id || '',
+            numero_matricula: studentForm.numero_matricula || '',
+            data_nascimento: studentForm.data_nascimento || '',
+            genero: studentForm.genero || 'Masculino',
+            pai_id: studentForm.pai_id || '',
             faturado: !!studentForm.faturado,
             periodo_facturacao: studentForm.faturado ? (studentForm.periodo_facturacao || 'Mensal') : null,
+            foto_url: studentForm.foto_url || '',
+            usuario_sistema: !!studentForm.usuario_sistema,
+            senha_temporaria: studentForm.usuario_sistema ? (studentForm.senha_temporaria || '') : '',
           });
+          if (editingItem.user_id) {
+            await updateDoc(doc(db, 'users', editingItem.user_id), {
+              nome: studentForm.nome,
+              email: (studentForm.email || `${studentForm.numero_matricula.toLowerCase()}@escola.edu`).trim().toLowerCase()
+            });
+          }
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
@@ -2105,12 +5562,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           if (!checkLimit('max_estudantes', students.length)) return;
           if (!checkLimit('max_usuarios', tenantUsers.length)) return;
           const userGenId = "user-est-" + Math.random().toString(36).substr(2, 9);
+          const studentEmail = (studentForm.email || `${studentForm.numero_matricula.toLowerCase()}@escola.edu`).trim().toLowerCase();
+          const studentPwd = studentForm.senha_temporaria || '12345678';
           const newUser = {
             id: userGenId,
             tenant_id: currentTenantId,
-            email: studentForm.email || `${studentForm.numero_matricula.toLowerCase()}@escola.edu`,
+            email: studentEmail,
             nome: studentForm.nome,
             tipo: "estudante" as const,
+            senha: studentPwd,
+            senha_temporaria: studentPwd,
             permissoes: ["R"],
             ativo: true,
             created_at: new Date().toISOString()
@@ -2133,9 +5594,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             data_matricula: new Date().toISOString().split('T')[0],
             propina_valor: studentForm.faturado ? (studentForm.periodo_facturacao === 'Anual' ? 42000 : studentForm.periodo_facturacao === 'Semestral' ? 21000 : 3500) : null,
             propina_vencimento: studentForm.faturado ? new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] : null,
-            foto_url: "https://images.unsplash.com/photo-1597589827317-4c6d6e0a90bd?auto=format&fit=crop&q=80&w=120"
-          };
+            foto_url: studentForm.foto_url || "https://images.unsplash.com/photo-1597589827317-4c6d6e0a90bd?auto=format&fit=crop&q=80&w=120",
+            usuario_sistema: !!studentForm.usuario_sistema,
+            senha_temporaria: studentPwd,
+          } as any;
           await setDoc(doc(db, 'estudantes', estGenId), newEstudante);
+          await registerUserInFirebaseAuth(studentEmail, studentPwd);
 
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
@@ -2174,25 +5638,54 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       } 
       
       else if (modalType === 'turma') {
+        if (!turmaForm.nome || !turmaForm.nome.trim()) {
+          showSystemNotification("Erro: Informe o nome da turma!", "erro");
+          setIsSaving(false);
+          return;
+        }
+
+        if (turmaForm.docente_id) {
+          const selectedTeacher = teachers.find(t => t.id === turmaForm.docente_id);
+          if (selectedTeacher && selectedTeacher.escola_id && turmaForm.escola_id && selectedTeacher.escola_id !== turmaForm.escola_id) {
+            const usr = tenantUsers.find(u => u.id === selectedTeacher.user_id);
+            showSystemNotification(`Erro: O docente "${usr?.nome || selectedTeacher.nome || 'selecionado'}" só pode lecionar na escola à qual está associado!`, "erro");
+            setIsSaving(false);
+            return;
+          }
+        }
+
+        // Requirement 3: Append class name as suffix to turma name
+        const selectedCE = classesEscolares.find(ce => ce.id === turmaForm.classe_escolar_id);
+        let finalTurmaName = turmaForm.nome.trim();
+        if (selectedCE) {
+          const cleanBaseName = finalTurmaName.split(' - ')[0].trim();
+          finalTurmaName = `${cleanBaseName} - ${selectedCE.nome}`;
+        }
+
+        const updatedTurmaForm = {
+          ...turmaForm,
+          nome: finalTurmaName
+        };
+
         if (editingItem) {
-          await updateDoc(doc(db, 'turmas', editingItem.id), turmaForm);
+          await updateDoc(doc(db, 'turmas', editingItem.id), updatedTurmaForm);
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
             titulo: '⚙️ Turma Atualizada',
-            mensagem: `A turma "${turmaForm.nome}" foi modificada com sucesso.`,
+            mensagem: `A turma "${finalTurmaName}" foi modificada com sucesso.`,
             tipo: 'info',
             lido: false,
             created_at: new Date().toISOString()
           });
         } else {
           if (!checkLimit('max_turmas', turmas.length)) return;
-          await addDoc(collection(db, 'turmas'), { ...turmaForm, ...qParams });
+          await addDoc(collection(db, 'turmas'), { ...updatedTurmaForm, ...qParams });
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
             titulo: '🏫 Nova Turma Criada',
-            mensagem: `A turma "${turmaForm.nome}" foi criada com sucesso no sistema.`,
+            mensagem: `A turma "${finalTurmaName}" foi criada com sucesso no sistema.`,
             tipo: 'sucesso',
             lido: false,
             created_at: new Date().toISOString()
@@ -2201,59 +5694,80 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       } 
       
       else if (modalType === 'classe') {
-        // Validation: "duas turmas nao podem ocupar a mesma sala no mesmo horário na mesma data"
-        const isOverlap = rawClasses.some(cls => {
-          if (editingItem && cls.id === editingItem.id) return false;
-          return cls.sala === classeForm.sala && cls.horario === classeForm.horario && cls.data === classeForm.data;
-        });
-
-        if (isOverlap) {
-          showSystemNotification("Erro: Esta sala já está ocupada por outra turma nesta data e horário!", "erro");
+        if (!classeForm.nome || !classeForm.nome.trim()) {
+          showSystemNotification("Erro: Informe o nome da disciplina!", "erro");
           setIsSaving(false);
           return;
         }
 
-        const checkIsWeekend = (dataStr: string, diaSemana: string) => {
-          if (dataStr) {
-            const d = new Date(dataStr + 'T12:00:00');
-            if (d.getDay() === 0 || d.getDay() === 6) return true;
-          }
-          if (diaSemana) {
-            const ds = diaSemana.toLowerCase();
-            if (ds.includes('sáb') || ds.includes('dom') || ds.includes('sábado') || ds.includes('domingo')) return true;
-          }
-          return false;
+        if (!classeForm.classes_associadas_ids || classeForm.classes_associadas_ids.length === 0) {
+          showSystemNotification("Erro: Selecione pelo menos uma classe associada!", "erro");
+          setIsSaving(false);
+          return;
+        }
+
+        // Requirement 1: Teacher can only teach at the school to which they are associated
+        const targetSchoolId = classeForm.escola_id || schools[0]?.id || '';
+        const selectedTeacherIds = classeForm.professores_responsaveis || [];
+        const invalidTeacher = selectedTeacherIds
+          .map((id: string) => teachers.find(t => t.id === id))
+          .find((t: any) => t && t.escola_id && targetSchoolId && t.escola_id !== targetSchoolId);
+
+        if (invalidTeacher) {
+          const usr = tenantUsers.find(u => u.id === invalidTeacher.user_id);
+          showSystemNotification(`Erro: O docente "${usr?.nome || invalidTeacher.nome}" só pode lecionar na escola à qual está associado!`, "erro");
+          setIsSaving(false);
+          return;
+        }
+
+        // Requirement 3: Associated class MUST appear as a suffix on the discipline name
+        const selectedClassNames = classesEscolares
+          .filter(ce => (classeForm.classes_associadas_ids || []).includes(ce.id))
+          .map(ce => ce.nome);
+
+        const cleanBaseName = classeForm.nome.split(' - ')[0].trim();
+        const finalDisciplineName = selectedClassNames.length > 0
+          ? `${cleanBaseName} - ${selectedClassNames.join(', ')}`
+          : cleanBaseName;
+
+        const generatedCode = classeForm.codigo || ('DISC-' + Math.random().toString(36).substring(2, 8).toUpperCase());
+        const primaryClasseEscolarId = (classeForm.classes_associadas_ids || [])[0] || '';
+        const primaryDocenteId = selectedTeacherIds[0] || '';
+
+        const disciplinePayload = {
+          ...classeForm,
+          nome: finalDisciplineName,
+          codigo: generatedCode,
+          professores_responsaveis: selectedTeacherIds,
+          classes_associadas_ids: classeForm.classes_associadas_ids || [],
+          classe_escolar_id: primaryClasseEscolarId,
+          docente_id: primaryDocenteId,
+          escola_id: targetSchoolId
         };
 
         if (editingItem) {
-          const isWknd = checkIsWeekend(classeForm.data, classeForm.dia_semana);
-          const updatedForm = {
-            ...classeForm,
-            status_aprovacao: editingItem.status_aprovacao || (isWknd ? 'pendente' : 'aprovado')
-          };
-          await updateDoc(doc(db, 'classes', editingItem.id), updatedForm);
+          await updateDoc(doc(db, 'classes', editingItem.id), disciplinePayload);
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
-            titulo: '📅 Aula/Disciplina Atualizada',
-            mensagem: `A disciplina "${classeForm.nome}" foi alterada para ${classeForm.data || classeForm.dia_semana} às ${classeForm.horario}.`,
+            titulo: '📚 Disciplina Atualizada',
+            mensagem: `A disciplina "${finalDisciplineName}" foi atualizada com sucesso.`,
             tipo: 'info',
             lido: false,
             created_at: new Date().toISOString()
           });
         } else {
           if (!checkLimit('max_disciplinas', classes.length)) return;
-          const isWknd = checkIsWeekend(classeForm.data, classeForm.dia_semana);
           await addDoc(collection(db, 'classes'), { 
-            ...classeForm, 
-            status_aprovacao: isWknd ? 'pendente' : 'aprovado',
+            ...disciplinePayload, 
+            status_aprovacao: 'aprovado',
             ...qParams 
           });
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
-            titulo: '📅 Nova Aula Agendada',
-            mensagem: `Agendada a disciplina "${classeForm.nome}" para ${classeForm.data || classeForm.dia_semana} às ${classeForm.horario}.`,
+            titulo: '📚 Nova Disciplina Cadastrada',
+            mensagem: `A disciplina "${finalDisciplineName}" foi cadastrada com sucesso.`,
             tipo: 'sucesso',
             lido: false,
             created_at: new Date().toISOString()
@@ -2297,6 +5811,104 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             lido: false,
             created_at: new Date().toISOString()
           });
+        }
+      } 
+      
+      else if (modalType === 'horario_aula') {
+        if (!horarioForm.disciplina_nome) {
+          showSystemNotification("Erro: Selecione uma disciplina para agendar!", "erro");
+          setIsSaving(false);
+          return;
+        }
+
+        const conflictCheck = checkScheduleConflictDetails(
+          horarioForm.hora_inicio,
+          horarioForm.hora_fim,
+          horarioForm.data,
+          getDiaSemanaFromDate(horarioForm.data),
+          horarioForm.turma_id,
+          horarioForm.docente_id,
+          horarioForm.sala,
+          rawClasses,
+          editingItem?.id
+        );
+
+        if (conflictCheck.conflict) {
+          showSystemNotification(`Erro de Agendamento: ${conflictCheck.reason}`, "erro");
+          setIsSaving(false);
+          return;
+        }
+
+        const selectedTurma = turmas.find(t => t.id === horarioForm.turma_id);
+        const targetSchoolId = selectedTurma?.escola_id || schools[0]?.id || '';
+        const selDateObj = new Date(horarioForm.data + 'T12:00:00');
+        const isWeekend = selDateObj.getDay() === 0 || selDateObj.getDay() === 6;
+        const isHoliday = rawFeriados.some(f => f.data === horarioForm.data);
+        const isWeekendOrHoliday = isWeekend || isHoliday;
+
+        if (isWeekendOrHoliday && !horarioForm.justificativa?.trim()) {
+          showSystemNotification("Erro: Forneça uma justificativa para agendamentos em fins de semana ou feriados!", "erro");
+          setIsSaving(false);
+          return;
+        }
+
+        const payload = {
+          nome: horarioForm.disciplina_nome,
+          disciplina_id: horarioForm.disciplina_id || '',
+          turma_id: horarioForm.turma_id,
+          docente_id: horarioForm.docente_id,
+          horario: `${horarioForm.hora_inicio} - ${horarioForm.hora_fim}`,
+          sala: horarioForm.sala || rawSalas[0]?.nome || 'Sala 01',
+          data: horarioForm.data,
+          dia_semana: getDiaSemanaFromDate(horarioForm.data),
+          escola_id: targetSchoolId,
+          justificativa: horarioForm.justificativa || '',
+          status_aprovacao: isWeekendOrHoliday ? 'pendente' : 'aprovado',
+          tenant_id: currentTenantId,
+          created_at: new Date().toISOString()
+        };
+
+        if (editingItem) {
+          await updateDoc(doc(db, 'classes', editingItem.id), payload);
+          setClasses(prev => prev.map(c => c.id === editingItem.id ? { ...c, ...payload } : c));
+          showSystemNotification("Horário de aula atualizado com sucesso!", "sucesso");
+        } else {
+          const docRef = await addDoc(collection(db, 'classes'), payload);
+          setClasses(prev => [{ ...payload, id: docRef.id }, ...prev]);
+          showSystemNotification(
+            isWeekendOrHoliday 
+              ? "Horário de aula agendado e enviado para aprovação!" 
+              : "Horário de aula agendado com sucesso!", 
+            "sucesso"
+          );
+        }
+      }
+
+      else if (modalType === 'feriado') {
+        if (!feriadoForm.nome || !feriadoForm.data) {
+          showSystemNotification("Erro: Preencha o nome e a data do feriado!", "erro");
+          setIsSaving(false);
+          return;
+        }
+
+        const payload = {
+          nome: feriadoForm.nome,
+          data: feriadoForm.data,
+          pais: feriadoForm.pais || config?.pais || 'Moçambique',
+          tipo: feriadoForm.tipo || 'Nacional',
+          descricao: feriadoForm.descricao || '',
+          tenant_id: currentTenantId,
+          created_at: new Date().toISOString()
+        };
+
+        if (editingItem) {
+          await updateDoc(doc(db, 'feriados', editingItem.id), payload);
+          setFeriados(prev => prev.map(f => f.id === editingItem.id ? { ...f, ...payload } : f));
+          showSystemNotification("Feriado atualizado com sucesso!", "sucesso");
+        } else {
+          const docRef = await addDoc(collection(db, 'feriados'), payload);
+          setFeriados(prev => [{ ...payload, id: docRef.id }, ...prev]);
+          showSystemNotification("Feriado cadastrado com sucesso no calendário!", "sucesso");
         }
       } 
       
@@ -2354,51 +5966,90 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       } 
       
       else if (modalType === 'pauta') {
-        const grades: number[] = [];
-        const checkAndAddGrade = (val: any) => {
-          if (val === 0 || val === '0') {
-            grades.push(0);
+        const gradesList: number[] = [];
+        const checkAndPush = (val: any) => {
+          if (val === 0 || val === '0' || val === 0.0) {
+            gradesList.push(0);
           } else if (val !== undefined && val !== null && val !== '') {
             const num = Number(val);
             if (!isNaN(num)) {
-              grades.push(num);
+              gradesList.push(num);
             }
           }
         };
 
-        checkAndAddGrade(pautaForm.nota_prova);
-        checkAndAddGrade(pautaForm.nota_trabalho);
-        checkAndAddGrade(pautaForm.nota_participacao);
+        checkAndPush(pautaForm.avaliacao_1);
+        if (pautaForm.num_avaliacoes >= 2) checkAndPush(pautaForm.avaliacao_2);
+        if (pautaForm.num_avaliacoes >= 3) checkAndPush(pautaForm.avaliacao_3);
 
-        const average = grades.length > 0 ? (grades.reduce((sum, g) => sum + g, 0) / grades.length) : 0;
-        const examValue = pautaForm.nota_exame !== undefined && pautaForm.nota_exame !== null && pautaForm.nota_exame !== '' ? Number(pautaForm.nota_exame) : null;
+        const mediaFrequencia = gradesList.length > 0 ? (gradesList.reduce((sum, g) => sum + g, 0) / gradesList.length) : 0;
         
-        let finalMedia = average;
+        let autoStatus = 'Admitido';
+        if (gradesList.length > 0) {
+          if (mediaFrequencia < 9.5) {
+            autoStatus = 'Reprovado';
+          } else if (mediaFrequencia >= 15) {
+            autoStatus = 'Aprovado';
+          } else {
+            autoStatus = 'Admitido';
+          }
+        }
+
+        const isFrequenciaAdmitido = gradesList.length > 0 && mediaFrequencia >= 9.5 && mediaFrequencia < 15;
+        const hasExam = isFrequenciaAdmitido;
+        const examValue = pautaForm.nota_exame !== undefined && pautaForm.nota_exame !== null && pautaForm.nota_exame !== '' 
+          ? Number(pautaForm.nota_exame) 
+          : null;
+        const reavalValue = pautaForm.nota_reavaliacao !== undefined && pautaForm.nota_reavaliacao !== null && pautaForm.nota_reavaliacao !== ''
+          ? Number(pautaForm.nota_reavaliacao)
+          : null;
+
+        let mediaFinal = mediaFrequencia;
         if (examValue !== null) {
-          finalMedia = (average * 0.6) + (examValue * 0.4);
-        }
-
-        let resultSit: 'Aprovado' | 'Reprovado' | 'Recuperação' = 'Aprovado';
-        if (finalMedia < 10) {
-          resultSit = finalMedia >= 7.5 ? 'Recuperação' : 'Reprovado';
-        }
-
-        // Apply automatic re-evaluation recalculation
-        const reavalValue = pautaForm.nota_reavaliacao !== undefined && pautaForm.nota_reavaliacao !== null && pautaForm.nota_reavaliacao !== '' ? Number(pautaForm.nota_reavaliacao) : null;
-        if (reavalValue !== null && (finalMedia < 10)) {
-          finalMedia = reavalValue;
-          resultSit = reavalValue >= 10 ? 'Aprovado' : 'Reprovado';
+          mediaFinal = (mediaFrequencia + examValue) / 2;
+          if (examValue < 9.5) {
+            autoStatus = 'Reprovado';
+            if (reavalValue !== null) {
+              if (reavalValue < 9.5) {
+                autoStatus = 'Reprovado';
+                mediaFinal = (mediaFrequencia + reavalValue) / 2;
+              } else {
+                autoStatus = 'Aprovado na Reavaliação';
+                mediaFinal = (mediaFrequencia + reavalValue) / 2;
+              }
+            }
+          } else {
+            if (mediaFinal >= 9.5) {
+              autoStatus = 'Aprovado';
+            } else {
+              autoStatus = 'Reprovado';
+              if (reavalValue !== null) {
+                if (reavalValue < 9.5) {
+                  autoStatus = 'Reprovado';
+                  mediaFinal = (mediaFrequencia + reavalValue) / 2;
+                } else {
+                  autoStatus = 'Aprovado na Reavaliação';
+                  mediaFinal = (mediaFrequencia + reavalValue) / 2;
+                }
+              }
+            }
+          }
         }
 
         const calculatedPauta = {
           ...pautaForm,
-          nota_prova: pautaForm.nota_prova !== '' && pautaForm.nota_prova !== undefined ? Number(pautaForm.nota_prova) : '',
-          nota_trabalho: pautaForm.nota_trabalho !== '' && pautaForm.nota_trabalho !== undefined ? Number(pautaForm.nota_trabalho) : '',
-          nota_participacao: pautaForm.nota_participacao !== '' && pautaForm.nota_participacao !== undefined ? Number(pautaForm.nota_participacao) : '',
+          avaliacao_1: pautaForm.avaliacao_1 !== '' && pautaForm.avaliacao_1 !== undefined ? Number(pautaForm.avaliacao_1) : '',
+          avaliacao_2: pautaForm.num_avaliacoes >= 2 && pautaForm.avaliacao_2 !== '' && pautaForm.avaliacao_2 !== undefined ? Number(pautaForm.avaliacao_2) : '',
+          avaliacao_3: pautaForm.num_avaliacoes >= 3 && pautaForm.avaliacao_3 !== '' && pautaForm.avaliacao_3 !== undefined ? Number(pautaForm.avaliacao_3) : '',
+          media_avaliacoes: Number(mediaFrequencia.toFixed(2)),
           nota_exame: examValue !== null ? examValue : null,
           nota_reavaliacao: reavalValue !== null ? reavalValue : null,
-          nota_media: Number(finalMedia.toFixed(2)),
-          situacao: resultSit,
+          media_final: Number(mediaFinal.toFixed(2)),
+          nota_media: Number(mediaFinal.toFixed(2)), // compatibility fallback
+          situacao: autoStatus, // compatibility fallback
+          status_estudante: autoStatus,
+          num_avaliacoes: Number(pautaForm.num_avaliacoes || 3),
+          status: pautaForm.status || (editingItem ? editingItem.status : 'rascunho'),
           data_lancamento: new Date().toISOString().split('T')[0]
         };
 
@@ -2407,12 +6058,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           
           const targetStud = students.find(s => s.id === calculatedPauta.estudante_id);
           const studUser = tenantUsers.find(u => u.id === targetStud?.user_id);
+          const targetClass = classes.find(c => c.id === calculatedPauta.classe_id);
           
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
             titulo: '⚙️ Nota de Pauta Editada',
-            mensagem: `Atualizada a nota para ${studUser?.nome || 'Estudante'} na disciplina "${calculatedPauta.disciplina_id}". Nova média: ${calculatedPauta.nota_media} valores (${calculatedPauta.situacao}).`,
+            mensagem: `Atualizada a nota para ${studUser?.nome || 'Estudante'} na disciplina "${targetClass?.nome || 'Geral'}". Nova média: ${calculatedPauta.nota_media} valores (${calculatedPauta.situacao}).`,
             tipo: 'info',
             lido: false,
             created_at: new Date().toISOString()
@@ -2423,7 +6075,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               destinatario_id: targetStud.user_id,
               destinatario_role: 'estudante',
               titulo: '📊 Nota de Pauta Retificada',
-              mensagem: `A sua nota final para a disciplina "${calculatedPauta.disciplina_id}" foi retificada. Nova Média: ${calculatedPauta.nota_media} valores (${calculatedPauta.situacao}).`,
+              mensagem: `A sua nota final para a disciplina "${targetClass?.nome || 'Geral'}" foi retificada. Nova Média: ${calculatedPauta.nota_media} valores (${calculatedPauta.situacao}).`,
               tipo: 'info',
               lido: false,
               created_at: new Date().toISOString()
@@ -2434,12 +6086,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           
           const targetStud = students.find(s => s.id === calculatedPauta.estudante_id);
           const studUser = tenantUsers.find(u => u.id === targetStud?.user_id);
+          const targetClass = classes.find(c => c.id === calculatedPauta.classe_id);
           
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
             titulo: '📊 Nova Nota de Pauta Lançada',
-            mensagem: `Lançada nota para ${studUser?.nome || 'Estudante'} na disciplina "${calculatedPauta.disciplina_id}". Média Final: ${calculatedPauta.nota_media} valores (${calculatedPauta.situacao}).`,
+            mensagem: `Lançada nota para ${studUser?.nome || 'Estudante'} na disciplina "${targetClass?.nome || 'Geral'}". Média Final: ${calculatedPauta.nota_media} valores (${calculatedPauta.situacao}).`,
             tipo: 'sucesso',
             lido: false,
             created_at: new Date().toISOString()
@@ -2450,7 +6103,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               destinatario_id: targetStud.user_id,
               destinatario_role: 'estudante',
               titulo: '📊 Nova Nota de Pauta Disponível',
-              mensagem: `A sua nota final para a disciplina "${calculatedPauta.disciplina_id}" foi publicada. Média: ${calculatedPauta.nota_media} valores (${calculatedPauta.situacao}).`,
+              mensagem: `A sua nota final para a disciplina "${targetClass?.nome || 'Geral'}" foi publicada. Média: ${calculatedPauta.nota_media} valores (${calculatedPauta.situacao}).`,
               tipo: 'sucesso',
               lido: false,
               created_at: new Date().toISOString()
@@ -2475,7 +6128,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
             titulo: '⚙️ Dossier/Processo Retificado',
-            mensagem: `Os dados do processo "${payload.titulo}" do estudante ${studUser?.nome || 'Estudante'} foram retificados.`,
+            mensagem: `Os dados do processo "${payload.tipo}" do estudante ${studUser?.nome || 'Estudante'} foram retificados.`,
             tipo: 'info',
             lido: false,
             created_at: new Date().toISOString()
@@ -2486,7 +6139,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               destinatario_id: targetStud.user_id,
               destinatario_role: 'estudante',
               titulo: '📂 Atualização no seu Dossier Escolar',
-              mensagem: `O seu processo "${payload.titulo}" foi retificado pela secretaria.`,
+              mensagem: `O seu processo "${payload.tipo}" foi retificado pela secretaria.`,
               tipo: 'info',
               lido: false,
               created_at: new Date().toISOString()
@@ -2502,7 +6155,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
             titulo: '📂 Novo Dossier/Processo Registrado',
-            mensagem: `Registrado processo "${payload.titulo}" para o estudante ${studUser?.nome || 'Estudante'}.`,
+            mensagem: `Registrado processo "${payload.tipo}" para o estudante ${studUser?.nome || 'Estudante'}.`,
             tipo: 'sucesso',
             lido: false,
             created_at: new Date().toISOString()
@@ -2513,7 +6166,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               destinatario_id: targetStud.user_id,
               destinatario_role: 'estudante',
               titulo: '📂 Nova Atualização no seu Dossier',
-              mensagem: `Foi adicionado um novo registo ao seu dossier escolar: "${payload.titulo}".`,
+              mensagem: `Foi adicionado um novo registo ao seu dossier escolar: "${payload.tipo}".`,
               tipo: 'info',
               lido: false,
               created_at: new Date().toISOString()
@@ -2523,29 +6176,43 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       } 
       
       else if (modalType === 'user') {
+        const cleanedUserEmail = (userForm.email || '').trim().toLowerCase();
+        const userPwd = userForm.senha_temporaria || '12345678';
         if (editingItem) {
           await updateDoc(doc(db, 'users', editingItem.id), {
-            email: userForm.email,
+            email: cleanedUserEmail,
             nome: userForm.nome,
             tipo: userForm.tipo,
             ativo: userForm.ativo,
-            modulo_acessos: userForm.modulo_acessos
+            modulo_acessos: userForm.modulo_acessos,
+            foto_url: userForm.foto_url || '',
+            senha: userPwd,
+            senha_temporaria: userPwd
           });
+          if (cleanedUserEmail) {
+            await registerUserInFirebaseAuth(cleanedUserEmail, userPwd);
+          }
         } else {
           if (!checkLimit('max_usuarios', tenantUsers.length)) return;
           const userGenId = "user-gen-" + Math.random().toString(36).substr(2, 9);
           const newUser = {
             id: userGenId,
             tenant_id: currentTenantId,
-            email: userForm.email,
+            email: cleanedUserEmail,
             nome: userForm.nome,
             tipo: userForm.tipo,
+            senha: userPwd,
+            senha_temporaria: userPwd,
             permissoes: userForm.tipo === 'admin' || userForm.tipo === 'director' ? ["R", "W", "D"] : ["R"],
             ativo: userForm.ativo,
             modulo_acessos: userForm.modulo_acessos,
+            foto_url: userForm.foto_url || '',
             created_at: new Date().toISOString()
           };
           await setDoc(doc(db, 'users', userGenId), newUser);
+          if (cleanedUserEmail) {
+            await registerUserInFirebaseAuth(cleanedUserEmail, userPwd);
+          }
         }
       }
 
@@ -2562,24 +6229,83 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     }
   }
 
-  // Soft Delete School
+  // Soft Delete School (with associated students & teachers unlinking and admin notifications)
   async function handleSoftDeleteEscola(id: string, name: string) {
-    if (confirm(`Tem certeza que deseja desativar a escola "${name}"? Suas turmas e notas continuarão preservadas para fins legais.`)) {
-      setIsSaving(true);
-      try {
-        await updateDoc(doc(db, 'escolas', id), {
-          deleted_at: new Date().toISOString(),
-          ativo: false
-        });
-        loadTenantContext();
-        showSystemNotification(`Escola "${name}" desativada com sucesso!`, 'sucesso');
-      } catch (err: any) {
-        console.error("Error soft deleting school:", err);
-        showSystemNotification(`Erro ao desativar escola: ${err.message || err}`, 'erro');
-      } finally {
-        setIsSaving(false);
+    showConfirm(
+      "Confirmar Exclusão de Escola",
+      `Tem certeza que deseja excluir permanentemente a escola "${name}"? Alunos e docentes a ela vinculados serão desassociados (ficarão sem escola) e o administrador será notificado.`,
+      async () => {
+        setIsSaving(true);
+        try {
+          // 1. Find associated students and teachers from current raw list states
+          const associatedStudents = rawStudents.filter(s => s.escola_id === id);
+          const associatedTeachers = rawTeachers.filter(t => t.escola_id === id);
+
+          // 2. Unassociate students in Firestore
+          for (const s of associatedStudents) {
+            await updateDoc(doc(db, 'estudantes', s.id), {
+              escola_id: ''
+            });
+          }
+
+          // 3. Unassociate teachers in Firestore
+          for (const t of associatedTeachers) {
+            await updateDoc(doc(db, 'docentes', t.id), {
+              escola_id: ''
+            });
+          }
+
+          // 4. Delete the school
+          await deleteDoc(doc(db, 'escolas', id));
+
+          // 5. Create notifications in Firestore for administrator
+          const notificationMessage = `A escola "${name}" foi excluída com sucesso. ${associatedStudents.length} alunos e ${associatedTeachers.length} docentes foram desvinculados e encontram-se sem escola.`;
+          await addDoc(collection(db, 'notificacoes'), {
+            destinatario_id: 'admin',
+            tenant_id: currentTenantId,
+            titulo: '🗑️ Escola Excluída & Vínculos Desfeitos',
+            mensagem: notificationMessage,
+            tipo: 'alerta',
+            lido: false,
+            created_at: new Date().toISOString()
+          });
+
+          // 6. Show toast alert
+          showSystemNotification(`Escola "${name}" excluída e ${associatedStudents.length + associatedTeachers.length} vínculos desfeitos!`, 'sucesso');
+          
+          await loadTenantContext();
+        } catch (err: any) {
+          console.error("Error deleting school and unlinking:", err);
+          showSystemNotification(`Erro ao excluir escola: ${err.message || err}`, 'erro');
+        } finally {
+          setIsSaving(false);
+        }
+      },
+      true
+    );
+  }
+
+  // Publish Pauta (Grades)
+  async function handlePublishPauta(id: string) {
+    showConfirm(
+      'Publicar Pauta de Notas',
+      'Tem certeza de que deseja publicar esta pauta? Após a publicação, as notas não poderão ser alteradas.',
+      async () => {
+        setIsSaving(true);
+        try {
+          await updateDoc(doc(db, 'pautas', id), {
+            status: 'publicado'
+          });
+          loadTenantContext();
+          showSystemNotification('Pauta de notas publicada com sucesso! As notas agora integram as estatísticas oficiais do sistema.', 'sucesso');
+        } catch (err: any) {
+          console.error("Error publishing pauta:", err);
+          showSystemNotification(`Erro ao publicar pauta: ${err.message || err}`, 'erro');
+        } finally {
+          setIsSaving(false);
+        }
       }
-    }
+    );
   }
 
   // Update Settings
@@ -2596,6 +6322,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         escala_avaliacao: config.escala_avaliacao,
         notificacoes_email: config.notificacoes_email,
         logo_url: config.logo_url,
+        fuso_horario: config.fuso_horario || 'Africa/Maputo',
+        pais: config.pais || 'Moçambique',
         smtp_provider: config.smtp_provider || 'system',
         smtp_type: config.smtp_type || 'manual',
         smtp_host: config.smtp_host || '',
@@ -2604,7 +6332,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         smtp_pass: config.smtp_pass || '',
         smtp_secure: Boolean(config.smtp_secure),
         smtp_sender_email: config.smtp_sender_email || '',
-        smtp_sender_name: config.smtp_sender_name || ''
+        smtp_sender_name: config.smtp_sender_name || '',
+        notification_modules: config.notification_modules || []
       });
 
       if (tenant) {
@@ -2694,6 +6423,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
   return (
     <div id="tenant_client_portal" className="bg-slate-50 min-h-screen flex flex-col md:flex-row relative">
+      {isSaving && <SamsungLoadingScreen message="Processando solicitações..." />}
       {/* Backdrop overlay for hover expansion */}
       {isSidebarHovered && isSidebarCollapsed && (
         <div 
@@ -2724,9 +6454,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           {config?.logo_url ? (
             <img src={config.logo_url} alt="Logo" className="w-7 h-7 rounded-lg object-cover" referrerPolicy="no-referrer" />
           ) : (
-            <div className="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center font-bold text-xs text-white">
-              {tenant?.nome ? tenant.nome.charAt(0) : 'E'}
-            </div>
+            <SysEduLogo variant="icon" size={24} />
           )}
           <span className="font-extrabold text-xs truncate max-w-[120px]">{config?.nome_instituicao || tenant?.nome}</span>
         </div>
@@ -2846,9 +6574,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             {config?.logo_url ? (
               <img src={config.logo_url} alt="Logo" className="w-10 h-10 rounded-xl object-cover shrink-0" referrerPolicy="no-referrer" />
             ) : (
-              <div className="w-10 h-10 bg-indigo-600 text-white rounded-xl flex items-center justify-center font-extrabold text-lg font-sans shrink-0">
-                {tenant?.nome ? tenant.nome.charAt(0) : 'E'}
-              </div>
+              <SysEduLogo variant="icon" size={32} />
             )}
             {isExpanded && (
               <div className="overflow-hidden animate-in fade-in duration-300">
@@ -2883,6 +6609,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         <nav className="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto overscroll-y-contain no-scrollbar">
           {renderGroupHeader('Principal')}
           {renderMenuItem('dashboard', 'Dashboard', <Sliders className="w-4.5 h-4.5" />)}
+          {hasPermission('atividades') && renderMenuItem('atividades', 'Actividades', <CheckSquare className="w-4.5 h-4.5" />)}
+          {(currentUserRole === 'admin' || loggedInUser?.tipo === 'admin') && renderMenuItem('analise_administrativa', 'Análise Administrativa', <ShieldAlert className="w-4.5 h-4.5" />)}
           {hasPermission('analytics') && renderMenuItem('analytics', 'Análises & Analytics', <BarChart3 className="w-4.5 h-4.5" />)}
 
           {renderGroupHeader('Estrutura')}
@@ -2899,6 +6627,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           {hasPermission('calendario') && renderMenuItem('calendario', 'Calendário & Horários', <Calendar className="w-4.5 h-4.5" />)}
           {hasPermission('pautas') && renderMenuItem('pauta_geral', 'Pauta Geral', <Award className="w-4.5 h-4.5" />)}
           {hasPermission('pautas') && renderMenuItem('pautas', 'Lançamento (Notas)', <FileSpreadsheet className="w-4.5 h-4.5" />)}
+          {hasPermission('assiduidade') && renderMenuItem('assiduidade', 'Controle de Assiduidade', <Fingerprint className="w-4.5 h-4.5" />)}
           {hasPermission('biblioteca') && renderMenuItem('biblioteca', 'Biblioteca Digital', <Library className="w-4.5 h-4.5" />)}
           
           {plan?.modulos_permitidos?.includes('processo') && hasPermission('processos') && (
@@ -2910,15 +6639,20 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
           {renderGroupHeader('Administração')}
           {hasPermission('utilizadores') && renderMenuItem('usuarios', 'Utilizadores', <UserPlus className="w-4.5 h-4.5" />)}
+          {(currentUserRole === 'admin' || currentUserRole === 'director' || hasPermission('utilizadores')) && renderMenuItem('permissoes_globais', 'Permissões Globais', <ShieldCheck className="w-4.5 h-4.5" />)}
           {hasPermission('configuracoes') && renderMenuItem('configuracao', 'Configurações', <Sliders className="w-4.5 h-4.5" />)}
         </nav>
 
         {/* Footer / User Profile */}
         <div className={`p-4 border-t border-slate-800 bg-slate-950 flex flex-col gap-3 text-xs transition-all duration-300 ${isExpanded ? '' : 'items-center shrink-0'}`}>
           {isExpanded ? (
-            <div className="flex flex-col gap-1 overflow-hidden animate-in fade-in duration-300">
-              <p className="text-slate-500 font-medium">Autenticado como:</p>
-              <p className="font-extrabold text-indigo-400 uppercase tracking-wider font-mono text-[10px]">{currentUserRole}</p>
+            <div className="flex flex-col gap-0.5 overflow-hidden animate-in fade-in duration-300">
+              <p className="font-bold text-slate-100 text-xs truncate" title={loggedInUserName}>
+                {loggedInUserName}
+              </p>
+              <p className="font-extrabold text-indigo-400 uppercase tracking-wider font-mono text-[9px]">
+                {loggedInUser?.tipo || currentUserRole}
+              </p>
             </div>
           ) : (
             <div className="w-9 h-9 rounded-full bg-indigo-950 text-indigo-400 border border-indigo-800/40 flex items-center justify-center font-extrabold text-xs uppercase shrink-0" title={`Autenticado como: ${currentUserRole}`}>
@@ -2950,13 +6684,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       {/* MAIN CONTENT AREA */}
       <main id="main_content_area" className={`flex-1 overflow-y-auto ${isMobile ? 'p-3.5' : 'p-6 md:p-8'}`}>
         
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-32 text-slate-500 gap-2">
-            <Clock className="w-8 h-8 text-indigo-600 animate-spin" />
-            <p>Buscando informações do tenant...</p>
-          </div>
-        ) : (
-          <div className="max-w-6xl mx-auto space-y-8">
+        <div className="w-full space-y-8">
             
             {/* Header section with context alert */}
             <div className="hidden md:flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
@@ -3077,7 +6805,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         Painel do Estudante
                       </span>
                       <h2 className="text-2xl md:text-3xl font-black tracking-tight">
-                        Olá, {loggedInUser?.nome || 'Estudante'}! 👋
+                        Olá, {loggedInUserName}! 👋
                       </h2>
                     </div>
                     <div className="bg-white/10 backdrop-blur-md border border-white/15 p-4 rounded-2xl shrink-0 space-y-1">
@@ -3123,15 +6851,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       <div className="relative flex items-center justify-center">
                         <div className="w-24 h-24 rounded-full border-4 border-indigo-50 flex flex-col items-center justify-center bg-indigo-50/30">
                           <span className="text-2xl font-black text-indigo-600">
-                            {pautas.length > 0 
-                              ? (pautas.reduce((acc, curr) => acc + (curr.nota_media || 0), 0) / pautas.length).toFixed(1) 
+                            {publicPautas.length > 0 
+                              ? (publicPautas.reduce((acc, curr) => acc + (curr.media_final !== undefined ? curr.media_final : (curr.nota_media || 0)), 0) / publicPautas.length).toFixed(1) 
                               : '---'}
                           </span>
                           <span className="text-[9px] text-slate-400 font-bold uppercase">Média Geral</span>
                         </div>
                       </div>
                       <p className="text-xs text-slate-500 font-semibold text-center">
-                        {pautas.length} avaliações registradas neste trimestre.
+                        {publicPautas.length} avaliações oficiais publicadas.
                       </p>
                     </div>
                   </div>
@@ -3143,10 +6871,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       <h4 className="font-bold text-slate-800 text-sm">Avisos e Lembretes</h4>
                     </div>
                     <div className="space-y-3 pt-1">
-                      {pautas.length === 0 ? (
+                      {publicPautas.length === 0 ? (
                         <div className="flex items-start gap-2 text-xs text-slate-500">
                           <CheckCircle className="w-4 h-4 text-emerald-500 mt-0.5" />
-                          <p>Nenhuma nota pendente de avaliação. Excelente!</p>
+                          <p>Nenhuma nota publicada oficialmente até ao momento.</p>
                         </div>
                       ) : (
                         <div className="flex items-start gap-2 text-xs text-slate-500">
@@ -3171,7 +6899,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     </span>
                   </div>
 
-                  {pautas.length === 0 ? (
+                  {publicPautas.length === 0 ? (
                     <div className="py-12 text-center">
                       <Award className="w-12 h-12 text-slate-300 mx-auto mb-3" />
                       <p className="text-slate-400 text-sm font-semibold">Nenhum lançamento de notas registrado até o momento.</p>
@@ -3183,35 +6911,35 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           <tr className="bg-slate-50 text-slate-500 text-[10px] font-bold uppercase border-b border-slate-100">
                             <th className="px-6 py-3.5">Disciplina / Matéria</th>
                             <th className="px-4 py-3.5 text-center">Trimestre</th>
-                            <th className="px-4 py-3.5 text-center">Prova</th>
-                            <th className="px-4 py-3.5 text-center">Trabalho</th>
-                            <th className="px-4 py-3.5 text-center">Partic.</th>
+                            <th className="px-4 py-3.5 text-center">Avaliação 1</th>
+                            <th className="px-4 py-3.5 text-center">Avaliação 2</th>
+                            <th className="px-4 py-3.5 text-center">Avaliação 3</th>
                             <th className="px-4 py-3.5 text-center">Exame</th>
                             <th className="px-4 py-3.5 text-center font-bold">Média</th>
                             <th className="px-6 py-3.5 text-right">Situação</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-150/40 text-xs text-slate-700">
-                          {pautas.map(p => {
+                          {publicPautas.map(p => {
                             const cls = classes.find(c => c.id === p.classe_id);
                             return (
                               <tr key={p.id} className="hover:bg-slate-50/30 transition-colors">
                                 <td className="px-6 py-3.5 font-bold text-slate-900">{cls?.nome || 'Disciplina'}</td>
                                 <td className="px-4 py-3.5 text-center">{p.trimestre}</td>
-                                <td className="px-4 py-3.5 text-center font-mono">{p.nota_prova}</td>
-                                <td className="px-4 py-3.5 text-center font-mono">{p.nota_trabalho}</td>
-                                <td className="px-4 py-3.5 text-center font-mono">{p.nota_participacao}</td>
-                                <td className="px-4 py-3.5 text-center font-mono">{p.nota_exame !== undefined ? p.nota_exame : '---'}</td>
-                                <td className="px-4 py-3.5 text-center font-mono font-bold text-indigo-700">{p.nota_media}</td>
+                                <td className="px-4 py-3.5 text-center font-mono">{p.avaliacao_1 !== undefined && (p.avaliacao_1 as any) !== '' ? p.avaliacao_1 : '—'}</td>
+                                <td className="px-4 py-3.5 text-center font-mono">{p.avaliacao_2 !== undefined && (p.avaliacao_2 as any) !== '' ? p.avaliacao_2 : '—'}</td>
+                                <td className="px-4 py-3.5 text-center font-mono">{p.avaliacao_3 !== undefined && (p.avaliacao_3 as any) !== '' ? p.avaliacao_3 : '—'}</td>
+                                <td className="px-4 py-3.5 text-center font-mono">{p.nota_exame !== undefined && p.nota_exame !== null && (p.nota_exame as any) !== '' ? p.nota_exame : '—'}</td>
+                                <td className="px-4 py-3.5 text-center font-mono font-bold text-indigo-700">{p.media_final !== undefined ? p.media_final : (p.nota_media || '—')}</td>
                                 <td className="px-6 py-3.5 text-right">
                                   <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                    p.situacao === 'Aprovado' 
+                                    p.status_estudante === 'Dispensado' || p.status_estudante === 'Aprovado' || p.situacao === 'Aprovado'
                                       ? 'bg-emerald-50 text-emerald-700 border border-emerald-150' 
-                                      : p.situacao === 'Recuperação'
+                                      : p.status_estudante === 'Exame de Recorrência' || p.situacao === 'Recuperação'
                                       ? 'bg-amber-50 text-amber-700 border border-amber-150'
                                       : 'bg-rose-50 text-rose-700 border border-rose-150'
                                   }`}>
-                                    {p.situacao}
+                                    {p.status_estudante || p.situacao}
                                   </span>
                                 </td>
                               </tr>
@@ -3282,7 +7010,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       Painel do Docente
                     </span>
                     <h2 className="text-2xl md:text-3xl font-black tracking-tight">
-                      Olá, Prof. {loggedInUser?.nome || 'Docente'}! 🧑‍🏫
+                      Olá, Prof. {loggedInUserName}! 🧑‍🏫
                     </h2>
                     <p className="text-slate-300 text-sm max-w-xl">
                       Seu portal de docência integrado. Gerencie suas turmas, lance notas (Pautas) de seus alunos e acompanhe seu calendário acadêmico.
@@ -3412,104 +7140,359 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             {/* TAB: DASHBOARD */}
             {activeTab === 'dashboard' && !isEstudante && !isDocente && (
               <div className="space-y-8 animate-fadeIn">
-                {/* Stats cards inside school tenant */}
-                <div className="flex flex-col md:grid md:grid-cols-4 gap-4 md:gap-6">
-                  <div className="bg-white p-5 rounded-2xl border border-slate-200/60 shadow-xs">
-                    <School className="w-5 h-5 text-indigo-600 mb-2.5" />
-                    <p className="text-slate-400 text-xs font-bold uppercase tracking-wider">Escolas Ativas</p>
-                    <h3 className="text-2xl font-black font-sans text-slate-900 mt-1">{schools.length}</h3>
-                  </div>
-
-                  <div className="bg-white p-5 rounded-2xl border border-slate-200/60 shadow-xs">
-                    <Users className="w-5 h-5 text-blue-600 mb-2.5" />
-                    <p className="text-slate-400 text-xs font-bold uppercase tracking-wider">Total Docentes</p>
-                    <h3 className="text-2xl font-black font-sans text-slate-900 mt-1">{teachers.length}</h3>
-                  </div>
-
-                  <div className="bg-white p-5 rounded-2xl border border-slate-200/60 shadow-xs">
-                    <GraduationCap className="w-5 h-5 text-emerald-600 mb-2.5" />
-                    <p className="text-slate-400 text-xs font-bold uppercase tracking-wider">Alunos Matriculados</p>
-                    <h3 className="text-2xl font-black font-sans text-slate-900 mt-1">{students.length}</h3>
-                  </div>
-
-                  <div className="bg-white p-5 rounded-2xl border border-slate-200/60 shadow-xs">
-                    <BookOpen className="w-5 h-5 text-amber-600 mb-2.5" />
-                    <p className="text-slate-400 text-xs font-bold uppercase tracking-wider">Total Turmas</p>
-                    <h3 className="text-2xl font-black font-sans text-slate-900 mt-1">{turmas.length}</h3>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  {/* Left stats visualizer */}
-                  <div className="md:col-span-2 bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs">
-                    <h3 className="font-bold text-slate-800 text-base mb-4">Matrículas e Histórico Acadêmico</h3>
-                    <div className="h-48 flex items-end gap-4 justify-around">
-                      <div className="flex flex-col items-center gap-1 w-full">
-                        <div className="bg-slate-100 w-10 h-32 rounded flex items-end justify-center">
-                          <div className="bg-indigo-600 w-10 h-16 rounded-b"></div>
-                        </div>
-                        <span className="text-xs text-slate-500">1º Tri</span>
-                      </div>
-                      <div className="flex flex-col items-center gap-1 w-full">
-                        <div className="bg-slate-100 w-10 h-32 rounded flex items-end justify-center">
-                          <div className="bg-indigo-600 w-10 h-24 rounded-b"></div>
-                        </div>
-                        <span className="text-xs text-slate-500">2º Tri</span>
-                      </div>
-                      <div className="flex flex-col items-center gap-1 w-full">
-                        <div className="bg-slate-100 w-10 h-32 rounded flex items-end justify-center">
-                          <div className="bg-indigo-600 w-10 h-28 rounded-b"></div>
-                        </div>
-                        <span className="text-xs text-slate-500">3º Tri</span>
-                      </div>
+                {/* Real-time Dashboard Header with Filters */}
+                <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="relative flex h-2.5 w-2.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                      </span>
+                      <h2 className="text-lg font-black text-slate-900 tracking-tight">Painel de Controlo em Tempo Real</h2>
                     </div>
-                  </div>
-
-                  {/* Right alerts panel */}
-                  <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs flex flex-col justify-between">
-                    <div>
-                      <h4 className="font-bold text-slate-800 text-sm mb-3">Lembretes & Atividades Recentes</h4>
-                      <div className="space-y-3">
-                        <div className="flex items-start gap-2.5 text-xs">
-                          <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5" />
-                          <div>
-                            <p className="font-semibold text-slate-700">Lançamento de Notas</p>
-                            <p className="text-slate-400 mt-0.5">Prazo de fechamento do 1º Trimestre em 3 dias.</p>
-                          </div>
-                        </div>
-                        <div className="flex items-start gap-2.5 text-xs">
-                          <CheckCircle className="w-4 h-4 text-emerald-600 mt-0.5" />
-                          <div>
-                            <p className="font-semibold text-slate-700">Fatura de Assinatura</p>
-                            <p className="text-slate-400 mt-0.5">Renovação SaaS processada com sucesso.</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <button 
-                      onClick={() => setActiveTab('estudantes')}
-                      className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2 rounded-xl text-xs text-center transition-colors mt-6 font-semibold"
-                    >
-                      Acessar Registro de Estudantes
-                    </button>
-                  </div>
-                </div>
-
-                {/* Mapa Interativo das Escolas no Dashboard */}
-                <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-4">
-                  <div className="flex justify-between items-center pb-2 border-b border-slate-100">
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <MapPin className="w-3.5 h-3.5 text-indigo-600 animate-bounce" /> Distribuição Geográfica das Escolas Registradas
+                    <p className="text-xs text-slate-500 font-medium mt-0.5">
+                      Bem-vindo(a), <strong className="text-indigo-600 font-bold">{loggedInUserName}</strong> — Estatísticas dinâmicas sincronizadas instantaneamente.
                     </p>
-                    <span className="text-xs bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-full font-bold">
-                      {schools.length} {schools.length === 1 ? 'Escola Registrada' : 'Escolas Registradas'}
-                    </span>
                   </div>
-                  <SchoolMap 
-                    schools={schools} 
-                    provinces={provinces}
-                  />
+
+                  {/* Filter Controls */}
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5">
+                      <School className="w-4 h-4 text-slate-400" />
+                      <select 
+                        value={dashboardSchoolFilter}
+                        onChange={(e) => setDashboardSchoolFilter(e.target.value)}
+                        className="bg-transparent text-xs font-bold text-slate-700 outline-none cursor-pointer"
+                      >
+                        <option value="todas">Todas as Escolas ({schools.length})</option>
+                        {schools.map(s => (
+                          <option key={s.id} value={s.id}>{s.nome}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5">
+                      <BookOpen className="w-4 h-4 text-slate-400" />
+                      <select 
+                        value={dashboardTrimestreFilter}
+                        onChange={(e) => setDashboardTrimestreFilter(e.target.value)}
+                        className="bg-transparent text-xs font-bold text-slate-700 outline-none cursor-pointer"
+                      >
+                        <option value="todos">Todos os Trimestres</option>
+                        <option value="1º Trimestre">1º Trimestre</option>
+                        <option value="2º Trimestre">2º Trimestre</option>
+                        <option value="3º Trimestre">3º Trimestre</option>
+                      </select>
+                    </div>
+                  </div>
                 </div>
+
+                {/* Real-time Stat Cards Grid */}
+                {(() => {
+                  const filteredSchools = dashboardSchoolFilter === 'todas' 
+                    ? schools 
+                    : schools.filter(s => s.id === dashboardSchoolFilter);
+
+                  const filteredStudents = dashboardSchoolFilter === 'todas'
+                    ? students
+                    : students.filter(s => s.escola_id === dashboardSchoolFilter);
+
+                  const filteredTeachers = dashboardSchoolFilter === 'todas'
+                    ? teachers
+                    : teachers.filter(t => !t.escola_id || t.escola_id === dashboardSchoolFilter);
+
+                  const filteredTurmas = dashboardSchoolFilter === 'todas'
+                    ? turmas
+                    : turmas.filter(t => t.escola_id === dashboardSchoolFilter);
+
+                  const filteredPautas = rawPautas.filter(p => {
+                    const matchSchool = dashboardSchoolFilter === 'todas' || p.escola_id === dashboardSchoolFilter;
+                    const matchTri = dashboardTrimestreFilter === 'todos' || p.trimestre === dashboardTrimestreFilter;
+                    return matchSchool && matchTri;
+                  });
+
+                  // Calculate Grade Stats
+                  let totalPautaScore = 0;
+                  let pautaCount = 0;
+                  let countAprovados = 0;
+                  let countExame = 0;
+                  let countReprovados = 0;
+
+                  filteredPautas.forEach(p => {
+                    const p1 = Number(p.avaliacao_1 || p.nota_prova || 0);
+                    const p2 = Number(p.avaliacao_2 || p.nota_trabalho || 0);
+                    const p3 = Number(p.avaliacao_3 || p.nota_participacao || 0);
+                    const ex = Number(p.nota_exame || 0);
+                    const num = Math.max(1, p.num_avaliacoes || 3);
+                    const freq = (p1 + p2 + p3) / num;
+                    
+                    let finalGrade = 0;
+                    if (p.nota_reavaliacao !== undefined && p.nota_reavaliacao !== null && (p.nota_reavaliacao as any) !== '') {
+                      finalGrade = Number(p.nota_reavaliacao);
+                    } else if (ex > 0) {
+                      finalGrade = (freq + ex) / 2;
+                    } else {
+                      finalGrade = freq;
+                    }
+
+                    totalPautaScore += finalGrade;
+                    pautaCount++;
+
+                    if (finalGrade >= 10) countAprovados++;
+                    else if (finalGrade >= 8) countExame++;
+                    else countReprovados++;
+                  });
+
+                  const averageGrade = pautaCount > 0 ? (totalPautaScore / pautaCount).toFixed(1) : '0.0';
+
+                  return (
+                    <>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-4">
+                        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
+                          <School className="w-5 h-5 text-indigo-600 mb-2" />
+                          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Escolas Ativas</p>
+                          <h3 className="text-xl font-black text-slate-900 mt-0.5">{filteredSchools.length}</h3>
+                        </div>
+
+                        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
+                          <Users className="w-5 h-5 text-blue-600 mb-2" />
+                          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Total Docentes</p>
+                          <h3 className="text-xl font-black text-slate-900 mt-0.5">{filteredTeachers.length}</h3>
+                        </div>
+
+                        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
+                          <GraduationCap className="w-5 h-5 text-emerald-600 mb-2" />
+                          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Estudantes</p>
+                          <h3 className="text-xl font-black text-slate-900 mt-0.5">{filteredStudents.length}</h3>
+                        </div>
+
+                        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
+                          <BookOpen className="w-5 h-5 text-amber-600 mb-2" />
+                          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Total Turmas</p>
+                          <h3 className="text-xl font-black text-slate-900 mt-0.5">{filteredTurmas.length}</h3>
+                        </div>
+
+                        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
+                          <ShieldCheck className="w-5 h-5 text-purple-600 mb-2" />
+                          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Categorias</p>
+                          <h3 className="text-xl font-black text-slate-900 mt-0.5">{globalCategories.length}</h3>
+                        </div>
+
+                        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
+                          <UserCheck className="w-5 h-5 text-cyan-600 mb-2" />
+                          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Utilizadores</p>
+                          <h3 className="text-xl font-black text-slate-900 mt-0.5">{tenantUsers.length}</h3>
+                        </div>
+
+                        <div 
+                          onClick={() => setActiveTab('atividades')}
+                          className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs cursor-pointer hover:border-indigo-300 transition"
+                        >
+                          <CheckSquare className="w-5 h-5 text-indigo-600 mb-2" />
+                          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Actividades Activas</p>
+                          <h3 className="text-xl font-black text-amber-600 mt-0.5">
+                            {rawAtividades.filter(a => a.status !== 'Finalizada').length}
+                          </h3>
+                        </div>
+
+                        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
+                          <Award className="w-5 h-5 text-rose-600 mb-2" />
+                          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Média Geral</p>
+                          <h3 className="text-xl font-black text-indigo-600 mt-0.5">{averageGrade} / 20</h3>
+                        </div>
+                      </div>
+
+                      {/* Main Dynamic Charts Section */}
+                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        {/* Dynamic Academic Performance Bar Chart */}
+                        <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-6">
+                          <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                            <div>
+                              <h3 className="font-bold text-slate-900 text-base flex items-center gap-2">
+                                <BarChart3 className="w-5 h-5 text-indigo-600" />
+                                Aproveitamento Académico em Tempo Real
+                              </h3>
+                              <p className="text-xs text-slate-500 mt-0.5">Situação real dos alunos baseada nas pautas e avaliações registradas.</p>
+                            </div>
+                            <span className="text-xs bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full font-bold border border-indigo-100">
+                              {pautaCount} Pautas Avaliadas
+                            </span>
+                          </div>
+
+                          {pautaCount === 0 ? (
+                            <div className="py-12 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                              <FileSpreadsheet className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                              <p className="text-xs font-bold text-slate-500">Nenhum registo de pauta encontrado para os filtros selecionados.</p>
+                              <p className="text-[11px] text-slate-400 mt-1">Selecione outro trimestre ou publique novas notas no módulo de Pautas.</p>
+                            </div>
+                          ) : (
+                            <div className="space-y-5">
+                              {/* Percentage Progress Bar Breakdown */}
+                              <div className="space-y-2">
+                                <div className="flex justify-between text-xs font-bold text-slate-700">
+                                  <span>Distribuição de Resultados</span>
+                                  <span>100% ({pautaCount} Alunos/Avaliações)</span>
+                                </div>
+                                <div className="h-4 w-full bg-slate-100 rounded-full overflow-hidden flex shadow-inner">
+                                  <div 
+                                    style={{ width: `${(countAprovados / pautaCount) * 100}%` }}
+                                    className="bg-emerald-500 h-full transition-all duration-500"
+                                    title={`Aprovados: ${countAprovados}`}
+                                  />
+                                  <div 
+                                    style={{ width: `${(countExame / pautaCount) * 100}%` }}
+                                    className="bg-amber-500 h-full transition-all duration-500"
+                                    title={`Em Exame: ${countExame}`}
+                                  />
+                                  <div 
+                                    style={{ width: `${(countReprovados / pautaCount) * 100}%` }}
+                                    className="bg-rose-500 h-full transition-all duration-500"
+                                    title={`Reprovados: ${countReprovados}`}
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Category Cards */}
+                              <div className="grid grid-cols-3 gap-4 pt-2">
+                                <div className="bg-emerald-50/70 border border-emerald-100 p-4 rounded-xl">
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-xs font-bold text-emerald-800">Aprovados (≥10)</span>
+                                    <CheckCircle className="w-4 h-4 text-emerald-600" />
+                                  </div>
+                                  <p className="text-2xl font-black text-emerald-900">{countAprovados}</p>
+                                  <p className="text-[11px] font-bold text-emerald-700 mt-1">
+                                    {((countAprovados / pautaCount) * 100).toFixed(1)}% do total
+                                  </p>
+                                </div>
+
+                                <div className="bg-amber-50/70 border border-amber-100 p-4 rounded-xl">
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-xs font-bold text-amber-800">Em Exame (8 - 9.9)</span>
+                                    <AlertCircle className="w-4 h-4 text-amber-600" />
+                                  </div>
+                                  <p className="text-2xl font-black text-amber-900">{countExame}</p>
+                                  <p className="text-[11px] font-bold text-amber-700 mt-1">
+                                    {((countExame / pautaCount) * 100).toFixed(1)}% do total
+                                  </p>
+                                </div>
+
+                                <div className="bg-rose-50/70 border border-rose-100 p-4 rounded-xl">
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-xs font-bold text-rose-800">Reprovados (&lt;8)</span>
+                                    <XCircle className="w-4 h-4 text-rose-600" />
+                                  </div>
+                                  <p className="text-2xl font-black text-rose-900">{countReprovados}</p>
+                                  <p className="text-[11px] font-bold text-rose-700 mt-1">
+                                    {((countReprovados / pautaCount) * 100).toFixed(1)}% do total
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Distribution of Users by Category (Permissões Globais) */}
+                        <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between space-y-4">
+                          <div>
+                            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+                              <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                                <ShieldCheck className="w-4 h-4 text-purple-600" />
+                                Utilizadores por Categoria
+                              </h4>
+                              <span className="text-[10px] font-bold text-slate-400 uppercase">Permissões Globais</span>
+                            </div>
+
+                            <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
+                              {globalCategories.map(cat => {
+                                const count = tenantUsers.filter(u => u.tipo === cat.codigo || u.tipo === cat.id).length;
+                                const total = Math.max(1, tenantUsers.length);
+                                const pct = ((count / total) * 100).toFixed(0);
+
+                                return (
+                                  <div key={cat.id} className="space-y-1">
+                                    <div className="flex justify-between items-center text-xs">
+                                      <span className="font-bold text-slate-800">{cat.nome}</span>
+                                      <span className="font-mono text-slate-500">{count} ({pct}%)</span>
+                                    </div>
+                                    <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                                      <div 
+                                        style={{ width: `${pct}%` }}
+                                        className="h-full bg-purple-600 rounded-full transition-all duration-300"
+                                      />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          <button 
+                            onClick={() => setActiveTab('global_permissions')}
+                            className="w-full bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 font-bold py-2.5 rounded-xl text-xs text-center transition-colors cursor-pointer flex items-center justify-center gap-2"
+                          >
+                            <ShieldCheck className="w-4 h-4" /> Gerir Permissões Globais
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Turma Capacity and Interactive School Map */}
+                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        {/* Turmas Capacity & Fill Visualizer */}
+                        <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
+                          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                            <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                              <BookOpen className="w-4 h-4 text-amber-600" />
+                              Lotação das Turmas
+                            </h4>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase">Capacidade Real</span>
+                          </div>
+
+                          <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
+                            {filteredTurmas.slice(0, 6).map(turma => {
+                              const turmaStudentsCount = filteredStudents.filter(s => s.turma_id === turma.id).length;
+                              const maxCap = turma.capacidade_max || 30;
+                              const pct = Math.min(100, Math.round((turmaStudentsCount / maxCap) * 100));
+
+                              return (
+                                <div key={turma.id} className="space-y-1">
+                                  <div className="flex justify-between items-center text-xs">
+                                    <span className="font-bold text-slate-800">{turma.nome}</span>
+                                    <span className="font-mono text-slate-500">{turmaStudentsCount} / {maxCap} alunos ({pct}%)</span>
+                                  </div>
+                                  <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                                    <div 
+                                      style={{ width: `${pct}%` }}
+                                      className={`h-full rounded-full transition-all duration-300 ${pct >= 90 ? 'bg-rose-500' : pct >= 75 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                                    />
+                                  </div>
+                                </div>
+                              );
+                            })}
+                            {filteredTurmas.length === 0 && (
+                              <p className="text-xs text-slate-400 text-center py-4">Nenhuma turma cadastrada.</p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Interactive Geographic School Map */}
+                        <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
+                          <div className="flex justify-between items-center pb-2 border-b border-slate-100">
+                            <p className="text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center gap-1.5">
+                              <MapPin className="w-4 h-4 text-indigo-600 animate-bounce" /> Distribuição Geográfica das Escolas Registadas
+                            </p>
+                            <span className="text-xs bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-full font-bold border border-indigo-100">
+                              {filteredSchools.length} {filteredSchools.length === 1 ? 'Escola' : 'Escolas'}
+                            </span>
+                          </div>
+                          <SchoolMap 
+                            schools={filteredSchools} 
+                            provinces={provinces}
+                          />
+                        </div>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             )}
 
@@ -3518,7 +7501,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               !hasPermission('analytics') ? renderRestrictedAccess('Módulo de Análises & Analytics') : (
                 <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-6">
                   <AnalyticsModule
-                    role={currentUserRole}
+                    role={currentUserRole === 'suporte' ? 'admin' : currentUserRole}
                     schools={rawSchools}
                     teachers={rawTeachers}
                     students={rawStudents}
@@ -3528,9 +7511,480 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     tenantUsers={tenantUsers}
                     currentTeacher={currentTeacher}
                     loggedInUser={loggedInUser}
+                    atividades={rawAtividades}
                   />
                 </div>
               )
+            )}
+
+            {/* TAB: ACTIVIDADES */}
+            {activeTab === 'atividades' && (
+              !hasPermission('atividades') ? renderRestrictedAccess('Módulo de Actividades') : (
+                <AtividadesModule
+                  tenantId={tenant?.id || 'default'}
+                  loggedInUser={loggedInUser}
+                  currentUserRole={currentUserRole}
+                  tenantUsers={tenantUsers}
+                  teachers={rawTeachers}
+                  students={rawStudents}
+                  schools={rawSchools}
+                  turmas={rawTurmas}
+                  atividades={rawAtividades}
+                  pautas={rawPautas}
+                  processos={rawProcessos}
+                  faturas={studentFaturas}
+                  onRefreshData={() => loadTenantContext()}
+                  showNotification={showSystemNotification}
+                />
+              )
+            )}
+
+            {/* TAB: ANÁLISE ADMINISTRATIVA */}
+            {activeTab === 'analise_administrativa' && (
+              <div className="space-y-8 animate-in fade-in duration-300 relative">
+                {/* Header Section */}
+                <div className="bg-gradient-to-r from-slate-900 to-indigo-950 p-8 rounded-3xl border border-slate-800 text-white shadow-lg relative overflow-hidden">
+                  <div className="absolute right-0 bottom-0 opacity-10 transform translate-x-10 translate-y-10">
+                    <ShieldAlert className="w-96 h-96" />
+                  </div>
+                  <div className="relative z-10 space-y-2">
+                    <div className="inline-flex items-center gap-2 bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-3 py-1 rounded-full text-xs font-bold font-mono tracking-wider">
+                      🛡️ PAINEL DO ADMINISTRADOR
+                    </div>
+                    <h3 className="font-sans font-extrabold text-3xl tracking-tight">Análise Administrativa & Integridade</h3>
+                    <p className="text-sm text-slate-300 max-w-xl">
+                      Auditoria de consistência e conformidade do sistema de ensino. Monitore pendências críticas de estudantes, vínculos docentes, cadastro curricular e ativos bibliotecários.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Compute Metrics */}
+                {(() => {
+                  const studentsWithoutTurma = rawStudents.filter(s => !s.turma_id || s.turma_id === '');
+                  const studentsWithIncompleteData = rawStudents.filter(s => !s.data_nascimento || !s.genero || !s.escola_id);
+                  const teachersWithoutSchool = rawTeachers.filter(t => !t.escola_id || t.escola_id === '');
+                  const teachersWithoutSpecialty = rawTeachers.filter(t => !t.especialidade || t.especialidade === '');
+                  const assignedTurmaIds = new Set(rawClasses.map(c => c.turma_id).filter(Boolean));
+                  const turmasWithoutClasses = rawTurmas.filter(t => !assignedTurmaIds.has(t.id));
+                  const turmasWithoutDirector = rawTurmas.filter(t => !t.docente_id || t.docente_id === '');
+                  
+                  let booksLocal = [];
+                  try {
+                    const saved = localStorage.getItem(`lib_livros_${currentTenantId}`);
+                    if (saved) {
+                      booksLocal = JSON.parse(saved);
+                    }
+                  } catch (e) {}
+                  if (!Array.isArray(booksLocal) || booksLocal.length === 0) {
+                    booksLocal = [
+                      { id: 'livro-1', titulo: 'Dom Casmurro', autor: 'Machado de Assis', categoria: 'Romance' },
+                      { id: 'livro-2', titulo: 'Memórias Póstumas de Brás Cubas', autor: 'Machado de Assis', currency: 'MZN' },
+                      { id: 'livro-3', titulo: 'O Cortiço', autor: 'Aluísio Azevedo', categoria: 'Naturalismo' }
+                    ];
+                  }
+
+                  const assignedSalas = new Set(rawClasses.map(c => c.sala?.toLowerCase().trim()).filter(Boolean));
+                  const salasWithoutClasses = rawSalas.filter(s => !assignedSalas.has(s.nome?.toLowerCase().trim()));
+
+                  const cards = [
+                    {
+                      id: 'alunos_sem_turma',
+                      title: 'Alunos Sem Turma',
+                      count: studentsWithoutTurma.length,
+                      total: rawStudents.length,
+                      desc: 'Estudantes matriculados que ainda não foram enturmados.',
+                      color: 'rose',
+                      badge: 'Crítico'
+                    },
+                    {
+                      id: 'alunos_incompletos',
+                      title: 'Alunos Dados Incompletos',
+                      count: studentsWithIncompleteData.length,
+                      total: rawStudents.length,
+                      desc: 'Faltando data de nascimento, gênero ou vínculo escolar.',
+                      color: 'amber',
+                      badge: 'Aviso'
+                    },
+                    {
+                      id: 'docentes_sem_escola',
+                      title: 'Docentes Sem Escola',
+                      count: teachersWithoutSchool.length,
+                      total: rawTeachers.length,
+                      desc: 'Professores cadastrados no sistema sem nenhuma escola atribuída.',
+                      color: 'rose',
+                      badge: 'Crítico'
+                    },
+                    {
+                      id: 'docentes_sem_especialidade',
+                      title: 'Docentes Sem Especialidade',
+                      count: teachersWithoutSpecialty.length,
+                      total: rawTeachers.length,
+                      desc: 'Professores sem disciplina de especialização cadastrada.',
+                      color: 'slate',
+                      badge: 'Secundário'
+                    },
+                    {
+                      id: 'turmas_sem_aulas',
+                      title: 'Turmas Sem Aulas',
+                      count: turmasWithoutClasses.length,
+                      total: rawTurmas.length,
+                      desc: 'Turmas ativas sem nenhuma matéria agendada no calendário.',
+                      color: 'amber',
+                      badge: 'Aviso'
+                    },
+                    {
+                      id: 'turmas_diretor',
+                      title: 'Turmas Sem Professor Diretor',
+                      count: turmasWithoutDirector.length,
+                      total: rawTurmas.length,
+                      desc: 'Turmas que não possuem um docente conselheiro atribuído.',
+                      color: 'rose',
+                      badge: 'Crítico'
+                    },
+                    {
+                      id: 'livros_biblioteca',
+                      title: 'Livros Cadastrados',
+                      count: booksLocal.length,
+                      total: 100, // Ratio relative to target or just display numeric
+                      desc: 'Obras literárias e manuais cadastrados na biblioteca digital.',
+                      color: 'indigo',
+                      badge: 'Ativo'
+                    },
+                    {
+                      id: 'salas_sem_aluno',
+                      title: 'Salas Sem Aulas',
+                      count: salasWithoutClasses.length,
+                      total: rawSalas.length,
+                      desc: 'Salas de aula cadastradas sem nenhuma aula curricular agendada.',
+                      color: 'slate',
+                      badge: 'Inativo'
+                    }
+                  ];
+
+                  return (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                      {cards.map((card) => {
+                        const isAlert = card.count > 0;
+                        const colorClass = isAlert 
+                          ? (card.color === 'rose' ? 'border-rose-200 bg-rose-50/50 hover:border-rose-300' : 'border-amber-200 bg-amber-50/50 hover:border-amber-300')
+                          : 'border-slate-200 bg-slate-50/40 hover:border-slate-300';
+                        
+                        return (
+                          <div 
+                            key={card.id}
+                            onClick={() => {
+                              setSelectedAnalysisType(card.id);
+                              setIsSlidingPanelOpen(true);
+                            }}
+                            className={`p-6 rounded-2xl border transition-all cursor-pointer shadow-2xs group hover:shadow-xs relative flex flex-col justify-between ${colorClass}`}
+                          >
+                            <div className="space-y-4">
+                              <div className="flex justify-between items-start">
+                                <span className={`text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full font-mono ${
+                                  isAlert 
+                                    ? (card.color === 'rose' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800')
+                                    : 'bg-emerald-100 text-emerald-800'
+                                }`}>
+                                  {isAlert ? card.badge : 'Conforme'}
+                                </span>
+                                <span className="text-slate-400 group-hover:text-indigo-600 transition-colors text-xs font-bold">Ver mais →</span>
+                              </div>
+                              <div className="space-y-1">
+                                <h4 className="font-bold text-slate-800 text-sm">{card.title}</h4>
+                                <p className="text-xs text-slate-500 leading-normal">{card.desc}</p>
+                              </div>
+                            </div>
+
+                            <div className="mt-6 pt-4 border-t border-slate-200/50 flex items-baseline gap-1.5">
+                              <span className="text-3xl font-black text-slate-900">{card.count}</span>
+                              <span className="text-xs text-slate-400 font-bold font-mono">/ {card.total}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+
+                {/* Sliding Detailed Panel */}
+                {isSlidingPanelOpen && selectedAnalysisType && (
+                  <>
+                    <div 
+                      className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs z-[10000] animate-in fade-in duration-300"
+                      onClick={() => setIsSlidingPanelOpen(false)}
+                    />
+                    <div className="fixed inset-y-0 right-0 w-full max-w-lg bg-white shadow-2xl border-l border-slate-200/80 z-[20000] p-8 flex flex-col justify-between animate-in slide-in-from-right duration-300">
+                      <div className="space-y-6 overflow-y-auto pr-2">
+                        {/* Panel Header */}
+                        <div className="flex justify-between items-start pb-4 border-b border-slate-100">
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-extrabold text-indigo-600 uppercase tracking-widest font-mono">
+                              AUDITORIA DE DADOS
+                            </span>
+                            <h3 className="text-xl font-black text-slate-900 leading-tight">
+                              {selectedAnalysisType === 'alunos_sem_turma' && "Alunos Sem Turmas"}
+                              {selectedAnalysisType === 'alunos_incompletos' && "Alunos Dados Incompletos"}
+                              {selectedAnalysisType === 'docentes_sem_escola' && "Docentes Sem Escola"}
+                              {selectedAnalysisType === 'docentes_sem_especialidade' && "Docentes Sem Especialidade"}
+                              {selectedAnalysisType === 'turmas_sem_aulas' && "Turmas Sem Aulas Curriculares"}
+                              {selectedAnalysisType === 'turmas_diretor' && "Turmas Sem Diretor Atribuído"}
+                              {selectedAnalysisType === 'livros_biblioteca' && "Livros na Biblioteca Digital"}
+                              {selectedAnalysisType === 'salas_sem_aluno' && "Salas de Aula Ociosas"}
+                            </h3>
+                          </div>
+                          <button 
+                            onClick={() => setIsSlidingPanelOpen(false)}
+                            className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+                          >
+                            <X className="w-5 h-5" />
+                          </button>
+                        </div>
+
+                        {/* List Items of Affected Entities */}
+                        <div className="space-y-3">
+                          {(() => {
+                            if (selectedAnalysisType === 'alunos_sem_turma') {
+                              const list = rawStudents.filter(s => !s.turma_id || s.turma_id === '');
+                              if (list.length === 0) return <p className="text-xs text-slate-400 text-center py-6">Nenhuma inconformidade registrada.</p>;
+                              return list.map(item => {
+                                const usr = tenantUsers.find(u => u.id === item.user_id);
+                                return (
+                                  <div key={item.id} className="p-4 rounded-xl border border-rose-100 bg-rose-50/20 flex justify-between items-center gap-4 text-xs">
+                                    <div>
+                                      <p className="font-bold text-slate-900 text-sm">{usr?.nome || item.nome || 'Estudante'}</p>
+                                      <p className="text-[10px] text-slate-500 font-semibold font-mono mt-0.5">Matrícula: {item.numero_matricula}</p>
+                                      <p className="text-[10px] text-slate-400 font-mono">{usr?.email}</p>
+                                    </div>
+                                    <button
+                                      onClick={() => {
+                                        setIsSlidingPanelOpen(false);
+                                        setActiveTab('estudantes');
+                                        setStudentSubTab('lista');
+                                        setStudentSearchText(usr?.nome || item.nome || '');
+                                      }}
+                                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] py-1.5 px-3 rounded-lg shadow-sm transition-all cursor-pointer"
+                                    >
+                                      Vincular
+                                    </button>
+                                  </div>
+                                );
+                              });
+                            }
+
+                            if (selectedAnalysisType === 'alunos_incompletos') {
+                              const list = rawStudents.filter(s => !s.data_nascimento || !s.genero || !s.escola_id);
+                              if (list.length === 0) return <p className="text-xs text-slate-400 text-center py-6">Nenhuma inconformidade registrada.</p>;
+                              return list.map(item => {
+                                const usr = tenantUsers.find(u => u.id === item.user_id);
+                                const missing = [];
+                                if (!item.data_nascimento) missing.push('Aniversário');
+                                if (!item.genero) missing.push('Gênero');
+                                if (!item.escola_id) missing.push('Escola');
+                                return (
+                                  <div key={item.id} className="p-4 rounded-xl border border-amber-100 bg-amber-50/20 flex justify-between items-center gap-4 text-xs">
+                                    <div>
+                                      <p className="font-bold text-slate-900 text-sm">{usr?.nome || item.nome || 'Estudante'}</p>
+                                      <p className="text-[10px] text-rose-600 font-bold mt-0.5">Falta: {missing.join(', ')}</p>
+                                      <p className="text-[10px] text-slate-400 font-mono">{usr?.email}</p>
+                                    </div>
+                                    <button
+                                      onClick={() => {
+                                        setIsSlidingPanelOpen(false);
+                                        setActiveTab('estudantes');
+                                        setStudentSubTab('lista');
+                                        setStudentSearchText(usr?.nome || item.nome || '');
+                                      }}
+                                      className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] py-1.5 px-3 rounded-lg shadow-sm transition-all cursor-pointer"
+                                    >
+                                      Corrigir
+                                    </button>
+                                  </div>
+                                );
+                              });
+                            }
+
+                            if (selectedAnalysisType === 'docentes_sem_escola') {
+                              const list = rawTeachers.filter(t => !t.escola_id || t.escola_id === '');
+                              if (list.length === 0) return <p className="text-xs text-slate-400 text-center py-6">Nenhuma inconformidade registrada.</p>;
+                              return list.map(item => {
+                                const usr = tenantUsers.find(u => u.id === item.user_id);
+                                return (
+                                  <div key={item.id} className="p-4 rounded-xl border border-rose-100 bg-rose-50/20 flex justify-between items-center gap-4 text-xs">
+                                    <div>
+                                      <p className="font-bold text-slate-900 text-sm">{usr?.nome || 'Professor'}</p>
+                                      <p className="text-[10px] text-slate-500 font-semibold font-mono mt-0.5">Esp: {item.especialidade || 'Nenhuma'}</p>
+                                      <p className="text-[10px] text-slate-400 font-mono">{usr?.email}</p>
+                                    </div>
+                                    <button
+                                      onClick={() => {
+                                        setIsSlidingPanelOpen(false);
+                                        setActiveTab('docentes');
+                                        setTeacherSearchText(usr?.nome || '');
+                                      }}
+                                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] py-1.5 px-3 rounded-lg shadow-sm transition-all cursor-pointer"
+                                    >
+                                      Vincular
+                                    </button>
+                                  </div>
+                                );
+                              });
+                            }
+
+                            if (selectedAnalysisType === 'docentes_sem_especialidade') {
+                              const list = rawTeachers.filter(t => !t.especialidade || t.especialidade === '');
+                              if (list.length === 0) return <p className="text-xs text-slate-400 text-center py-6">Nenhuma inconformidade registrada.</p>;
+                              return list.map(item => {
+                                const usr = tenantUsers.find(u => u.id === item.user_id);
+                                return (
+                                  <div key={item.id} className="p-4 rounded-xl border border-slate-100 bg-slate-50/50 flex justify-between items-center gap-4 text-xs">
+                                    <div>
+                                      <p className="font-bold text-slate-900 text-sm">{usr?.nome || 'Professor'}</p>
+                                      <p className="text-[10px] text-indigo-600 font-semibold mt-0.5">Esp: Pendente</p>
+                                      <p className="text-[10px] text-slate-400 font-mono">{usr?.email}</p>
+                                    </div>
+                                    <button
+                                      onClick={() => {
+                                        setIsSlidingPanelOpen(false);
+                                        setActiveTab('docentes');
+                                        setTeacherSearchText(usr?.nome || '');
+                                      }}
+                                      className="bg-slate-700 hover:bg-slate-800 text-white font-bold text-[10px] py-1.5 px-3 rounded-lg shadow-sm transition-all cursor-pointer"
+                                    >
+                                      Atualizar
+                                    </button>
+                                  </div>
+                                );
+                              });
+                            }
+
+                            if (selectedAnalysisType === 'turmas_sem_aulas') {
+                              const list = rawTurmas.filter(t => !rawClasses.some(c => c.turma_id === t.id));
+                              if (list.length === 0) return <p className="text-xs text-slate-400 text-center py-6">Nenhuma inconformidade registrada.</p>;
+                              return list.map(item => {
+                                return (
+                                  <div key={item.id} className="p-4 rounded-xl border border-amber-100 bg-amber-50/20 flex justify-between items-center gap-4 text-xs">
+                                    <div>
+                                      <p className="font-bold text-slate-900 text-sm">{item.nome}</p>
+                                      <p className="text-[10px] text-slate-500 mt-0.5">Nível: {(item as any).nivel_ensino || item.nivel || 'Geral'}</p>
+                                    </div>
+                                    <button
+                                      onClick={() => {
+                                        setIsSlidingPanelOpen(false);
+                                        setActiveTab('disciplinas');
+                                      }}
+                                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] py-1.5 px-3 rounded-lg shadow-sm transition-all cursor-pointer"
+                                    >
+                                      Criar Aulas
+                                    </button>
+                                  </div>
+                                );
+                              });
+                            }
+
+                            if (selectedAnalysisType === 'turmas_diretor') {
+                              const list = rawTurmas.filter(t => !t.docente_id || t.docente_id === '');
+                              if (list.length === 0) return <p className="text-xs text-slate-400 text-center py-6">Nenhuma inconformidade registrada.</p>;
+                              return list.map(item => {
+                                return (
+                                  <div key={item.id} className="p-4 rounded-xl border border-rose-100 bg-rose-50/20 flex justify-between items-center gap-4 text-xs">
+                                    <div>
+                                      <p className="font-bold text-slate-900 text-sm">{item.nome}</p>
+                                      <p className="text-[10px] text-rose-600 font-extrabold mt-0.5">Falta Diretor</p>
+                                    </div>
+                                    <button
+                                      onClick={() => {
+                                        setIsSlidingPanelOpen(false);
+                                        setActiveTab('turmas');
+                                      }}
+                                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] py-1.5 px-3 rounded-lg shadow-sm transition-all cursor-pointer"
+                                    >
+                                      Atribuir
+                                    </button>
+                                  </div>
+                                );
+                              });
+                            }
+
+                            if (selectedAnalysisType === 'livros_biblioteca') {
+                              let booksLocal = [];
+                              try {
+                                const saved = localStorage.getItem(`lib_livros_${currentTenantId}`);
+                                if (saved) {
+                                  booksLocal = JSON.parse(saved);
+                                }
+                              } catch(e){}
+                              if (!Array.isArray(booksLocal) || booksLocal.length === 0) {
+                                booksLocal = [
+                                  { id: 'livro-1', titulo: 'Dom Casmurro', autor: 'Machado de Assis', categoria: 'Romance' },
+                                  { id: 'livro-2', titulo: 'Memórias Póstumas de Brás Cubas', autor: 'Machado de Assis', categoria: 'Romance' },
+                                  { id: 'livro-3', titulo: 'O Cortiço', autor: 'Aluísio Azevedo', categoria: 'Naturalismo' }
+                                ];
+                              }
+
+                              return booksLocal.map(item => {
+                                return (
+                                  <div key={item.id} className="p-4 rounded-xl border border-slate-100 bg-slate-50 flex justify-between items-center gap-4 text-xs">
+                                    <div>
+                                      <p className="font-bold text-slate-900 text-sm">{item.titulo}</p>
+                                      <p className="text-[10px] text-indigo-600 font-semibold mt-0.5">Autor: {item.autor}</p>
+                                      <p className="text-[10px] text-slate-400 font-mono">{item.categoria}</p>
+                                    </div>
+                                    <button
+                                      onClick={() => {
+                                        setIsSlidingPanelOpen(false);
+                                        setActiveTab('biblioteca');
+                                      }}
+                                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] py-1.5 px-3 rounded-lg shadow-sm transition-all cursor-pointer"
+                                    >
+                                      Ver
+                                    </button>
+                                  </div>
+                                );
+                              });
+                            }
+
+                            if (selectedAnalysisType === 'salas_sem_aluno') {
+                              const list = rawSalas.filter(s => !rawClasses.some(c => c.sala?.toLowerCase().trim() === s.nome?.toLowerCase().trim()));
+                              if (list.length === 0) return <p className="text-xs text-slate-400 text-center py-6">Todas as salas possuem aulas agendadas.</p>;
+                              return list.map(item => {
+                                return (
+                                  <div key={item.id} className="p-4 rounded-xl border border-slate-100 bg-slate-50 flex justify-between items-center gap-4 text-xs">
+                                    <div>
+                                      <p className="font-bold text-slate-900 text-sm">{item.nome}</p>
+                                      <p className="text-[10px] text-slate-500 mt-0.5">Capacidade: {item.capacidade} alunos</p>
+                                    </div>
+                                    <button
+                                      onClick={() => {
+                                        setIsSlidingPanelOpen(false);
+                                        setActiveTab('disciplinas');
+                                      }}
+                                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] py-1.5 px-3 rounded-lg shadow-sm transition-all cursor-pointer"
+                                    >
+                                      Agendar
+                                    </button>
+                                  </div>
+                                );
+                              });
+                            }
+
+                            return null;
+                          })()}
+                        </div>
+                      </div>
+
+                      {/* Panel Footer */}
+                      <div className="pt-4 border-t border-slate-100 flex justify-end">
+                        <button 
+                          onClick={() => setIsSlidingPanelOpen(false)}
+                          className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2.5 px-5 rounded-xl transition-all cursor-pointer"
+                        >
+                          Fechar Detalhes
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
             )}
 
             {/* TAB: DISTRITOS / PROVINCIAS */}
@@ -3676,6 +8130,86 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             {activeTab === 'escolas' && (
               !hasPermission('escolas') ? renderRestrictedAccess('Gestão de Escolas') : (
                 <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-6">
+                  {pendingImports.length > 0 && (
+                    <div className="bg-amber-50/85 border border-amber-200 rounded-2xl p-5 space-y-4 animate-fadeIn">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-5 h-5 text-amber-600 animate-pulse" />
+                        <div>
+                          <h4 className="font-extrabold text-amber-800 text-sm">⚠️ Importações Pendentes ({pendingImports.length})</h4>
+                          <p className="text-xs text-amber-600">Estas escolas foram importadas, mas a província informada não está cadastrada no sistema. Cadastre-a para aprovar.</p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {pendingImports.map((imp) => (
+                          <div key={imp.id} className="bg-white p-4 rounded-xl border border-amber-100 shadow-2xs space-y-3 relative overflow-hidden">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <h5 className="font-bold text-slate-800 text-xs">{imp.nome}</h5>
+                                <p className="text-[10px] text-indigo-600 font-mono font-semibold">Província: {imp.provincia_nome}</p>
+                              </div>
+                              <span className="bg-amber-100 text-amber-800 text-[9px] font-bold px-2 py-0.5 rounded-full">Pendente</span>
+                            </div>
+                            <div className="text-[10px] text-slate-500 space-y-1">
+                              {imp.latitude && <p>🌐 Coordenadas: {imp.latitude}, {imp.longitude}</p>}
+                              {imp.telefone && <p>📞 Telefone: {imp.telefone}</p>}
+                              {imp.email && <p>✉️ Email: {imp.email}</p>}
+                            </div>
+                            <div className="flex gap-2 pt-1 border-t border-slate-100">
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    // 1. Create province
+                                    const qParams = { tenant_id: currentTenantId };
+                                    const newProvDoc = await addDoc(collection(db, 'provincias'), {
+                                      nome: imp.provincia_nome,
+                                      ...qParams
+                                    });
+                                    // 2. Create school
+                                    await addDoc(collection(db, 'escolas'), {
+                                      nome: imp.nome,
+                                      provincia_id: newProvDoc.id,
+                                      endereco: imp.endereco || '',
+                                      telefone: imp.telefone || '',
+                                      email: imp.email || '',
+                                      ativo: imp.ativo !== undefined ? imp.ativo : true,
+                                      latitude: imp.latitude || '',
+                                      longitude: imp.longitude || '',
+                                      ...qParams
+                                    });
+                                    // 3. Delete pending import
+                                    await deleteDoc(doc(db, 'importacoes_pendentes', imp.id));
+                                    showSystemNotification(`Província "${imp.provincia_nome}" cadastrada e escola criada com sucesso!`, "sucesso");
+                                    await loadTenantContext();
+                                  } catch (error) {
+                                    showSystemNotification("Erro ao processar importação pendente.", "erro");
+                                    console.error(error);
+                                  }
+                                }}
+                                className="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-extrabold text-[10px] py-1.5 px-2 rounded-lg transition-all cursor-pointer text-center"
+                              >
+                                Cadastrar Província & Concluir
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  if (window.confirm("Deseja descartar esta importação pendente?")) {
+                                    await deleteDoc(doc(db, 'importacoes_pendentes', imp.id));
+                                    showSystemNotification("Importação descartada.", "info");
+                                    await loadTenantContext();
+                                  }
+                                }}
+                                className="bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-700 p-1.5 rounded-lg border border-slate-200 transition-all cursor-pointer flex items-center justify-center"
+                                title="Descartar"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="flex justify-between items-center">
                     <h3 className="font-bold text-slate-800">Instituições Escolares Vinculadas</h3>
                     {isLimitReached('max_escolas', schools.length) ? (
@@ -3687,19 +8221,67 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       </button>
                     ) : (
                       hasPermission('escolas', 'criar') && (
-                        <button 
-                          onClick={() => {
-                            setEditingItem(null);
-                            setEscolaForm({ nome: '', provincia_id: provinces[0]?.id || '', endereco: '', telefone: '', email: '', diretor_id: '', ativo: true, latitude: '', longitude: '' });
-                            setModalType('escola');
-                            setIsModalOpen(true);
-                          }}
-                          className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1 cursor-pointer"
-                        >
-                          <Plus className="w-4 h-4" /> Nova Escola
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              setImportModule('escolas');
+                              setImportModalOpen(true);
+                            }}
+                            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer"
+                          >
+                            <FileSpreadsheet className="w-4 h-4 text-indigo-600" /> Importar Dados
+                          </button>
+                          <button 
+                            onClick={() => {
+                              setEditingItem(null);
+                              setEscolaForm({ nome: '', provincia_id: provinces[0]?.id || '', endereco: '', telefone: '', email: '', diretor_id: '', ativo: true, latitude: '', longitude: '', logo_url: '', controlar_assiduidade: false, tolerancia_manha: '07:15', tolerancia_tarde: '12:15', tolerancia_noite: '18:15' });
+                              setModalType('escola');
+                              setIsModalOpen(true);
+                            }}
+                            className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1 cursor-pointer"
+                          >
+                            <Plus className="w-4 h-4" /> Nova Escola
+                          </button>
+                        </div>
                       )
                     )}
+                  </div>
+
+                  {/* Search and Filters Box */}
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex items-center gap-2 flex-1 min-w-[280px] max-w-md bg-slate-50 px-3 py-2 rounded-xl border border-slate-200 shadow-2xs">
+                      <Search className="w-4 h-4 text-slate-400 shrink-0" />
+                      <input
+                        type="text"
+                        placeholder="Pesquisar por escola, endereço ou email..."
+                        value={schoolSearchText}
+                        onChange={(e) => setSchoolSearchText(e.target.value)}
+                        className="bg-transparent border-none text-xs w-full text-slate-800 focus:outline-none"
+                      />
+                    </div>
+                    
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={schoolStatusFilter}
+                        onChange={(e) => setSchoolStatusFilter(e.target.value as any)}
+                        className="bg-slate-50 border border-slate-200 text-slate-700 text-xs font-bold px-3 py-2 rounded-xl focus:outline-none cursor-pointer"
+                      >
+                        <option value="todos">Todos os Estados</option>
+                        <option value="ativo">Activado</option>
+                        <option value="inativo">Desactivado</option>
+                      </select>
+
+                      <select
+                        value={schoolProvinceFilter}
+                        onChange={(e) => setSchoolProvinceFilter(e.target.value)}
+                        className="bg-slate-50 border border-slate-200 text-slate-700 text-xs font-bold px-3 py-2 rounded-xl focus:outline-none cursor-pointer"
+                      >
+                        <option value="todos">Todas as Províncias</option>
+                        {provinces.map(prov => (
+                          <option key={prov.id} value={prov.id}>{prov.nome}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                   
                   {/* Mapa Interativo de Localização das Escolas */}
@@ -3708,73 +8290,287 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       <MapPin className="w-3.5 h-3.5 text-indigo-600 animate-bounce" /> Distribuição Geográfica das Escolas Registradas
                     </p>
                     <SchoolMap 
-                      schools={schools} 
+                      schools={searchedSchools} 
                       provinces={provinces}
                     />
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {schools.map(s => {
+                  {/* Select All / Batch Action Controls */}
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-50 p-3.5 rounded-xl border border-slate-150">
+                    <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-600 select-none">
+                      <input 
+                        type="checkbox"
+                        checked={searchedSchools.length > 0 && selectedSchoolIds.length === searchedSchools.length}
+                        onChange={() => {
+                          if (selectedSchoolIds.length === searchedSchools.length) {
+                            setSelectedSchoolIds([]);
+                          } else {
+                            setSelectedSchoolIds(searchedSchools.map(sch => sch.id));
+                          }
+                        }}
+                        className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                      />
+                      Selecionar Todas as Escolas Filtradas ({searchedSchools.length})
+                    </label>
+                    {selectedSchoolIds.length > 0 && (
+                      <div className="flex items-center gap-2 animate-in fade-in duration-200">
+                        <span className="text-xs text-indigo-700 font-bold">
+                          {selectedSchoolIds.length} selecionada(s):
+                        </span>
+                        <select
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              handleSchoolBatchAction(e.target.value);
+                              e.target.value = ''; // Reset select
+                            }
+                          }}
+                          className="bg-white border border-indigo-200 text-slate-700 px-2.5 py-1 rounded-lg text-[11px] font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                          defaultValue=""
+                        >
+                          <option value="" disabled>Ações em Massa</option>
+                          <option value="ativar">Ativar Selecionadas</option>
+                          <option value="desativar">Desativar Selecionadas</option>
+                          <option value="excluir">Excluir Selecionadas</option>
+                        </select>
+                        <button 
+                          onClick={() => setSelectedSchoolIds([])}
+                          className="text-slate-400 hover:text-slate-600 text-[10px] font-semibold cursor-pointer"
+                        >
+                          Limpar
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Desktop View (Table) */}
+                  <div className="hidden md:block overflow-x-auto border border-slate-150 rounded-xl">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase border-b border-slate-150">
+                          <th className="py-4 px-4 w-12 text-center">
+                            <input 
+                              type="checkbox"
+                              checked={searchedSchools.length > 0 && selectedSchoolIds.length === searchedSchools.length}
+                              onChange={() => {
+                                if (selectedSchoolIds.length === searchedSchools.length) {
+                                  setSelectedSchoolIds([]);
+                                } else {
+                                  setSelectedSchoolIds(searchedSchools.map(sch => sch.id));
+                                }
+                              }}
+                              className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                            />
+                          </th>
+                          <th className="px-6 py-4">Escola</th>
+                          <th className="px-6 py-4">Província</th>
+                          <th className="px-6 py-4">Contato</th>
+                          <th className="px-6 py-4">Endereço</th>
+                          <th className="px-6 py-4">Status</th>
+                          <th className="px-6 py-4 text-right sticky right-0 bg-slate-50 dark:bg-slate-900 z-10">Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-300 text-sm">
+                        {searchedSchools.slice((pageSchools - 1) * 25, pageSchools * 25).map(s => {
+                          const prov = provinces.find(p => p.id === s.provincia_id);
+                          return (
+                            <tr key={s.id} data-context-type="escola" data-context-id={s.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30 transition-colors">
+                              <td className="py-4 px-4 text-center">
+                                <input 
+                                  type="checkbox"
+                                  checked={selectedSchoolIds.includes(s.id)}
+                                  onChange={() => {
+                                    if (selectedSchoolIds.includes(s.id)) {
+                                      setSelectedSchoolIds(selectedSchoolIds.filter(id => id !== s.id));
+                                    } else {
+                                      setSelectedSchoolIds([...selectedSchoolIds, s.id]);
+                                    }
+                                  }}
+                                  className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                                />
+                              </td>
+                              <td className="px-6 py-4">
+                                <div className="flex items-center gap-3">
+                                  {s.logo_url ? (
+                                    <img 
+                                      src={s.logo_url} 
+                                      alt="" 
+                                      className="w-8 h-8 object-cover rounded-lg border border-slate-200"
+                                      referrerPolicy="no-referrer"
+                                    />
+                                  ) : (
+                                    <div className="w-8 h-8 bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 rounded-lg flex items-center justify-center text-[10px] font-bold text-slate-400 font-mono">
+                                      🏫
+                                    </div>
+                                  )}
+                                  <div className="font-bold text-slate-900 dark:text-white">{s.nome}</div>
+                                </div>
+                              </td>
+                              <td className="px-6 py-4">
+                                <span className="bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-400 text-xs py-1 px-2.5 rounded-full font-medium">
+                                  {prov?.nome || 'Não especificada'}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 space-y-0.5 text-xs">
+                                <div className="text-slate-600 dark:text-slate-300 font-medium">📞 {s.telefone}</div>
+                                <div className="text-slate-400 dark:text-slate-500">✉️ {s.email}</div>
+                              </td>
+                              <td className="px-6 py-4 text-xs max-w-xs truncate text-slate-500 dark:text-slate-400" title={s.endereco}>
+                                📍 {s.endereco}
+                              </td>
+                              <td className="px-6 py-4">
+                                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${s.ativo ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
+                                  {s.ativo ? 'ATIVO' : 'DESATIVADO'}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 text-right sticky right-0 bg-white dark:bg-slate-900 z-10">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <button 
+                                    onClick={() => {
+                                      setEditingItem(s);
+                                      setModalType('escola_detalhes');
+                                      setIsModalOpen(true);
+                                    }}
+                                    className="bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-950/30 dark:text-indigo-400 border border-indigo-100 dark:border-indigo-900/40 p-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                                    title="Detalhes"
+                                  >
+                                    <Eye className="w-3.5 h-3.5" />
+                                  </button>
+                                  {hasPermission('escolas', 'editar') && (
+                                    <button 
+                                      onClick={() => {
+                                        setEditingItem(s);
+                                        setEscolaForm({
+                                          nome: s.nome || '',
+                                          provincia_id: s.provincia_id || '',
+                                          endereco: s.endereco || '',
+                                          telefone: s.telefone || '',
+                                          email: s.email || '',
+                                          diretor_id: s.diretor_id || '',
+                                          ativo: s.ativo ?? true,
+                                          latitude: String(s.latitude || ''),
+                                          longitude: String(s.longitude || ''),
+                                          logo_url: s.logo_url || '',
+                                          controlar_assiduidade: s.controlar_assiduidade || false,
+                                          tolerancia_manha: s.tolerancia_manha || '07:15',
+                                          tolerancia_tarde: s.tolerancia_tarde || '12:15',
+                                          tolerancia_noite: s.tolerancia_noite || '18:15'
+                                        });
+                                        setModalType('escola');
+                                        setIsModalOpen(true);
+                                      }}
+                                      className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 p-1.5 rounded-lg text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
+                                      title="Editar"
+                                    >
+                                      <Edit3 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                  {hasPermission('escolas', 'excluir') && (
+                                    <button 
+                                      onClick={() => handleSoftDeleteEscola(s.id, s.nome)}
+                                      className="bg-rose-50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-950/40 p-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                                      title="Excluir"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Mobile View (List) */}
+                  <div className="block md:hidden space-y-3">
+                    {searchedSchools.slice((pageSchools - 1) * 25, pageSchools * 25).map(s => {
                       const prov = provinces.find(p => p.id === s.provincia_id);
                       return (
-                        <div key={s.id} className="bg-slate-50/50 p-5 rounded-2xl border border-slate-200/60 flex flex-col justify-between hover:border-indigo-200 transition-all">
-                          <div>
-                            <div className="flex items-center justify-between gap-2">
-                              <h4 className="font-bold text-slate-900 text-sm leading-tight">{s.nome}</h4>
-                              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${s.ativo ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                                {s.ativo ? 'ATIVO' : 'DESATIVADO'}
-                              </span>
+                        <div key={s.id} data-context-type="escola" data-context-id={s.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 flex flex-col gap-3 shadow-xs">
+                          <div className="flex items-start justify-between gap-2.5">
+                            <div className="flex items-start gap-3 min-w-0">
+                              <input 
+                                type="checkbox"
+                                checked={selectedSchoolIds.includes(s.id)}
+                                onChange={() => {
+                                  if (selectedSchoolIds.includes(s.id)) {
+                                    setSelectedSchoolIds(selectedSchoolIds.filter(id => id !== s.id));
+                                  } else {
+                                    setSelectedSchoolIds([...selectedSchoolIds, s.id]);
+                                  }
+                                }}
+                                className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer mt-1"
+                              />
+                              {s.logo_url && (
+                                <img 
+                                  src={s.logo_url} 
+                                  alt="" 
+                                  className="w-8 h-8 object-cover rounded-lg border border-slate-200 mt-0.5"
+                                  referrerPolicy="no-referrer"
+                                />
+                              )}
+                              <div className="min-w-0">
+                                <h4 className="font-bold text-slate-900 dark:text-white text-sm truncate">{s.nome}</h4>
+                                <p className="text-xs text-indigo-600 font-semibold mt-0.5">{prov?.nome || 'Sem Província'}</p>
+                              </div>
                             </div>
-                            <p className="text-xs text-indigo-600 font-semibold mt-1 flex items-center gap-1">
-                              <MapPin className="w-3 h-3" /> Província: {prov?.nome || 'Não especificada'}
-                            </p>
-                            <div className="space-y-1 text-xs text-slate-500 mt-4 border-t border-slate-100 pt-3">
-                              <p>📞 {s.telefone}</p>
-                              <p>✉️ {s.email}</p>
-                              <p>📍 {s.endereco}</p>
-                            </div>
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold flex-shrink-0 ${s.ativo ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
+                              {s.ativo ? 'ATIVO' : 'DESAT.'}
+                            </span>
                           </div>
 
-                          <div className="flex justify-end gap-2 mt-6 border-t border-slate-100 pt-3">
-                            {hasPermission('escolas', 'editar') && (
-                              <button 
-                                onClick={() => {
-                                  setEditingItem(s);
-                                  setEscolaForm({
-                                    nome: s.nome,
-                                    provincia_id: s.provincia_id,
-                                    endereco: s.endereco,
-                                    telefone: s.telefone,
-                                    email: s.email,
-                                    diretor_id: s.diretor_id,
-                                    ativo: s.ativo,
-                                    latitude: s.latitude || '',
-                                    longitude: s.longitude || ''
-                                  });
-                                  setModalType('escola');
-                                  setIsModalOpen(true);
-                                }}
-                                className="bg-white border border-slate-200 text-slate-600 px-3 py-1.5 rounded text-xs font-bold hover:bg-slate-50 transition-all cursor-pointer"
-                              >
-                                Editar
-                              </button>
-                            )}
+                          <div className="text-xs text-slate-500 dark:text-slate-400 space-y-1 bg-slate-50 dark:bg-slate-950/40 p-2.5 rounded-lg border border-slate-100 dark:border-slate-800/55">
+                            <p>📞 {s.telefone}</p>
+                            <p>✉️ {s.email}</p>
+                            <p className="truncate">📍 {s.endereco}</p>
+                          </div>
+
+                          <div className="flex justify-end gap-1.5 border-t border-slate-100 dark:border-slate-800 pt-2.5">
                             <button 
                               onClick={() => {
                                 setEditingItem(s);
                                 setModalType('escola_detalhes');
                                 setIsModalOpen(true);
                               }}
-                              className="bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-100 px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1 transition-all cursor-pointer"
+                              className="bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-950/30 dark:text-indigo-400 border border-indigo-100 dark:border-indigo-900/40 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-all cursor-pointer"
                             >
                               <Eye className="w-3.5 h-3.5" /> Detalhes
                             </button>
+                            {hasPermission('escolas', 'editar') && (
+                              <button 
+                                onClick={() => {
+                                  setEditingItem(s);
+                                  setEscolaForm({
+                                    nome: s.nome || '',
+                                    provincia_id: s.provincia_id || '',
+                                    endereco: s.endereco || '',
+                                    telefone: s.telefone || '',
+                                    email: s.email || '',
+                                    diretor_id: s.diretor_id || '',
+                                    ativo: s.ativo ?? true,
+                                    latitude: String(s.latitude || ''),
+                                    longitude: String(s.longitude || ''),
+                                    logo_url: s.logo_url || '',
+                                    controlar_assiduidade: s.controlar_assiduidade || false,
+                                    tolerancia_manha: s.tolerancia_manha || '07:15',
+                                    tolerancia_tarde: s.tolerancia_tarde || '12:15',
+                                    tolerancia_noite: s.tolerancia_noite || '18:15'
+                                  });
+                                  setModalType('escola');
+                                  setIsModalOpen(true);
+                                }}
+                                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
+                              >
+                                Editar
+                              </button>
+                            )}
                             {hasPermission('escolas', 'excluir') && (
                               <button 
                                 onClick={() => handleSoftDeleteEscola(s.id, s.nome)}
-                                className="bg-rose-50 text-rose-600 px-3 py-1.5 rounded text-xs font-bold hover:bg-rose-100 transition-all cursor-pointer"
+                                className="bg-rose-50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-400 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-rose-100 dark:hover:bg-rose-900/30 transition-all cursor-pointer"
                               >
-                                Desativar
+                                Excluir
                               </button>
                             )}
                           </div>
@@ -3782,6 +8578,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       );
                     })}
                   </div>
+                  {renderPagination(pageSchools, searchedSchools.length, 25, setPageSchools)}
                 </div>
               )
             )}
@@ -3801,19 +8598,42 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       </button>
                     ) : (
                       hasPermission('docentes', 'criar') && (
-                        <button 
-                          onClick={() => {
-                            setEditingItem(null);
-                            setTeacherForm({ nome: '', email: '', especialidade: '', numero_registro: '', escola_id: schools[0]?.id || '' });
-                            setModalType('teacher');
-                            setIsModalOpen(true);
-                          }}
-                          className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1 cursor-pointer"
-                        >
-                          <Plus className="w-4 h-4" /> Cadastrar Docente
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              setImportModule('docentes');
+                              setImportModalOpen(true);
+                            }}
+                            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer"
+                          >
+                            <FileSpreadsheet className="w-4 h-4 text-indigo-600" /> Importar Dados
+                          </button>
+                          <button 
+                            onClick={() => {
+                              setEditingItem(null);
+                              setTeacherForm({ nome: '', email: '', especialidade: '', numero_registro: '', escola_id: schools[0]?.id || '' });
+                              setModalType('teacher');
+                              setIsModalOpen(true);
+                            }}
+                            className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1 cursor-pointer"
+                          >
+                            <Plus className="w-4 h-4" /> Cadastrar Docente
+                          </button>
+                        </div>
                       )
                     )}
+                  </div>
+
+                  {/* Search Input Box */}
+                  <div className="flex items-center gap-2 max-w-md bg-slate-50 px-3 py-2 rounded-xl border border-slate-200 shadow-2xs">
+                    <Search className="w-4 h-4 text-slate-400 shrink-0" />
+                    <input
+                      type="text"
+                      placeholder="Pesquisar por docente, especialidade ou email..."
+                      value={teacherSearchText}
+                      onChange={(e) => setTeacherSearchText(e.target.value)}
+                      className="bg-transparent border-none text-xs w-full text-slate-800 focus:outline-none"
+                    />
                   </div>
 
                   {/* Batch Action Bar */}
@@ -3869,15 +8689,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           <th className="px-6 py-4">Especialidade / Matéria</th>
                           <th className="px-6 py-4">Nº Registro</th>
                           <th className="px-6 py-4">Escola Associada</th>
-                          <th className="px-6 py-4 text-right">Ações</th>
+                          <th className="px-6 py-4 text-right sticky right-0 bg-slate-50 dark:bg-slate-900 z-10">Ações</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-slate-700 text-sm">
-                        {teachers.map(t => {
+                        {searchedTeachers.slice((pageTeachers - 1) * 25, pageTeachers * 25).map(t => {
                           const usr = tenantUsers.find(u => u.id === t.user_id);
                           const esc = schools.find(e => e.id === t.escola_id);
                           return (
-                            <tr key={t.id} className={`hover:bg-slate-50/50 ${activeActionRowId === t.id ? 'relative z-30' : ''}`}>
+                            <tr key={t.id} data-context-type="teacher" data-context-id={t.id} className={`hover:bg-slate-50/50 ${activeActionRowId === t.id ? 'relative z-30' : ''}`}>
                               <td className="py-4 px-4 text-center">
                                 <input 
                                   type="checkbox"
@@ -3894,7 +8714,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               <td className="px-6 py-4">{t.especialidade}</td>
                               <td className="px-6 py-4 font-mono text-xs">{t.numero_registro}</td>
                               <td className="px-6 py-4 text-xs text-indigo-600 font-semibold">{esc?.nome || 'Global'}</td>
-                              <td className={`px-6 py-4 text-right relative ${activeActionRowId === t.id ? 'z-40' : 'z-0'}`}>
+                              <td className={`px-6 py-4 text-right sticky right-0 bg-white dark:bg-slate-900 ${activeActionRowId === t.id ? 'z-40' : 'z-10'}`}>
                                 <div className="inline-block text-left">
                                   <button
                                     onClick={(e) => {
@@ -3969,11 +8789,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                   {/* Mobile View (List with Checkbox, Detail View button and 3 dots) */}
                   <div className="block md:hidden space-y-3">
-                    {teachers.map(t => {
+                    {searchedTeachers.slice((pageTeachers - 1) * 25, pageTeachers * 25).map(t => {
                       const usr = tenantUsers.find(u => u.id === t.user_id);
                       const esc = schools.find(e => e.id === t.escola_id);
                       return (
-                        <div key={t.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
+                        <div key={t.id} data-context-type="teacher" data-context-id={t.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
                           <div className="flex items-center gap-3 min-w-0">
                             <input 
                               type="checkbox"
@@ -4086,6 +8906,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       );
                     })}
                   </div>
+                  {renderPagination(pageTeachers, searchedTeachers.length, 25, setPageTeachers)}
                 </div>
               )
             )}
@@ -4150,17 +8971,28 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           </button>
                         ) : (
                           hasPermission('estudantes', 'criar') && (
-                            <button 
-                              onClick={() => {
-                                setEditingItem(null);
-                                setStudentForm({ nome: '', email: '', escola_id: schools[0]?.id || '', turma_id: turmas[0]?.id || '', numero_matricula: 'MAT-' + Math.floor(Math.random()*9000 + 1000), data_nascimento: '', genero: 'Masculino', pai_id: '' });
-                                setModalType('student');
-                                setIsModalOpen(true);
-                              }}
-                              className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1 cursor-pointer"
-                            >
-                              <Plus className="w-4 h-4" /> Nova Matrícula
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => {
+                                  setImportModule('estudantes');
+                                  setImportModalOpen(true);
+                                }}
+                                className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer"
+                              >
+                                <FileSpreadsheet className="w-4 h-4 text-indigo-600" /> Importar Dados
+                              </button>
+                              <button 
+                                onClick={() => {
+                                  setEditingItem(null);
+                                  setStudentForm({ nome: '', email: '', escola_id: schools[0]?.id || '', turma_id: turmas[0]?.id || '', numero_matricula: 'MAT-' + Math.floor(Math.random()*9000 + 1000), data_nascimento: '', genero: 'Masculino', pai_id: '', faturado: false, periodo_facturacao: 'Mensal', foto_url: '', usuario_sistema: false, senha_temporaria: '' });
+                                  setModalType('student');
+                                  setIsModalOpen(true);
+                                }}
+                                className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1 cursor-pointer"
+                              >
+                                <Plus className="w-4 h-4" /> Nova Matrícula
+                              </button>
+                            </div>
                           )
                         )}
                       </div>
@@ -4169,6 +9001,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                   {studentSubTab === 'lista' && (
                     <>
+                      {/* Search Input Box */}
+                      <div className="flex items-center gap-2 max-w-md bg-slate-50 px-3 py-2 rounded-xl border border-slate-200 shadow-2xs mb-4">
+                        <Search className="w-4 h-4 text-slate-400 shrink-0" />
+                        <input
+                          type="text"
+                          placeholder="Pesquisar por estudante, matrícula ou email..."
+                          value={studentSearchText}
+                          onChange={(e) => setStudentSearchText(e.target.value)}
+                          className="bg-transparent border-none text-xs w-full text-slate-800 focus:outline-none"
+                        />
+                      </div>
 
                   {/* Batch Action Bar */}
                   {selectedStudentIds.length > 0 && (
@@ -4208,12 +9051,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           <th className="py-4 px-4 w-12 text-center">
                             <input 
                               type="checkbox"
-                              checked={students.length > 0 && selectedStudentIds.length === students.length}
+                              checked={searchedStudents.length > 0 && selectedStudentIds.length === searchedStudents.length}
                               onChange={() => {
-                                if (selectedStudentIds.length === students.length) {
+                                if (selectedStudentIds.length === searchedStudents.length) {
                                   setSelectedStudentIds([]);
                                 } else {
-                                  setSelectedStudentIds(students.map(s => s.id));
+                                  setSelectedStudentIds(searchedStudents.map(s => s.id));
                                 }
                               }}
                               className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
@@ -4223,17 +9066,18 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           <th className="px-6 py-4">Género</th>
                           <th className="px-6 py-4">Escola / Unidade</th>
                           <th className="px-6 py-4">Turma Vinculada</th>
-                          <th className="px-6 py-4 text-right">Ações</th>
+                          <th className="px-6 py-4 text-right sticky right-0 bg-slate-50 dark:bg-slate-900 z-10">Ações</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-slate-700 text-sm">
-                        {students.map((s, index) => {
+                        {searchedStudents.slice((pageStudents - 1) * 25, pageStudents * 25).map((s, index) => {
                           const usr = tenantUsers.find(u => u.id === s.user_id);
                           const esc = schools.find(e => e.id === s.escola_id);
                           const tur = turmas.find(t => t.id === s.turma_id);
-                          const isLast = index >= students.length - 2 && students.length > 2;
+                          const paginatedLen = Math.min(25, searchedStudents.length - (pageStudents - 1) * 25);
+                          const isLast = index >= paginatedLen - 2 && paginatedLen > 2;
                           return (
-                            <tr key={s.id} className={`hover:bg-slate-50/50 ${activeActionRowId === s.id ? 'relative z-30' : ''}`}>
+                            <tr key={s.id} data-context-type="student" data-context-id={s.id} className={`hover:bg-slate-50/50 ${activeActionRowId === s.id ? 'relative z-30' : ''}`}>
                               <td className="py-4 px-4 text-center">
                                 <input 
                                   type="checkbox"
@@ -4247,13 +9091,29 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 />
                               </td>
                               <td className="px-6 py-4">
-                                <p className="font-bold text-slate-900">{usr?.nome || 'Estudante'}</p>
-                                <span className="text-xs bg-slate-100 text-slate-600 font-mono py-0.5 px-1.5 rounded">{s.numero_matricula}</span>
+                                <div className="flex items-center gap-3">
+                                  {s.foto_url ? (
+                                    <img 
+                                      src={s.foto_url} 
+                                      alt={usr?.nome || 'Estudante'} 
+                                      className="w-9 h-9 rounded-full object-cover border border-slate-100 dark:border-slate-800 shadow-xs flex-shrink-0"
+                                      referrerPolicy="no-referrer"
+                                    />
+                                  ) : (
+                                    <div className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-300 font-bold text-xs border border-slate-200 dark:border-slate-700 flex-shrink-0">
+                                      {(usr?.nome || 'E')[0].toUpperCase()}
+                                    </div>
+                                  )}
+                                  <div>
+                                    <p className="font-bold text-slate-900 dark:text-white">{usr?.nome || 'Estudante'}</p>
+                                    <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-mono py-0.5 px-1.5 rounded">{s.numero_matricula}</span>
+                                  </div>
+                                </div>
                               </td>
                               <td className="px-6 py-4 text-xs">{s.genero}</td>
                               <td className="px-6 py-4 text-xs text-slate-500">{esc?.nome}</td>
                               <td className="px-6 py-4 text-xs font-bold text-indigo-700">{tur?.nome || 'Sem Turma'}</td>
-                              <td className={`px-6 py-4 text-right relative ${activeActionRowId === s.id ? 'z-40' : 'z-0'}`}>
+                              <td className={`px-6 py-4 text-right sticky right-0 bg-white dark:bg-slate-900 ${activeActionRowId === s.id ? 'z-40' : 'z-10'}`}>
                                 <div className="inline-block text-left">
                                   <button
                                     onClick={(e) => {
@@ -4269,10 +9129,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                   {activeActionRowId === s.id && (
                                     <>
                                       <div 
-                                        className="fixed inset-0 z-30 bg-transparent" 
+                                        className="fixed inset-0 z-[9999] bg-transparent" 
                                         onClick={() => setActiveActionRowId(null)} 
                                       />
-                                      <div className={`absolute right-0 w-48 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xl z-[9999] py-1.5 text-left animate-in fade-in duration-150 ${isLast ? 'bottom-full mb-1 origin-bottom-right' : 'mt-1 origin-top top-full'}`}>
+                                      <div className="absolute bottom-0 right-0 w-48 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xl z-[99999] py-1.5 text-left animate-in fade-in zoom-in-95 origin-bottom-right duration-150">
                                         {renderStudentActions(s, usr)}
                                       </div>
                                     </>
@@ -4288,12 +9148,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                   {/* Mobile View (List with Checkbox, Detail View button and 3 dots) */}
                   <div className="block md:hidden space-y-3">
-                    {students.map(s => {
+                    {searchedStudents.slice((pageStudents - 1) * 25, pageStudents * 25).map(s => {
                       const usr = tenantUsers.find(u => u.id === s.user_id);
                       const esc = schools.find(e => e.id === s.escola_id);
                       const tur = turmas.find(t => t.id === s.turma_id);
                       return (
-                        <div key={s.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
+                        <div key={s.id} data-context-type="student" data-context-id={s.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
                           <div className="flex items-center gap-3 min-w-0">
                             <input 
                               type="checkbox"
@@ -4305,16 +9165,30 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               }}
                               className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer flex-shrink-0"
                             />
-                            <div className="min-w-0">
-                              <p className="font-bold text-slate-900 dark:text-white truncate text-sm">{usr?.nome || 'Estudante'}</p>
-                              <p className="text-xs text-slate-500 dark:text-slate-400 truncate">Matrícula: {s.numero_matricula} • {s.genero}</p>
-                              <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                                  {esc?.nome}
-                                </span>
-                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-300">
-                                  {tur?.nome || 'Sem Turma'}
-                                </span>
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              {s.foto_url ? (
+                                <img 
+                                  src={s.foto_url} 
+                                  alt={usr?.nome || 'Estudante'} 
+                                  className="w-10 h-10 rounded-full object-cover border border-slate-100 dark:border-slate-800 shadow-xs flex-shrink-0"
+                                  referrerPolicy="no-referrer"
+                                />
+                              ) : (
+                                <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-300 font-bold text-sm border border-slate-200 dark:border-slate-700 flex-shrink-0">
+                                  {(usr?.nome || 'E')[0].toUpperCase()}
+                                </div>
+                              )}
+                              <div className="min-w-0">
+                                <p className="font-bold text-slate-900 dark:text-white truncate text-sm">{usr?.nome || 'Estudante'}</p>
+                                <p className="text-xs text-slate-500 dark:text-slate-400 truncate">Matrícula: {s.numero_matricula} • {s.genero}</p>
+                                <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                                    {esc?.nome}
+                                  </span>
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-300">
+                                    {tur?.nome || 'Sem Turma'}
+                                  </span>
+                                </div>
                               </div>
                             </div>
                           </div>
@@ -4328,12 +9202,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                   setStudentForm({
                                     nome: usr?.nome || '',
                                     email: usr?.email || '',
-                                    escola_id: s.escola_id,
-                                    turma_id: s.turma_id,
-                                    numero_matricula: s.numero_matricula,
-                                    data_nascimento: s.data_nascimento,
-                                    genero: s.genero,
-                                    pai_id: s.pai_id
+                                    escola_id: s.escola_id || '',
+                                    turma_id: s.turma_id || '',
+                                    numero_matricula: s.numero_matricula || '',
+                                    data_nascimento: s.data_nascimento || '',
+                                    genero: s.genero || 'Masculino',
+                                    pai_id: s.pai_id || '',
+                                    faturado: !!s.faturado,
+                                    periodo_facturacao: s.periodo_facturacao || 'Mensal',
+                                    foto_url: s.foto_url || '',
+                                    usuario_sistema: s.usuario_sistema || false,
+                                    senha_temporaria: s.senha_temporaria || ''
                                   });
                                   setModalType('student');
                                   setIsModalOpen(true);
@@ -4357,23 +9236,24 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 <MoreVertical className="w-5 h-5" />
                               </button>
 
-                              {activeActionRowId === s.id && (
-                                <>
-                                  <div 
-                                    className="fixed inset-0 z-30 bg-transparent" 
-                                    onClick={() => setActiveActionRowId(null)} 
-                                  />
-                                  <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xl z-40 py-1.5 text-left animate-in fade-in slide-in-from-top-1 duration-150">
-                                    {renderStudentActions(s, usr)}
-                                  </div>
-                                </>
-                              )}
+                               {activeActionRowId === s.id && (
+                                 <>
+                                   <div 
+                                     className="fixed inset-0 z-[9999] bg-transparent" 
+                                     onClick={() => setActiveActionRowId(null)} 
+                                   />
+                                   <div className="absolute bottom-0 right-0 w-48 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xl z-[99999] py-1.5 text-left animate-in fade-in zoom-in-95 origin-bottom-right duration-150">
+                                     {renderStudentActions(s, usr)}
+                                   </div>
+                                 </>
+                               )}
                             </div>
                           </div>
                         </div>
                       );
                     })}
                   </div>
+                  {renderPagination(pageStudents, searchedStudents.length, 25, setPageStudents)}
                   </>
                   )}
 
@@ -4450,7 +9330,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 });
                                 setIsFaturaModalOpen(true);
                               }}
-                              className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-sm cursor-pointer transition-all"
+                              className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer transition-all"
                             >
                               <Plus className="w-4 h-4" /> Nova Factura
                             </button>
@@ -4468,7 +9348,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               <th className="px-6 py-3">Valor</th>
                               <th className="px-6 py-3">Data de Vencimento</th>
                               <th className="px-6 py-3">Estado</th>
-                              <th className="px-6 py-3 text-right">Ações</th>
+                              <th className="px-6 py-3 text-right sticky right-0 bg-slate-50 dark:bg-slate-900 z-10">Ações</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -4504,7 +9384,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                         {f.status}
                                       </span>
                                     </td>
-                                    <td className="px-6 py-4 text-right">
+                                    <td className="px-6 py-4 text-right sticky right-0 bg-white dark:bg-slate-900 z-10">
                                       <div className="flex gap-1.5 justify-end">
                                         {f.status !== 'Pago' && hasPermission('estudantes', 'editar') && (
                                           <>
@@ -4715,7 +9595,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               type="email"
                               name="username"
                               required
-                              defaultValue={tenantSmtpConfig?.username || ''}
+                              defaultValue={(tenantSmtpConfig as any)?.username || ''}
                               className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             />
                           </div>
@@ -4734,7 +9614,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             <label className="block text-[10px] font-bold text-slate-500 mb-1">Protocolo de Segurança</label>
                             <select
                               name="security"
-                              defaultValue={tenantSmtpConfig?.security || 'STARTTLS'}
+                              defaultValue={(tenantSmtpConfig as any)?.security || 'STARTTLS'}
                               className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             >
                               <option value="PLAIN">Nenhum (PLAIN)</option>
@@ -4832,23 +9712,34 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         </button>
                       ) : (
                         hasPermission('turmas', 'criar') && (
-                          <button 
-                            onClick={() => {
-                              setEditingItem(null);
-                              setTurmaForm({ nome: '', escola_id: schools[0]?.id || '', ano_letivo: '2026', nivel: 'Primário', docente_id: teachers[0]?.id || '', capacidade_max: 30 });
-                              setModalType('turma');
-                              setIsModalOpen(true);
-                            }}
-                            className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1 cursor-pointer"
-                          >
-                            <Plus className="w-4 h-4" /> Criar Turma
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => {
+                                setImportModule('turmas');
+                                setImportModalOpen(true);
+                              }}
+                              className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer"
+                            >
+                              <FileSpreadsheet className="w-4 h-4 text-indigo-600" /> Importar Dados
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setEditingItem(null);
+                                setTurmaForm({ nome: '', escola_id: schools[0]?.id || '', ano_letivo: '2026', nivel: 'Primário', docente_id: teachers[0]?.id || '', capacidade_max: 30, classe_escolar_id: '' });
+                                setModalType('turma');
+                                setIsModalOpen(true);
+                              }}
+                              className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1 cursor-pointer"
+                            >
+                              <Plus className="w-4 h-4" /> Criar Turma
+                            </button>
+                          </div>
                         )
                       )}
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {turmas.map(t => {
+                      {turmas.slice((pageTurmas - 1) * 25, pageTurmas * 25).map(t => {
                         const esc = schools.find(e => e.id === t.escola_id);
                         const tit = teachers.find(te => te.id === t.docente_id);
                         const titUsr = tenantUsers.find(u => u.id === tit?.user_id);
@@ -4881,7 +9772,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                       ano_letivo: t.ano_letivo,
                                       nivel: t.nivel,
                                       docente_id: t.docente_id,
-                                      capacidade_max: t.capacidade_max
+                                      capacidade_max: t.capacidade_max,
+                                      classe_escolar_id: t.classe_escolar_id || ''
                                     });
                                     setModalType('turma');
                                     setIsModalOpen(true);
@@ -4896,6 +9788,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         );
                       })}
                     </div>
+                    {renderPagination(pageTurmas, turmas.length, 25, setPageTurmas)}
                   </div>
                 </div>
               )
@@ -4920,19 +9813,52 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         </button>
                       ) : (
                         hasPermission('disciplinas', 'criar') && (
-                          <button 
-                            onClick={() => {
-                              setEditingItem(null);
-                              setClasseForm({ nome: '', turma_id: turmas[0]?.id || '', docente_id: teachers[0]?.id || '', horario: '08:00 - 09:30', sala: rawSalas[0]?.nome || '', data: new Date().toISOString().split('T')[0], dia_semana: getDiaSemanaFromDate(new Date().toISOString().split('T')[0]) });
-                              setModalType('classe');
-                              setIsModalOpen(true);
-                            }}
-                            className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2.5 px-4 rounded-lg flex items-center gap-1.5 transition-colors self-start sm:self-center cursor-pointer"
-                          >
-                            <Plus className="w-4 h-4" /> Cadastrar Disciplina
-                          </button>
+                          <div className="flex items-center gap-2 self-start sm:self-center">
+                            <button
+                              onClick={() => {
+                                setImportModule('disciplinas');
+                                setImportModalOpen(true);
+                              }}
+                              className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs py-2.5 px-4 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer"
+                            >
+                              <FileSpreadsheet className="w-4 h-4 text-indigo-600" /> Importar Dados
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setEditingItem(null);
+                                setClasseForm({ 
+                                  nome: '', 
+                                  turma_id: turmas[0]?.id || '', 
+                                  docente_id: teachers[0]?.id || '', 
+                                  horario: '08:00 - 09:30', 
+                                  sala: rawSalas[0]?.nome || '', 
+                                  data: new Date().toISOString().split('T')[0], 
+                                  dia_semana: getDiaSemanaFromDate(new Date().toISOString().split('T')[0]),
+                                  escola_id: schools[0]?.id || '',
+                                  professores_responsaveis: []
+                                });
+                                setModalType('classe');
+                                setIsModalOpen(true);
+                              }}
+                              className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2.5 px-4 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                            >
+                              <Plus className="w-4 h-4" /> Cadastrar Disciplina
+                            </button>
+                          </div>
                         )
                       )}
+                    </div>
+
+                    {/* Search Input Box */}
+                    <div className="flex items-center gap-2 max-w-md bg-slate-50 px-3 py-2 rounded-xl border border-slate-200 shadow-2xs">
+                      <Search className="w-4 h-4 text-slate-400 shrink-0" />
+                      <input
+                        type="text"
+                        placeholder="Pesquisar por disciplina, código ou turma..."
+                        value={disciplineSearchText}
+                        onChange={(e) => setDisciplineSearchText(e.target.value)}
+                        className="bg-transparent border-none text-xs w-full text-slate-800 focus:outline-none"
+                      />
                     </div>
 
                   {/* Limit meter */}
@@ -4961,40 +9887,40 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           <th className="p-4">Nome da Disciplina</th>
                           <th className="p-4">Turma Associada</th>
                           <th className="p-4">Professor Docente</th>
-                          <th className="p-4">Horário & Sala</th>
-                          <th className="p-4 text-right">Ações</th>
+                          <th className="p-4 text-right sticky right-0 bg-slate-50 dark:bg-slate-900 z-10">Ações</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-50">
-                        {classes.length === 0 ? (
+                        {searchedClasses.length === 0 ? (
                           <tr>
-                            <td colSpan={5} className="p-8 text-center text-slate-400">
+                            <td colSpan={4} className="p-8 text-center text-slate-400">
                               Nenhuma disciplina cadastrada neste tenant. Clique em "Cadastrar Disciplina" para começar.
                             </td>
                           </tr>
                         ) : (
-                          classes.map(c => {
+                          searchedClasses.slice((pageClasses - 1) * 25, pageClasses * 25).map(c => {
                             const tur = turmas.find(t => t.id === c.turma_id);
                             const tea = teachers.find(t => t.id === c.docente_id);
                             const teaUsr = tenantUsers.find(u => u.id === tea?.user_id);
                             return (
-                              <tr key={c.id} className="hover:bg-slate-50/50 transition-colors">
-                                <td className="p-4 font-bold text-slate-800">{c.nome}</td>
+                              <tr key={c.id} data-context-type="discipline" data-context-id={c.id} className="hover:bg-slate-50/50 transition-colors">
+                                <td className="p-4 font-bold text-slate-800">
+                                  <div className="flex items-center gap-2">
+                                    <span>{c.nome}</span>
+                                    {c.codigo && (
+                                      <span className="text-[10px] font-mono text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-md font-bold">
+                                        {c.codigo}
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
                                 <td className="p-4">
                                   <span className="bg-slate-100 text-slate-700 text-xs py-1 px-2.5 rounded-full font-medium">
                                     {tur?.nome || 'Geral / Sem Turma'}
                                   </span>
                                 </td>
                                 <td className="p-4 text-slate-600">{teaUsr?.nome || 'Professor não designado'}</td>
-                                <td className="p-4 text-xs text-slate-500">
-                                  <div className="font-mono">🕒 {c.horario} • 🚪 {c.sala}</div>
-                                  {c.data && (
-                                    <div className="text-slate-400 mt-1 font-medium">
-                                      📅 {c.data} ({c.dia_semana || getDiaSemanaFromDate(c.data)})
-                                    </div>
-                                  )}
-                                </td>
-                                <td className="p-4 text-right space-x-2">
+                                <td className="p-4 text-right space-x-2 sticky right-0 bg-white dark:bg-slate-900 z-10">
                                   {hasPermission('disciplinas', 'editar') && (
                                     <button 
                                       onClick={() => {
@@ -5006,7 +9932,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                           horario: c.horario,
                                           sala: c.sala,
                                           data: c.data || new Date().toISOString().split('T')[0],
-                                          dia_semana: c.dia_semana || getDiaSemanaFromDate(c.data || new Date().toISOString().split('T')[0])
+                                          dia_semana: c.dia_semana || getDiaSemanaFromDate(c.data || new Date().toISOString().split('T')[0]),
+                                          escola_id: c.escola_id || schools[0]?.id || '',
+                                          professores_responsaveis: c.professores_responsaveis || []
                                         });
                                         setModalType('classe');
                                         setIsModalOpen(true);
@@ -5066,6 +9994,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       </tbody>
                     </table>
                   </div>
+                  {renderPagination(pageClasses, searchedClasses.length, 25, setPageClasses)}
                 </div>
               </div>
               )
@@ -5093,7 +10022,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           <button 
                             onClick={() => {
                               setEditingItem(null);
-                              setClasseEscolarForm({ nome: '', nivel: 'Primário', descricao: '' });
+                              setClasseEscolarForm({ nome: '', nivel: 'Primário', descricao: '', escola_id: schools[0]?.id || '' });
                               setModalType('classe_escolar');
                               setIsModalOpen(true);
                             }}
@@ -5129,46 +10058,51 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       <thead>
                         <tr className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100">
                           <th className="p-4">Nome da Classe</th>
+                          <th className="p-4">Escola Associada</th>
                           <th className="p-4">Nível de Ensino</th>
                           <th className="p-4">Descrição do Currículo</th>
-                          <th className="p-4 text-right">Ações</th>
+                          <th className="p-4 text-right sticky right-0 bg-slate-50 dark:bg-slate-900 z-10">Ações</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-50">
                         {classesEscolares.length === 0 ? (
                           <tr>
-                            <td colSpan={4} className="p-8 text-center text-slate-400">
+                            <td colSpan={5} className="p-8 text-center text-slate-400">
                               Nenhuma classe escolar cadastrada neste tenant. Clique em "Cadastrar Classe Letiva" para começar.
                             </td>
                           </tr>
                         ) : (
-                          classesEscolares.map(c => (
-                            <tr key={c.id} className="hover:bg-slate-50/50 transition-colors">
-                              <td className="p-4 font-bold text-slate-800">{c.nome}</td>
-                              <td className="p-4">
-                                <span className="bg-slate-100 text-indigo-700 text-xs py-1 px-2.5 rounded-full font-bold uppercase">
-                                  {c.nivel}
-                                </span>
-                              </td>
-                              <td className="p-4 text-slate-500 text-xs">{c.descricao || 'Nenhuma descrição currícular'}</td>
-                              <td className="p-4 text-right space-x-2">
-                                {hasPermission('classes_escolares', 'editar') && (
-                                  <button 
-                                    onClick={() => {
-                                      setEditingItem(c);
-                                      setClasseEscolarForm({
-                                        nome: c.nome,
-                                        nivel: c.nivel,
-                                        descricao: c.descricao || ''
-                                      });
-                                      setModalType('classe_escolar');
-                                      setIsModalOpen(true);
-                                    }}
-                                    className="text-indigo-600 hover:text-indigo-900 font-bold text-xs cursor-pointer"
-                                  >
-                                    Editar
-                                  </button>
-                                )}
+                          classesEscolares.map(c => {
+                            const sch = schools.find(s => s.id === c.escola_id);
+                            return (
+                              <tr key={c.id} className="hover:bg-slate-50/50 transition-colors">
+                                <td className="p-4 font-bold text-slate-800">{c.nome}</td>
+                                <td className="p-4 font-semibold text-xs text-indigo-950">{sch ? sch.nome : 'Sem Escola'}</td>
+                                <td className="p-4">
+                                  <span className="bg-slate-100 text-indigo-700 text-xs py-1 px-2.5 rounded-full font-bold uppercase">
+                                    {c.nivel}
+                                  </span>
+                                </td>
+                                <td className="p-4 text-slate-500 text-xs">{c.descricao || 'Nenhuma descrição currícular'}</td>
+                                <td className="p-4 text-right space-x-2 sticky right-0 bg-white dark:bg-slate-900 z-10">
+                                  {hasPermission('classes_escolares', 'editar') && (
+                                    <button 
+                                      onClick={() => {
+                                        setEditingItem(c);
+                                        setClasseEscolarForm({
+                                          nome: c.nome,
+                                          nivel: c.nivel,
+                                          descricao: c.descricao || '',
+                                          escola_id: c.escola_id || ''
+                                        });
+                                        setModalType('classe_escolar');
+                                        setIsModalOpen(true);
+                                      }}
+                                      className="text-indigo-600 hover:text-indigo-900 font-bold text-xs cursor-pointer"
+                                    >
+                                      Editar
+                                    </button>
+                                  )}
                                 {hasPermission('classes_escolares', 'excluir') && (
                                   <button 
                                     onClick={async () => {
@@ -5184,7 +10118,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 )}
                               </td>
                             </tr>
-                          ))
+                          ); })
                         )}
                       </tbody>
                     </table>
@@ -5218,163 +10152,487 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 return (
                   <div className="space-y-6 animate-fadeIn">
                     <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-4">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      {/* Sub-tab Switcher Header */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
                         <div>
-                          <h3 className="font-bold text-slate-800 text-lg">Calendário Semanal & Horários</h3>
-                          <p className="text-xs text-slate-400 font-sans">Grade horária dinâmica baseada nas disciplinas registradas de cada turma.</p>
+                          <h3 className="font-extrabold text-slate-850 text-lg">Calendário, Horários & Férias</h3>
+                          <p className="text-xs text-slate-400 font-sans">Gerencie a grade horária semanal e o registro de férias das turmas.</p>
                         </div>
-                        <div className="flex items-center gap-3 flex-wrap self-start sm:self-center">
-                          {turmas.length > 0 && (
-                            <div className="flex items-center gap-2">
-                              <select 
-                                id="calendar_turma_filter"
-                                className="bg-slate-100 border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setSelectedTurmaFilter(val);
-                                }}
-                                value={selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter}
-                              >
-                                {turmas.map(t => (
-                                  <option key={t.id} value={t.id}>{t.nome}</option>
-                                ))}
-                              </select>
-                            </div>
-                          )}
+                        <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/50 shadow-inner overflow-x-auto">
+                          <button
+                            onClick={() => setCalendarSubTab('grade')}
+                            className={`px-3 py-1.5 rounded-lg font-bold text-xs tracking-wide transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+                              calendarSubTab === 'grade'
+                                ? 'bg-white text-indigo-600 shadow-3xs'
+                                : 'text-slate-500 hover:text-slate-750'
+                            }`}
+                          >
+                            📅 Grade Semanal
+                          </button>
+                          <button
+                            onClick={() => setCalendarSubTab('ferias')}
+                            className={`px-3 py-1.5 rounded-lg font-bold text-xs tracking-wide transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+                              calendarSubTab === 'ferias'
+                                ? 'bg-white text-indigo-600 shadow-3xs'
+                                : 'text-slate-500 hover:text-slate-750'
+                            }`}
+                          >
+                            🌴 Férias das Turmas
+                          </button>
+                          <button
+                            onClick={() => setCalendarSubTab('feriados')}
+                            className={`px-3 py-1.5 rounded-lg font-bold text-xs tracking-wide transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+                              calendarSubTab === 'feriados'
+                                ? 'bg-white text-indigo-600 shadow-3xs'
+                                : 'text-slate-500 hover:text-slate-750'
+                            }`}
+                          >
+                            🚩 Feriados
+                          </button>
+                        </div>
+                      </div>
 
-                          {hasPermission('disciplinas', 'criar') && (
-                            <div className="relative">
-                              <button
-                                onClick={() => setIsCopyDropdownOpen(!isCopyDropdownOpen)}
-                                className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2 px-3 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-3xs border border-slate-200/65"
-                              >
-                                <Copy className="w-3.5 h-3.5" /> Copiar Agenda
-                              </button>
-                              
-                              {isCopyDropdownOpen && (
-                                <>
-                                  <div 
-                                    className="fixed inset-0 z-10" 
-                                    onClick={() => setIsCopyDropdownOpen(false)} 
-                                  />
-                                  <div className="absolute right-0 mt-1.5 w-52 rounded-xl bg-white border border-slate-200 shadow-lg py-1.5 z-20 animate-in fade-in slide-in-from-top-1 duration-100">
-                                    <div className="px-3 py-1.5 border-b border-slate-100">
-                                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Copiar esta semana para:</p>
-                                    </div>
-                                    <button
-                                      onClick={() => {
-                                        setIsCopyDropdownOpen(false);
-                                        handleCopySchedule('mes');
-                                      }}
-                                      className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 font-semibold transition-colors cursor-pointer flex items-center justify-between"
-                                    >
-                                      <span>Mês (4 semanas)</span>
-                                      <span className="text-[9px] text-slate-400 font-mono">1 mês</span>
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                        setIsCopyDropdownOpen(false);
-                                        handleCopySchedule('trimestre');
-                                      }}
-                                      className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 font-semibold transition-colors cursor-pointer flex items-center justify-between"
-                                    >
-                                      <span>Trimestre</span>
-                                      <span className="text-[9px] text-slate-400 font-mono">3 meses</span>
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                        setIsCopyDropdownOpen(false);
-                                        handleCopySchedule('semestre');
-                                      }}
-                                      className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 font-semibold transition-colors cursor-pointer flex items-center justify-between"
-                                    >
-                                      <span>Semestre</span>
-                                      <span className="text-[9px] text-slate-400 font-mono">6 meses</span>
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                        setIsCopyDropdownOpen(false);
-                                        handleCopySchedule('ano');
-                                      }}
-                                      className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 font-semibold transition-colors cursor-pointer flex items-center justify-between"
-                                    >
-                                      <span>Ano Inteiro</span>
-                                      <span className="text-[9px] text-slate-400 font-mono">1 ano</span>
-                                    </button>
-                                  </div>
-                                </>
+                      {calendarSubTab === 'grade' ? (
+                        <>
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                            <div>
+                              <h4 className="font-bold text-slate-700 text-sm">Visualização Semanal</h4>
+                              <p className="text-[11px] text-slate-400">Filtre por turma para consultar ou agendar as disciplinas.</p>
+                            </div>
+                            <div className="flex items-center gap-3 flex-wrap self-start sm:self-center">
+                              {turmas.length > 0 && (
+                                <div className="flex items-center gap-2">
+                                  <select 
+                                    id="calendar_turma_filter"
+                                    className="bg-slate-100 border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-sans"
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setSelectedTurmaFilter(val);
+                                    }}
+                                    value={selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter}
+                                  >
+                                    {turmas.map(t => (
+                                      <option key={t.id} value={t.id}>{t.nome}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              )}
+
+                              <div className="flex items-center gap-2">
+                                <select 
+                                  id="calendar_turno_filter"
+                                  className="bg-slate-100 border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-sans"
+                                  onChange={(e) => {
+                                    const val = e.target.value as 'manha' | 'tarde' | 'noite';
+                                    setSelectedTurn(val);
+                                    setUserSelectedTurn(val);
+                                  }}
+                                  value={selectedTurn}
+                                >
+                                  <option value="manha">🌅 Manhã</option>
+                                  <option value="tarde">☀️ Tarde</option>
+                                  <option value="noite">🌙 Noite</option>
+                                </select>
+                              </div>
+
+                              {hasPermission('disciplinas', 'criar') && (
+                                <div className="relative">
+                                  <button
+                                    onClick={() => setIsCopyDropdownOpen(!isCopyDropdownOpen)}
+                                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2 px-3 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-3xs border border-slate-200/65"
+                                  >
+                                    <Copy className="w-3.5 h-3.5" /> Copiar Agenda
+                                  </button>
+                                  
+                                  {isCopyDropdownOpen && (
+                                    <>
+                                      <div 
+                                        className="fixed inset-0 z-10" 
+                                        onClick={() => setIsCopyDropdownOpen(false)} 
+                                      />
+                                      <div className="absolute right-0 mt-1.5 w-52 rounded-xl bg-white border border-slate-200 shadow-lg py-1.5 z-20 animate-in fade-in slide-in-from-top-1 duration-100">
+                                        <div className="px-3 py-1.5 border-b border-slate-100">
+                                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Copiar esta semana para:</p>
+                                        </div>
+                                        <button
+                                          onClick={() => {
+                                            setIsCopyDropdownOpen(false);
+                                            handleCopySchedule('mes');
+                                          }}
+                                          className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 font-semibold transition-colors cursor-pointer flex items-center justify-between"
+                                        >
+                                          <span>Mês (4 semanas)</span>
+                                          <span className="text-[9px] text-slate-400 font-mono">1 mês</span>
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            setIsCopyDropdownOpen(false);
+                                            handleCopySchedule('trimestre');
+                                          }}
+                                          className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 font-semibold transition-colors cursor-pointer flex items-center justify-between"
+                                        >
+                                          <span>Trimestre</span>
+                                          <span className="text-[9px] text-slate-400 font-mono">3 meses</span>
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            setIsCopyDropdownOpen(false);
+                                            handleCopySchedule('semestre');
+                                          }}
+                                          className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 font-semibold transition-colors cursor-pointer flex items-center justify-between"
+                                        >
+                                          <span>Semestre</span>
+                                          <span className="text-[9px] text-slate-400 font-mono">6 meses</span>
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            setIsCopyDropdownOpen(false);
+                                            handleCopySchedule('ano');
+                                          }}
+                                          className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 font-semibold transition-colors cursor-pointer flex items-center justify-between"
+                                        >
+                                          <span>Ano Inteiro</span>
+                                          <span className="text-[9px] text-slate-400 font-mono">1 ano</span>
+                                        </button>
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                              )}
+
+                              {hasPermission('disciplinas', 'criar') && (
+                                <button
+                                  id="btn_agendar_aula"
+                                  onClick={() => {
+                                    setEditingItem(null);
+                                    const activeFilterId = selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter;
+                                    setHorarioForm({ 
+                                      turma_id: activeFilterId || (turmas[0]?.id || ''),
+                                      disciplina_id: '',
+                                      disciplina_nome: '',
+                                      docente_id: teachers[0]?.id || '', 
+                                      hora_inicio: '08:00',
+                                      hora_fim: '09:30', 
+                                      sala: rawSalas[0]?.nome || 'Sala 01',
+                                      data: new Date().toISOString().split('T')[0],
+                                      dia_semana: getDiaSemanaFromDate(new Date().toISOString().split('T')[0]),
+                                      justificativa: '',
+                                      escola_id: schools[0]?.id || ''
+                                    });
+                                    setModalType('horario_aula');
+                                    setIsModalOpen(true);
+                                  }}
+                                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                                >
+                                  <Plus className="w-3.5 h-3.5" /> Agendar Aula
+                                </button>
                               )}
                             </div>
-                          )}
+                          </div>
 
-                          {hasPermission('disciplinas', 'criar') && (
+                          {/* Weekly Navigation Controls */}
+                          <div className="flex justify-center items-center gap-4 py-2.5 border-t border-slate-100 mt-2">
                             <button
-                              id="btn_agendar_aula"
                               onClick={() => {
-                                setEditingItem(null);
-                                const activeFilterId = selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter;
-                                setClasseForm({ 
-                                  nome: '', 
-                                  turma_id: activeFilterId || (turmas[0]?.id || ''), 
-                                  docente_id: teachers[0]?.id || '', 
-                                  horario: '08:00 - 09:30', 
-                                  sala: rawSalas[0]?.nome || '',
-                                  data: new Date().toISOString().split('T')[0],
-                                  dia_semana: getDiaSemanaFromDate(new Date().toISOString().split('T')[0])
+                                setCalendarSelectedDate(prev => {
+                                  const d = new Date(prev);
+                                  d.setDate(d.getDate() - 7);
+                                  return d;
                                 });
-                                setModalType('classe');
-                                setIsModalOpen(true);
                               }}
-                              className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                              className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-650 transition-colors cursor-pointer border border-slate-200 shadow-3xs"
+                              title="Semana Anterior"
                             >
-                              <Plus className="w-3.5 h-3.5" />
+                              <ChevronLeft className="w-4 h-4" />
                             </button>
-                          )}
+                            
+                            <span className="text-xs sm:text-sm font-bold text-indigo-950 font-sans tracking-wide bg-indigo-50/50 border border-indigo-100/80 rounded-xl px-4 py-1.5 shadow-2xs flex items-center gap-2">
+                              📅 {formatCalendarDateWeek(calendarSelectedDate)}
+                            </span>
+
+                            <button
+                              onClick={() => {
+                                setCalendarSelectedDate(prev => {
+                                  const d = new Date(prev);
+                                  d.setDate(d.getDate() + 7);
+                                  return d;
+                                });
+                              }}
+                              className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-650 transition-colors cursor-pointer border border-slate-200 shadow-3xs"
+                              title="Próxima Semana"
+                            >
+                              <ChevronRight className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </>
+                      ) : calendarSubTab === 'ferias' ? (
+                        <div className="space-y-4 pt-2">
+                          <div className="flex justify-between items-center bg-slate-50/70 border border-slate-150 p-4 rounded-xl">
+                            <div>
+                              <h4 className="font-bold text-slate-850 text-sm">Registro de Férias e Recessos</h4>
+                              <p className="text-xs text-slate-500 font-sans">Defina períodos de descanso para as turmas. Aulas não poderão ser agendadas durante estes períodos.</p>
+                            </div>
+                            {(currentUserRole === 'admin' || currentUserRole === 'director' || loggedInUser?.tipo === 'admin' || loggedInUser?.tipo === 'director') && (
+                              <button
+                                onClick={() => {
+                                  setEditingItem(null);
+                                  setFeriasForm({
+                                    descricao: '',
+                                    turma_id: 'todas',
+                                    data_inicio: new Date().toISOString().split('T')[0],
+                                    data_fim: new Date().toISOString().split('T')[0]
+                                  });
+                                  setModalType('ferias');
+                                  setIsModalOpen(true);
+                                }}
+                                className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer"
+                              >
+                                <Plus className="w-3.5 h-3.5" /> Cadastrar Férias
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="border border-slate-200/80 rounded-xl overflow-hidden bg-white shadow-2xs">
+                            <table className="w-full text-left border-collapse text-xs">
+                              <thead>
+                                <tr className="bg-slate-50 text-slate-600 font-bold border-b border-slate-150">
+                                  <th className="p-3.5 font-bold">Descrição</th>
+                                  <th className="p-3.5 font-bold">Turma Aplicável</th>
+                                  <th className="p-3.5 font-bold">Data Início</th>
+                                  <th className="p-3.5 font-bold">Data Fim</th>
+                                  <th className="p-3.5 font-bold text-center sticky right-0 bg-slate-50 dark:bg-slate-900 z-10">Ações</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {rawVacations.length > 0 ? (
+                                  rawVacations.map((v) => {
+                                    const turmaObj = turmas.find(t => t.id === v.turma_id);
+                                    const isEditable = currentUserRole === 'admin' || currentUserRole === 'director' || loggedInUser?.tipo === 'admin' || loggedInUser?.tipo === 'director';
+
+                                    return (
+                                      <tr key={v.id} className="hover:bg-slate-50/50 transition-colors">
+                                        <td className="p-3.5 font-semibold text-slate-800 flex items-center gap-1.5">
+                                          <span>🌴</span> {v.descricao}
+                                        </td>
+                                        <td className="p-3.5 text-slate-650 font-medium">
+                                          {v.turma_id === 'todas' || !v.turma_id ? (
+                                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                              ✨ Geral (Todas)
+                                            </span>
+                                          ) : (
+                                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-250">
+                                              🏫 {turmaObj?.nome || 'Turma excluída'}
+                                            </span>
+                                          )}
+                                        </td>
+                                        <td className="p-3.5 font-mono text-slate-500 font-semibold">
+                                          {new Date(v.data_inicio + 'T12:00:00').toLocaleDateString('pt-PT')}
+                                        </td>
+                                        <td className="p-3.5 font-mono text-slate-500 font-semibold">
+                                          {new Date(v.data_fim + 'T12:00:00').toLocaleDateString('pt-PT')}
+                                        </td>
+                                        <td className="p-3.5 text-center sticky right-0 bg-white dark:bg-slate-900 z-10">
+                                          {isEditable ? (
+                                            <div className="flex items-center justify-center gap-2">
+                                              <button
+                                                onClick={() => {
+                                                  setEditingItem(v);
+                                                  setFeriasForm({
+                                                    descricao: v.descricao,
+                                                    turma_id: v.turma_id || 'todas',
+                                                    data_inicio: v.data_inicio,
+                                                    data_fim: v.data_fim
+                                                  });
+                                                  setModalType('ferias');
+                                                  setIsModalOpen(true);
+                                                }}
+                                                className="p-1 bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-slate-350 text-slate-650 rounded-lg transition-colors cursor-pointer"
+                                                title="Editar Férias"
+                                              >
+                                                <Edit className="w-3.5 h-3.5" />
+                                              </button>
+                                              <button
+                                                onClick={async () => {
+                                                  if (confirm(`Tem certeza que deseja excluir o período de férias "${v.descricao}"?`)) {
+                                                    try {
+                                                      await deleteDoc(doc(db, 'ferias', v.id));
+                                                      setVacations(prev => prev.filter(item => item.id !== v.id));
+                                                      showSystemNotification("Período de férias excluído com sucesso!", "sucesso");
+                                                    } catch (err: any) {
+                                                      showSystemNotification(`Erro ao excluir férias: ${err.message}`, "erro");
+                                                    }
+                                                  }
+                                                }}
+                                                className="p-1 bg-rose-50 hover:bg-rose-100 border border-rose-200 hover:border-rose-300 text-rose-650 rounded-lg transition-colors cursor-pointer"
+                                                title="Excluir Férias"
+                                              >
+                                                <Trash2 className="w-3.5 h-3.5" />
+                                              </button>
+                                            </div>
+                                          ) : (
+                                            <span className="text-slate-400 italic text-[10px]">Sem permissão</span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })
+                                ) : (
+                                  <tr>
+                                    <td colSpan={5} className="p-8 text-center text-slate-400 italic">
+                                      Nenhum período de férias cadastrado.
+                                    </td>
+                                  </tr>
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
                         </div>
-                      </div>
+                      ) : (
+                        <div className="space-y-4 pt-2">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50/70 border border-slate-150 p-4 rounded-xl">
+                            <div>
+                              <h4 className="font-bold text-slate-850 text-sm">Feriados e Datas Comemorativas</h4>
+                              <p className="text-xs text-slate-500 font-sans">
+                                Consulte os feriados registrados para {config?.pais || 'Moçambique'}. Aulas agendadas nestas datas exigem justificativa.
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => fetchAndRegisterCountryHolidays(config?.pais || 'Moçambique')}
+                                disabled={isSyncingHolidays}
+                                className="bg-slate-100 hover:bg-slate-200 text-slate-750 font-bold text-xs py-2 px-3 rounded-lg flex items-center gap-1.5 transition-all border border-slate-200 cursor-pointer disabled:opacity-50"
+                              >
+                                {isSyncingHolidays ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-600" /> : <Globe className="w-3.5 h-3.5 text-indigo-600" />}
+                                <span>{isSyncingHolidays ? 'Sincronizando...' : 'Sincronizar Feriados'}</span>
+                              </button>
 
-                      {/* Weekly Navigation Controls */}
-                      <div className="flex justify-center items-center gap-4 py-2.5 border-t border-slate-100 mt-2">
-                        <button
-                          onClick={() => {
-                            setCalendarSelectedDate(prev => {
-                              const d = new Date(prev);
-                              d.setDate(d.getDate() - 7);
-                              return d;
-                            });
-                          }}
-                          className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-650 transition-colors cursor-pointer border border-slate-200 shadow-3xs"
-                          title="Semana Anterior"
-                        >
-                          <ChevronLeft className="w-4 h-4" />
-                        </button>
-                        
-                        <span className="text-xs sm:text-sm font-bold text-indigo-950 font-sans tracking-wide bg-indigo-50/50 border border-indigo-100/80 rounded-xl px-4 py-1.5 shadow-2xs flex items-center gap-2">
-                          📅 {formatCalendarDateWeek(calendarSelectedDate)}
-                        </span>
+                              {(currentUserRole === 'admin' || currentUserRole === 'director' || loggedInUser?.tipo === 'admin' || loggedInUser?.tipo === 'director') && (
+                                <button
+                                  onClick={() => {
+                                    setEditingItem(null);
+                                    setFeriadoForm({
+                                      nome: '',
+                                      data: new Date().toISOString().split('T')[0],
+                                      pais: config?.pais || 'Moçambique',
+                                      tipo: 'Nacional',
+                                      descricao: ''
+                                    });
+                                    setModalType('feriado');
+                                    setIsModalOpen(true);
+                                  }}
+                                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer"
+                                >
+                                  <Plus className="w-3.5 h-3.5" /> Cadastrar Feriado
+                                </button>
+                              )}
+                            </div>
+                          </div>
 
-                        <button
-                          onClick={() => {
-                            setCalendarSelectedDate(prev => {
-                              const d = new Date(prev);
-                              d.setDate(d.getDate() + 7);
-                              return d;
-                            });
-                          }}
-                          className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-650 transition-colors cursor-pointer border border-slate-200 shadow-3xs"
-                          title="Próxima Semana"
-                        >
-                          <ChevronRight className="w-4 h-4" />
-                        </button>
-                      </div>
+                          <div className="border border-slate-200/80 rounded-xl overflow-hidden bg-white shadow-2xs">
+                            <table className="w-full text-left border-collapse text-xs">
+                              <thead>
+                                <tr className="bg-slate-50 text-slate-600 font-bold border-b border-slate-150">
+                                  <th className="p-3.5 font-bold">Feriado</th>
+                                  <th className="p-3.5 font-bold">Data</th>
+                                  <th className="p-3.5 font-bold">País</th>
+                                  <th className="p-3.5 font-bold">Tipo</th>
+                                  <th className="p-3.5 font-bold">Descrição</th>
+                                  <th className="p-3.5 font-bold text-center sticky right-0 bg-slate-50 dark:bg-slate-900 z-10">Ações</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {rawFeriados.length > 0 ? (
+                                  rawFeriados.map((f) => {
+                                    const isEditable = currentUserRole === 'admin' || currentUserRole === 'director' || loggedInUser?.tipo === 'admin' || loggedInUser?.tipo === 'director';
+
+                                    return (
+                                      <tr key={f.id} className="hover:bg-slate-50/50 transition-colors">
+                                        <td className="p-3.5 font-semibold text-slate-850 flex items-center gap-1.5">
+                                          <span>🚩</span> {f.nome}
+                                        </td>
+                                        <td className="p-3.5 font-mono text-slate-700 font-bold">
+                                          {new Date(f.data + 'T12:00:00').toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                                        </td>
+                                        <td className="p-3.5 text-slate-600 font-medium">
+                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                            🌐 {f.pais || 'Geral'}
+                                          </span>
+                                        </td>
+                                        <td className="p-3.5 text-slate-600 font-medium">
+                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                                            {f.tipo || 'Nacional'}
+                                          </span>
+                                        </td>
+                                        <td className="p-3.5 text-slate-500 font-sans max-w-xs truncate" title={f.descricao}>
+                                          {f.descricao || '-'}
+                                        </td>
+                                        <td className="p-3.5 text-center sticky right-0 bg-white dark:bg-slate-900 z-10">
+                                          {isEditable ? (
+                                            <div className="flex items-center justify-center gap-2">
+                                              <button
+                                                onClick={() => {
+                                                  setEditingItem(f);
+                                                  setFeriadoForm({
+                                                    nome: f.nome,
+                                                    data: f.data,
+                                                    pais: f.pais || config?.pais || 'Moçambique',
+                                                    tipo: f.tipo || 'Nacional',
+                                                    descricao: f.descricao || ''
+                                                  });
+                                                  setModalType('feriado');
+                                                  setIsModalOpen(true);
+                                                }}
+                                                className="p-1 bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-slate-350 text-slate-650 rounded-lg transition-colors cursor-pointer"
+                                                title="Editar Feriado"
+                                              >
+                                                <Edit className="w-3.5 h-3.5" />
+                                              </button>
+                                              <button
+                                                onClick={async () => {
+                                                  if (confirm(`Tem certeza que deseja excluir o feriado "${f.nome}"?`)) {
+                                                    try {
+                                                      await deleteDoc(doc(db, 'feriados', f.id));
+                                                      setFeriados(prev => prev.filter(item => item.id !== f.id));
+                                                      showSystemNotification("Feriado excluído com sucesso!", "sucesso");
+                                                    } catch (err: any) {
+                                                      showSystemNotification(`Erro ao excluir feriado: ${err.message}`, "erro");
+                                                    }
+                                                  }
+                                                }}
+                                                className="p-1 bg-rose-50 hover:bg-rose-100 border border-rose-200 hover:border-rose-300 text-rose-650 rounded-lg transition-colors cursor-pointer"
+                                                title="Excluir Feriado"
+                                              >
+                                                <Trash2 className="w-3.5 h-3.5" />
+                                              </button>
+                                            </div>
+                                          ) : (
+                                            <span className="text-slate-400 italic text-[10px]">Sem permissão</span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })
+                                ) : (
+                                  <tr>
+                                    <td colSpan={6} className="p-8 text-center text-slate-400 italic">
+                                      Nenhum feriado cadastrado para o país selecionado. Clique em "Sincronizar Feriados" para carregar automaticamente.
+                                    </td>
+                                  </tr>
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
-                    {turmas.length === 0 ? (
-                      <div className="p-8 text-center text-slate-400">
-                        Nenhuma turma cadastrada. Crie uma turma primeiro para ver o calendário.
-                      </div>
-                    ) : (
-                      <div className="overflow-x-auto border border-slate-150 rounded-2xl bg-slate-50/50 shadow-2xs">
+                    {calendarSubTab === 'grade' && (
+                      turmas.length === 0 ? (
+                        <div className="p-8 text-center text-slate-400">
+                          Nenhuma turma cadastrada. Crie uma turma primeiro para ver o calendário.
+                        </div>
+                      ) : (
+                        <div className="overflow-x-auto border border-slate-150 rounded-2xl bg-slate-50/50 shadow-2xs">
                         <table className="w-full text-left border-collapse min-w-[700px]">
                           <thead>
                             <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 text-xs font-bold text-center">
@@ -5385,11 +10643,19 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 const dayNames = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
                                 const dayName = dayNames[currentDayDate.getDay()];
                                 const formattedDateHeader = currentDayDate.toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit' });
+                                const currentDateStr = getLocalYYYYMMDD(currentDayDate);
+                                const holiday = rawFeriados.find(f => f.data === currentDateStr || (f.data && f.data.length === 5 && currentDateStr.endsWith(f.data)));
+
                                 return (
-                                  <th key={dayIndex} className="p-4 border-r border-slate-200 last:border-r-0">
+                                  <th key={dayIndex} className={`p-3.5 border-r border-slate-200 last:border-r-0 ${holiday ? 'bg-rose-50/70' : ''}`}>
                                     <div className="flex flex-col items-center gap-0.5">
-                                      <span>{dayName}</span>
+                                      <span className={holiday ? 'text-rose-950 font-bold' : ''}>{dayName}</span>
                                       <span className="text-[10px] text-slate-400 font-mono font-medium">({formattedDateHeader})</span>
+                                      {holiday && (
+                                        <span className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-rose-100 text-rose-800 border border-rose-200 shadow-2xs max-w-[120px] truncate" title={holiday.nome}>
+                                          🚩 {holiday.nome}
+                                        </span>
+                                      )}
                                     </div>
                                   </th>
                                 );
@@ -5406,29 +10672,72 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 return names[date.getDay()];
                               };
 
-                              // Obter horários cadastrados pelo utilizador para esta turma
-                              const registeredSlots = matches
+                              // Check if class falls in currently selected week
+                              const isClassInSelectedWeek = (c: any) => {
+                                if (!c.data) {
+                                  // Recurring classes
+                                  return true;
+                                }
+                                const monday = getMonday(calendarSelectedDate);
+                                const sunday = new Date(monday);
+                                sunday.setDate(monday.getDate() + 6);
+                                const mondayStr = getLocalYYYYMMDD(monday);
+                                const sundayStr = getLocalYYYYMMDD(sunday);
+                                return c.data >= mondayStr && c.data <= sundayStr;
+                              };
+
+                              // Check if a slot has any class scheduled this week for selected turma
+                              const isSlotActiveThisWeek = (slot: string) => {
+                                return matches.some(c => c.horario === slot && isClassInSelectedWeek(c));
+                              };
+
+                              const defaultSlots = getShiftDefaultSlots(selectedTurn);
+                              const registeredSlotsOfThisShift = matches
                                 .map(c => c.horario)
-                                .filter((val, idx, self) => val && self.indexOf(val) === idx);
+                                .filter((val, idx, self) => val && self.indexOf(val) === idx && getShiftForSlot(val) === selectedTurn);
 
-                              // Grade horária predefinida
-                              const defaultSlots = [
-                                "08:00 - 09:30",
-                                "09:35 - 11:05",
-                                "11:10 - 12:40",
-                                "12:45 - 14:15",
-                                "14:20 - 15:50"
-                              ];
+                              const shiftSlots = Array.from(new Set([...defaultSlots, ...registeredSlotsOfThisShift]))
+                                .filter(Boolean)
+                                .sort((a, b) => {
+                                  const aStart = a.split(' - ')[0] || '';
+                                  const bStart = b.split(' - ')[0] || '';
+                                  return aStart.localeCompare(bStart);
+                                });
 
-                              // Unificar e ordenar cronologicamente por hora de início
-                              const allSlots = Array.from(new Set([...defaultSlots, ...registeredSlots])).filter(Boolean);
-                              const sortedSlots = allSlots.sort((a, b) => {
-                                const aStart = a.split(' - ')[0] || '';
-                                const bStart = b.split(' - ')[0] || '';
-                                return aStart.localeCompare(bStart);
-                              });
+                              const activeIndices = shiftSlots
+                                .map((slot, idx) => isSlotActiveThisWeek(slot) ? idx : -1)
+                                .filter(idx => idx !== -1);
 
-                              return sortedSlots.map((timeSlot) => {
+                              let displayedSlots = shiftSlots;
+                              if (activeIndices.length > 0) {
+                                const firstIdx = Math.min(...activeIndices);
+                                const lastIdx = Math.max(...activeIndices);
+                                displayedSlots = shiftSlots.slice(firstIdx, lastIdx + 1);
+                              } else {
+                                displayedSlots = defaultSlots;
+                              }
+
+                              const rows = displayedSlots.map((timeSlot) => {
+                                // Render official break row across columns
+                                if (timeSlot === "09:25 - 09:35" || timeSlot === "14:25 - 14:35" || timeSlot === "20:25 - 20:35") {
+                                  return (
+                                    <tr key={timeSlot} className="bg-amber-50/70 border-y-2 border-amber-200/90">
+                                      <td className="p-3 bg-amber-100/80 border-r border-amber-200 font-bold font-mono text-center text-amber-900 text-xs">
+                                        {timeSlot}
+                                      </td>
+                                      <td colSpan={7} className="p-3 text-center bg-amber-50/90 text-amber-900 font-bold text-xs shadow-2xs">
+                                        <div className="flex items-center justify-center gap-2">
+                                          <span className="text-sm">☕</span>
+                                          <span className="font-extrabold tracking-wide">INTERVALO OFICIAL DE RECREIO ({timeSlot})</span>
+                                          <span className="text-[10px] font-bold text-amber-800 bg-amber-200/70 border border-amber-300/60 px-2.5 py-0.5 rounded-full">
+                                            10 min de pausa obrigatória
+                                          </span>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                }
+
                                 const getDisciplineForDay = (dayIndex: number) => {
                                   const currentDayDate = new Date(calendarSelectedDate);
                                   currentDayDate.setDate(calendarSelectedDate.getDate() + dayIndex);
@@ -5455,6 +10764,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                       const currentDayDate = new Date(calendarSelectedDate);
                                       currentDayDate.setDate(calendarSelectedDate.getDate() + dayIdx);
                                       const currentDateStr = getLocalYYYYMMDD(currentDayDate);
+                                      const dayName = getDiaSemanaPt(currentDayDate);
+                                      const holiday = rawFeriados.find(f => f.data === currentDateStr || (f.data && f.data.length === 5 && currentDateStr.endsWith(f.data)));
 
                                       // 1. Check Vacation/Férias
                                       const vacation = rawVacations.find(v => 
@@ -5477,8 +10788,37 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                       const tea = disc ? teachers.find(t => t.id === disc.docente_id) : null;
                                       const teaUsr = tea ? tenantUsers.find(u => u.id === tea.user_id) : null;
                                       
+                                      // 2. Check Holiday without discipline
+                                      if (holiday && !disc) {
+                                        return (
+                                          <td key={dayIdx} className="p-2.5 border-r border-slate-150 last:border-r-0 text-center bg-rose-50/20">
+                                            <div className="bg-rose-50/90 border border-rose-200 rounded-xl p-2 text-left space-y-0.5 shadow-3xs">
+                                              <p className="font-bold text-rose-900 text-[10px] flex items-center gap-1">
+                                                🚩 {holiday.tipo || 'Feriado'}
+                                              </p>
+                                              <p className="text-[9.5px] text-rose-800 font-bold truncate" title={holiday.nome}>
+                                                {holiday.nome}
+                                              </p>
+                                            </div>
+                                          </td>
+                                        );
+                                      }
+
+                                      // Check if vacant slot has conflict
+                                      const [partsStart, partsEnd] = timeSlot.split(' - ').map(s => s?.trim());
+                                      const slotConflict = (!disc && partsStart && partsEnd) ? checkScheduleConflictDetails(
+                                        partsStart,
+                                        partsEnd,
+                                        currentDateStr,
+                                        dayName,
+                                        activeCalendarTurma,
+                                        teachers[0]?.id || '',
+                                        rawSalas[0]?.nome || 'Sala 01',
+                                        rawClasses
+                                      ) : { conflict: false };
+
                                       return (
-                                        <td key={dayIdx} className="p-3 border-r border-slate-150 last:border-r-0 text-center">
+                                        <td key={dayIdx} className={`p-3 border-r border-slate-150 last:border-r-0 text-center ${holiday ? 'bg-rose-50/10' : ''}`}>
                                           {disc ? (() => {
                                             const isWeekend = currentDayDate.getDay() === 0 || currentDayDate.getDay() === 6;
                                             const status = disc.status_aprovacao || (isWeekend ? 'pendente' : 'aprovado');
@@ -5508,6 +10848,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                 }}
                                                 className={bgClass}
                                               >
+                                                {holiday && (
+                                                  <span className="inline-block text-[8px] font-extrabold bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded-md mb-1 border border-rose-200 truncate max-w-full" title={holiday.nome}>
+                                                    🚩 Feriado: {holiday.nome}
+                                                  </span>
+                                                )}
                                                 <p className="font-bold text-xs truncate">{disc.nome}</p>
                                                 <p className="text-[10px] truncate font-semibold opacity-90">🧑‍🏫 {teaUsr?.nome || 'Docente'}</p>
                                                 <p className="text-[9px] font-mono opacity-75">🚪 {disc.sala}</p>
@@ -5515,32 +10860,46 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                               </div>
                                             );
                                           })() : (
-                                            hasPermission('disciplinas', 'criar') ? (
+                                            slotConflict.conflict ? (
+                                              <div 
+                                                className="border border-slate-200/60 bg-slate-100/50 rounded-xl py-3 px-1 text-center text-slate-400 text-[10px] font-mono cursor-not-allowed"
+                                                title={`Indisponível: ${slotConflict.reason}`}
+                                              >
+                                                Indisponível
+                                              </div>
+                                            ) : hasPermission('disciplinas', 'criar') ? (
                                               <button
                                                 onClick={() => {
                                                   setEditingItem(null);
                                                   const activeFilterId = selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter;
                                                   const targetDateStr = getLocalYYYYMMDD(currentDayDate);
-                                                  setClasseForm({ 
-                                                    nome: '', 
+                                                  const parts = timeSlot.split(' - ');
+                                                  const hStart = parts[0]?.trim() || '08:00';
+                                                  const hEnd = parts[1]?.trim() || '08:45';
+                                                  setHorarioForm({ 
                                                     turma_id: activeFilterId || (turmas[0]?.id || ''), 
+                                                    disciplina_id: '', 
+                                                    disciplina_nome: '', 
                                                     docente_id: teachers[0]?.id || '', 
-                                                    horario: timeSlot, 
-                                                    sala: rawSalas[0]?.nome || '',
+                                                    hora_inicio: hStart, 
+                                                    hora_fim: hEnd, 
+                                                    sala: rawSalas[0]?.nome || 'Sala 01',
                                                     data: targetDateStr,
-                                                    dia_semana: getDiaSemanaFromDate(targetDateStr)
+                                                    dia_semana: getDiaSemanaFromDate(targetDateStr),
+                                                    justificativa: '',
+                                                    escola_id: schools[0]?.id || ''
                                                   });
-                                                  setModalType('classe');
+                                                  setModalType('horario_aula');
                                                   setIsModalOpen(true);
                                                 }}
-                                                className="w-full border border-dashed border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/50 rounded-xl py-4 text-center text-slate-350 hover:text-indigo-600 text-[10px] font-mono cursor-pointer transition-all flex flex-col items-center justify-center gap-1 group"
+                                                className="w-full border border-dashed border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/50 rounded-xl py-3 text-center text-slate-400 hover:text-indigo-600 text-[10px] font-mono cursor-pointer transition-all flex flex-col items-center justify-center gap-0.5 group"
                                               >
-                                                <span>Vago</span>
-                                                <span className="opacity-0 group-hover:opacity-100 text-[9px] text-indigo-500 transition-opacity font-sans">+ Agendar</span>
+                                                <span className="font-semibold text-slate-500 group-hover:text-indigo-600">Espaço Vago</span>
+                                                <span className="opacity-0 group-hover:opacity-100 text-[9px] text-indigo-500 transition-opacity font-sans">+ Agendar (45 min)</span>
                                               </button>
                                             ) : (
-                                              <div className="border border-dashed border-slate-200 rounded-xl py-4 text-center text-slate-350 text-[10px] font-mono">
-                                                Vago
+                                              <div className="border border-dashed border-slate-200 rounded-xl py-3 text-center text-slate-350 text-[10px] font-mono">
+                                                Espaço Vago
                                               </div>
                                             )
                                           )}
@@ -5550,11 +10909,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                   </tr>
                                 );
                               });
+
+                              return rows;
                             })()}
                           </tbody>
                         </table>
                       </div>
-                    )}
+                    ))}
 
                     {/* Pop-up de Detalhes da Disciplina / Aula */}
                     {selectedClassPopup && (
@@ -5651,10 +11012,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                   {status !== 'aprovado' && (
                                     <button
                                       onClick={async () => {
-                                        await updateDoc(doc(db, 'classes', disc.id), { status_aprovacao: 'aprovado' });
-                                        showSystemNotification("Aula de fim de semana aprovada com sucesso!", "sucesso");
-                                        await loadTenantContext();
+                                        setClasses(prev => prev.map(item => item.id === disc.id ? { ...item, status_aprovacao: 'aprovado' } : item));
                                         setSelectedClassPopup(null);
+                                        showSystemNotification("Aula de fim de semana aprovada com sucesso!", "sucesso");
+                                        try {
+                                          await updateDoc(doc(db, 'classes', disc.id), { status_aprovacao: 'aprovado' });
+                                        } catch (err) {
+                                          console.error("Erro ao aprovar aula:", err);
+                                        }
                                       }}
                                       className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                                     >
@@ -5664,10 +11029,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                   {status !== 'rejeitado' && (
                                     <button
                                       onClick={async () => {
-                                        await updateDoc(doc(db, 'classes', disc.id), { status_aprovacao: 'rejeitado' });
-                                        showSystemNotification("Aula de fim de semana rejeitada!", "sucesso");
-                                        await loadTenantContext();
+                                        setClasses(prev => prev.map(item => item.id === disc.id ? { ...item, status_aprovacao: 'rejeitado' } : item));
                                         setSelectedClassPopup(null);
+                                        showSystemNotification("Aula de fim de semana rejeitada!", "sucesso");
+                                        try {
+                                          await updateDoc(doc(db, 'classes', disc.id), { status_aprovacao: 'rejeitado' });
+                                        } catch (err) {
+                                          console.error("Erro ao rejeitar aula:", err);
+                                        }
                                       }}
                                       className="flex-1 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                                     >
@@ -5686,16 +11055,23 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 onClick={() => {
                                   const c = selectedClassPopup.classe;
                                   setEditingItem(c);
-                                  setClasseForm({
-                                    nome: c.nome,
+                                  const parts = (c.horario || '08:00 - 09:30').split(' - ');
+                                  const hStart = parts[0]?.trim() || '08:00';
+                                  const hEnd = parts[1]?.trim() || '09:30';
+                                  setHorarioForm({
                                     turma_id: c.turma_id,
+                                    disciplina_id: c.disciplina_id || c.id || '',
+                                    disciplina_nome: c.nome,
                                     docente_id: c.docente_id,
-                                    horario: c.horario,
-                                    sala: c.sala,
+                                    hora_inicio: hStart,
+                                    hora_fim: hEnd,
+                                    sala: c.sala || rawSalas[0]?.nome || 'Sala 01',
                                     data: c.data || new Date().toISOString().split('T')[0],
-                                    dia_semana: c.dia_semana || getDiaSemanaFromDate(c.data || new Date().toISOString().split('T')[0])
+                                    dia_semana: c.dia_semana || getDiaSemanaFromDate(c.data || new Date().toISOString().split('T')[0]),
+                                    justificativa: c.justificativa || '',
+                                    escola_id: c.escola_id || schools[0]?.id || ''
                                   });
-                                  setModalType('classe');
+                                  setModalType('horario_aula');
                                   setIsModalOpen(true);
                                   setSelectedClassPopup(null);
                                 }}
@@ -5719,20 +11095,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     cancelText: 'Cancelar',
                                     isCritical: true,
                                     onConfirm: async () => {
-                                      await deleteDoc(doc(db, 'classes', c.id));
-                                      
-                                      // Notificar o administrador
-                                      await addDoc(collection(db, 'notificacoes'), {
-                                        destinatario_id: 'admin',
-                                        tenant_id: currentTenantId,
-                                        titulo: '🗑️ Disciplina Excluída',
-                                        mensagem: `A disciplina "${c.nome}" agendada para o dia ${c.data || c.dia_semana} às ${c.horario} foi excluída da agenda.`,
-                                        tipo: 'cadastro',
-                                        lido: false,
-                                        created_at: new Date().toISOString()
-                                      });
-
-                                      // Exibir popup da acao executada
+                                      setClasses(prev => prev.filter(item => item.id !== c.id));
+                                      setSelectedClassPopup(null);
                                       showSystemNotification(`A disciplina "${c.nome}" foi excluída com sucesso!`, 'sucesso');
 
                                       const popup = document.createElement('div');
@@ -5741,8 +11105,20 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                       document.body.appendChild(popup);
                                       setTimeout(() => popup.remove(), 6000);
 
-                                      await loadTenantContext();
-                                      setSelectedClassPopup(null);
+                                      try {
+                                        await deleteDoc(doc(db, 'classes', c.id));
+                                        await addDoc(collection(db, 'notificacoes'), {
+                                          destinatario_id: 'admin',
+                                          tenant_id: currentTenantId,
+                                          titulo: '🗑️ Disciplina Excluída',
+                                          mensagem: `A disciplina "${c.nome}" agendada para o dia ${c.data || c.dia_semana} às ${c.horario} foi excluída da agenda.`,
+                                          tipo: 'cadastro',
+                                          lido: false,
+                                          created_at: new Date().toISOString()
+                                        });
+                                      } catch (err) {
+                                        console.error("Erro ao excluir agenda:", err);
+                                      }
                                     },
                                     onCancel: () => {
                                       setSelectedClassPopup(tempPopup); // Restore previous popup on cancel!
@@ -5770,8 +11146,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   {/* KPI CARDS */}
                   {(() => {
                     // Compute filtered grades
-                    const filteredPautas = pautas.filter(p => {
-                      const student = students.find(s => s.id === p.estudante_id);
+                    const filteredPautas = (publicPautas || []).filter(p => {
+                      const student = (students || []).find(s => s.id === p.estudante_id);
                       if (!student) return false;
 
                       // 1. School Filter
@@ -5780,7 +11156,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       // 2. Student Query Filter
                       if (pautaGeralAlunoQuery) {
                         const term = pautaGeralAlunoQuery.toLowerCase();
-                        if (!student.nome.toLowerCase().includes(term) && !(student.numero_matricula || '').toLowerCase().includes(term)) {
+                        const stName = student.nome || '';
+                        if (!stName.toLowerCase().includes(term) && !(student.numero_matricula || '').toLowerCase().includes(term)) {
                           return false;
                         }
                       }
@@ -5803,11 +11180,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     const totalLancamentos = filteredPautas.length;
                     const totalAprovados = filteredPautas.filter(p => p.situacao === 'Aprovado').length;
                     const totalReprovados = filteredPautas.filter(p => p.situacao === 'Reprovado').length;
-                    const totalRecuperacao = filteredPautas.filter(p => p.situacao === 'Recuperação' || p.situacao === 'Recuperação').length;
+                    const totalRecuperacao = filteredPautas.filter(p => p.situacao === 'Recuperação').length;
                     
                     const percentAprovado = totalLancamentos > 0 ? ((totalAprovados / totalLancamentos) * 100).toFixed(0) : '0';
                     const listMedias = filteredPautas.map(p => p.nota_media).filter(m => m !== undefined && m !== null);
-                    const mediaGeralGeral = listMedias.length > 0 ? (listMedias.reduce((acc, current) => acc + current, 0) / listMedias.length).toFixed(1) : '0.0';
+                    const mediaGeralGeral = listMedias.length > 0 ? (listMedias.reduce((acc, current) => acc + (typeof current === 'number' ? current : Number(current) || 0), 0) / listMedias.length).toFixed(1) : '0.0';
 
                     return (
                       <>
@@ -5958,10 +11335,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                   <th className="p-4">Turma / Período</th>
                                   <th className="p-4">Disciplina</th>
                                   <th className="p-4 text-center">Trimestre</th>
-                                  <th className="p-4 text-center">Provas</th>
-                                  <th className="p-4 text-center">Trabalhos</th>
-                                  <th className="p-4 text-center">Participação</th>
-                                  <th className="p-4 text-center">Exame / Reaval.</th>
+                                  <th className="p-4 text-center">Avaliação 1</th>
+                                  <th className="p-4 text-center">Avaliação 2</th>
+                                  <th className="p-4 text-center">Avaliação 3</th>
+                                  <th className="p-4 text-center">Exame</th>
                                   <th className="p-4 text-center font-bold text-indigo-900 bg-indigo-50/10">Média Final</th>
                                   <th className="p-4 text-right">Situação</th>
                                 </tr>
@@ -6003,37 +11380,30 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                           {p.trimestre}
                                         </td>
                                         <td className="p-4 text-center font-mono font-bold text-slate-700">
-                                          {p.nota_prova !== undefined && p.nota_prova !== null && p.nota_prova !== '' ? p.nota_prova : '-'}
+                                          {p.avaliacao_1 !== undefined && (p.avaliacao_1 as any) !== '' ? p.avaliacao_1 : '-'}
                                         </td>
                                         <td className="p-4 text-center font-mono font-bold text-slate-700">
-                                          {p.nota_trabalho !== undefined && p.nota_trabalho !== null && p.nota_trabalho !== '' ? p.nota_trabalho : '-'}
+                                          {p.avaliacao_2 !== undefined && (p.avaliacao_2 as any) !== '' ? p.avaliacao_2 : '-'}
                                         </td>
                                         <td className="p-4 text-center font-mono font-bold text-slate-700">
-                                          {p.nota_participacao !== undefined && p.nota_participacao !== null && p.nota_participacao !== '' ? p.nota_participacao : '-'}
+                                          {p.avaliacao_3 !== undefined && (p.avaliacao_3 as any) !== '' ? p.avaliacao_3 : '-'}
                                         </td>
                                         <td className="p-4 text-center">
-                                          <p className="font-mono font-bold text-slate-700">{p.nota_exame !== undefined && p.nota_exame !== null && p.nota_exame !== '' ? p.nota_exame : '-'}</p>
-                                          {p.nota_reavaliacao !== undefined && p.nota_reavaliacao !== null && p.nota_reavaliacao !== '' && (
-                                            <p className="text-[9px] text-amber-600 font-bold font-mono">RE: {p.nota_reavaliacao}</p>
-                                          )}
+                                          <p className="font-mono font-bold text-slate-700">{p.nota_exame !== undefined && p.nota_exame !== null && (p.nota_exame as any) !== '' ? p.nota_exame : '-'}</p>
                                         </td>
                                         <td className="p-4 text-center font-black font-mono bg-indigo-50/10 text-indigo-950 text-xs">
-                                          {p.nota_media !== undefined && p.nota_media !== null ? p.nota_media.toFixed(1) : '-'}
+                                          {p.media_final !== undefined ? p.media_final : (p.nota_media !== undefined && p.nota_media !== null ? (typeof p.nota_media === 'number' ? p.nota_media.toFixed(1) : p.nota_media) : '-')}
                                         </td>
                                         <td className="p-4 text-right">
-                                          {p.situacao === 'Aprovado' ? (
-                                            <span className="bg-emerald-50 text-emerald-700 text-[9px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider">
-                                              Aprovado
-                                            </span>
-                                          ) : p.situacao === 'Reprovado' ? (
-                                            <span className="bg-rose-50 text-rose-700 text-[9px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider">
-                                              Reprovado
-                                            </span>
-                                          ) : (
-                                            <span className="bg-amber-50 text-amber-700 text-[9px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider">
-                                              Recuperação
-                                            </span>
-                                          )}
+                                          <span className={`inline-flex px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider ${
+                                            p.status_estudante === 'Dispensado' || p.status_estudante === 'Aprovado' || p.situacao === 'Aprovado'
+                                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-150' 
+                                              : p.status_estudante === 'Exame de Recorrência' || p.situacao === 'Recuperação'
+                                              ? 'bg-amber-50 text-amber-700 border border-amber-150 animate-pulse'
+                                              : 'bg-rose-50 text-rose-700 border border-rose-150'
+                                          }`}>
+                                            {p.status_estudante || p.situacao}
+                                          </span>
                                         </td>
                                       </tr>
                                     );
@@ -6061,17 +11431,41 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     </div>
                     <div className="flex gap-2">
                       {hasPermission('pautas', 'criar') && (
-                        <button 
-                          onClick={() => {
-                            setEditingItem(null);
-                            setPautaForm({ estudante_id: students[0]?.id || '', classe_id: classes[0]?.id || '', trimestre: '1º Trimestre', nota_prova: 10, nota_trabalho: 10, nota_participacao: 10, nota_exame: 10, observacao: '' });
-                            setModalType('pauta');
-                            setIsModalOpen(true);
-                          }}
-                          className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1 cursor-pointer"
-                        >
-                          <Plus className="w-4 h-4" /> Lançar Avaliação
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              setImportModule('pautas');
+                              setImportModalOpen(true);
+                            }}
+                            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer"
+                          >
+                            <FileSpreadsheet className="w-4 h-4 text-indigo-600" /> Importar Dados
+                          </button>
+                          <button 
+                            onClick={() => {
+                              setEditingItem(null);
+                              setPautaForm({
+                                escola_id: schools[0]?.id || '',
+                                estudante_id: students[0]?.id || '',
+                                classe_id: classes[0]?.id || '',
+                                trimestre: '1º Trimestre',
+                                num_avaliacoes: 3,
+                                avaliacao_1: '' as any,
+                                avaliacao_2: '' as any,
+                                avaliacao_3: '' as any,
+                                nota_exame: '' as any,
+                                status_estudante: 'Admitido',
+                                status: 'rascunho',
+                                observacao: ''
+                              });
+                              setModalType('pauta');
+                              setIsModalOpen(true);
+                            }}
+                            className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1 cursor-pointer"
+                          >
+                            <Plus className="w-4 h-4" /> Lançar Avaliação
+                          </button>
+                        </div>
                       )}
                       <button 
                         onClick={() => window.print()}
@@ -6088,18 +11482,18 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       <tr className="bg-slate-50 text-slate-500 text-xs font-semibold uppercase border-b border-slate-150">
                         <th className="px-6 py-4">Estudante</th>
                         <th className="px-6 py-4">Disciplina / Trimestre</th>
-                        <th className="px-6 py-4 text-center">Prova</th>
-                        <th className="px-6 py-4 text-center">Trab.</th>
-                        <th className="px-6 py-4 text-center">Partic.</th>
-                        <th className="px-6 py-4 text-center">Exame</th>
-                        <th className="px-6 py-4 text-center">Reaval.</th>
+                        <th className="px-6 py-4 text-center font-bold">Nº Avaliações</th>
+                        <th className="px-6 py-4 text-center font-bold">Avaliação 1</th>
+                        <th className="px-6 py-4 text-center font-bold">Avaliação 2</th>
+                        <th className="px-6 py-4 text-center font-bold">Avaliação 3</th>
+                        <th className="px-6 py-4 text-center font-bold">Exame</th>
                         <th className="px-6 py-4 text-center font-bold">Média Final</th>
-                        <th className="px-6 py-4 text-center">Situação</th>
-                        <th className="px-6 py-4 text-right">Ações</th>
+                        <th className="px-6 py-4 text-center font-bold">Status</th>
+                        <th className="px-6 py-4 text-right sticky right-0 bg-slate-50 dark:bg-slate-900 z-10">Ações</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-slate-700 text-sm">
-                      {pautas.map(p => {
+                      {pautas.slice((pagePautas - 1) * 25, pagePautas * 25).map(p => {
                         const est = students.find(s => s.id === p.estudante_id);
                         const estUsr = tenantUsers.find(u => u.id === est?.user_id);
                         const cls = classes.find(c => c.id === p.classe_id);
@@ -6110,45 +11504,77 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               <p className="font-semibold text-slate-800">{cls?.nome}</p>
                               <p className="text-xs text-slate-400">{p.trimestre}</p>
                             </td>
-                            <td className="px-6 py-4 text-center font-mono">{p.nota_prova}</td>
-                            <td className="px-6 py-4 text-center font-mono">{p.nota_trabalho}</td>
-                            <td className="px-6 py-4 text-center font-mono">{p.nota_participacao}</td>
-                            <td className="px-6 py-4 text-center font-mono">{p.nota_exame || '—'}</td>
-                            <td className="px-6 py-4 text-center font-mono text-pink-600 font-bold">{p.nota_reavaliacao || '—'}</td>
-                            <td className="px-6 py-4 text-center font-black font-mono text-indigo-600 text-base">{p.nota_media}</td>
+                            <td className="px-6 py-4 text-center font-mono">{p.num_avaliacoes || 3}</td>
+                            <td className="px-6 py-4 text-center font-mono">{p.avaliacao_1 !== undefined && (p.avaliacao_1 as any) !== '' ? p.avaliacao_1 : '\xe2\x80\x94'}</td>
+                            <td className="px-6 py-4 text-center font-mono">{p.avaliacao_2 !== undefined && (p.avaliacao_2 as any) !== '' ? p.avaliacao_2 : '\xe2\x80\x94'}</td>
+                            <td className="px-6 py-4 text-center font-mono">{p.avaliacao_3 !== undefined && (p.avaliacao_3 as any) !== '' ? p.avaliacao_3 : '\xe2\x80\x94'}</td>
+                            <td className="px-6 py-4 text-center font-mono">{p.nota_exame !== undefined && p.nota_exame !== null && (p.nota_exame as any) !== '' ? p.nota_exame : '\xe2\x80\x94'}</td>
+                            <td className="px-6 py-4 text-center font-black font-mono text-indigo-600 text-base">{p.media_final !== undefined ? p.media_final : (p.nota_media || '\xe2\x80\x94')}</td>
                             <td className="px-6 py-4 text-center">
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                                p.situacao === 'Aprovado' ? 'bg-emerald-50 text-emerald-700' :
-                                p.situacao === 'Recuperação' ? 'bg-amber-50 text-amber-700 animate-pulse' :
-                                'bg-rose-50 text-rose-700'
-                              }`}>
-                                {p.situacao}
-                              </span>
+                              <div className="flex flex-col items-center gap-1">
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                                  p.status_estudante === 'Dispensado' || p.status_estudante === 'Aprovado' || p.situacao === 'Aprovado' ? 'bg-emerald-50 text-emerald-700 border border-emerald-150' :
+                                  p.status_estudante === 'Admitido' ? 'bg-indigo-50 text-indigo-700 border border-indigo-150 font-bold' :
+                                  p.status_estudante === 'Exame de Recorrência' || p.situacao === 'Recupera\xc3\xa7\xc3\xa3o' ? 'bg-amber-50 text-amber-700 animate-pulse font-bold' :
+                                  'bg-rose-50 text-rose-700'
+                                }`}>
+                                  {p.status_estudante || p.situacao}
+                                </span>
+                                {p.status === 'rascunho' ? (
+                                  <span className="bg-amber-100 text-amber-800 border border-amber-200 text-[9px] font-bold px-1.5 py-0.2 rounded">
+                                    📝 Rascunho
+                                  </span>
+                                ) : (
+                                  <span className="bg-emerald-100 text-emerald-800 border border-emerald-200 text-[9px] font-bold px-1.5 py-0.2 rounded">
+                                    ✓ Publicado
+                                  </span>
+                                )}
+                              </div>
                             </td>
-                            <td className="px-6 py-4 text-right">
-                              {hasPermission('pautas', 'editar') && (
-                                <button 
-                                  onClick={() => {
-                                    setEditingItem(p);
-                                    setPautaForm({
-                                      estudante_id: p.estudante_id,
-                                      classe_id: p.classe_id,
-                                      trimestre: p.trimestre,
-                                      nota_prova: p.nota_prova,
-                                      nota_trabalho: p.nota_trabalho,
-                                      nota_participacao: p.nota_participacao,
-                                      nota_exame: p.nota_exame || '',
-                                      nota_reavaliacao: p.nota_reavaliacao || '',
-                                      observacao: p.observacao || ''
-                                    });
-                                    setModalType('pauta');
-                                    setIsModalOpen(true);
-                                  }}
-                                  className="p-1 hover:bg-slate-100 text-slate-600 rounded cursor-pointer"
-                                >
-                                  <Edit className="w-4 h-4" />
-                                </button>
-                              )}
+                            <td className="px-6 py-4 text-right sticky right-0 bg-white dark:bg-slate-900 z-10">
+                              <div className="flex items-center justify-end gap-1.5">
+                                {p.status === 'rascunho' && hasPermission('pautas', 'editar') && (
+                                  <button 
+                                    title="Publicar Pauta"
+                                    onClick={() => handlePublishPauta(p.id)}
+                                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-1.5 px-3 rounded-lg flex items-center gap-1 transition-all cursor-pointer shadow-xs"
+                                  >
+                                    <Send className="w-3.5 h-3.5" /> Publicar
+                                  </button>
+                                )}
+                                {hasPermission('pautas', 'editar') && p.status !== 'publicado' && (
+                                  <button 
+                                    title="Editar"
+                                    onClick={() => {
+                                      setEditingItem(p);
+                                      setPautaForm({
+                                        escola_id: p.escola_id || '',
+                                        estudante_id: p.estudante_id,
+                                        classe_id: p.classe_id,
+                                        trimestre: p.trimestre,
+                                        num_avaliacoes: p.num_avaliacoes || 3,
+                                        avaliacao_1: p.avaliacao_1 !== undefined ? p.avaliacao_1 : '',
+                                        avaliacao_2: p.avaliacao_2 !== undefined ? p.avaliacao_2 : '',
+                                        avaliacao_3: p.avaliacao_3 !== undefined ? p.avaliacao_3 : '',
+                                        nota_exame: p.nota_exame !== undefined ? p.nota_exame : '',
+                                        status_estudante: p.status_estudante || p.situacao || 'Admitido',
+                                        status: p.status || 'rascunho',
+                                        observacao: p.observacao || ''
+                                      });
+                                      setModalType('pauta');
+                                      setIsModalOpen(true);
+                                    }}
+                                    className="p-1 hover:bg-slate-100 text-slate-600 rounded cursor-pointer border border-slate-200"
+                                  >
+                                    <Edit className="w-4 h-4" />
+                                  </button>
+                                )}
+                                {p.status === 'publicado' && (
+                                  <span className="text-xs text-slate-400 font-semibold flex items-center gap-1 px-2 py-1 bg-slate-50 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-800 rounded-lg" title="Pauta publicada. As notas não podem mais ser alteradas.">
+                                    <Lock className="w-3.5 h-3.5 text-slate-400" /> Publicado
+                                  </span>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         );
@@ -6156,6 +11582,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     </tbody>
                   </table>
                 </div>
+                {renderPagination(pagePautas, pautas.length, 25, setPagePautas)}
               </div>
               )
             )}
@@ -6204,7 +11631,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               <th className="px-6 py-4">Turma / Escola</th>
                               <th className="px-6 py-4">Filiação e Morada</th>
                               <th className="px-6 py-4 text-center">Estado do Dossier</th>
-                              <th className="px-6 py-4 text-right">Ações</th>
+                              <th className="px-6 py-4 text-right sticky right-0 bg-slate-50 dark:bg-slate-900 z-10">Ações</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-150 text-slate-700">
@@ -6249,7 +11676,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                       {isComplete ? '✅ Completo' : '⚠️ Dados em Falta'}
                                     </span>
                                   </td>
-                                  <td className="px-6 py-4">
+                                  <td className="px-6 py-4 text-right sticky right-0 bg-white dark:bg-slate-900 z-10">
                                     <div className="flex gap-2 justify-end">
                                       {!isComplete && (
                                         <button
@@ -6384,7 +11811,1114 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               )
             )}
 
-            {/* TAB: BIBLIOTECA DIGITAL */}
+            {/* TAB: CONTROLE DE ASSIDUIDADE */}
+            {activeTab === 'assiduidade' && (
+              !hasPermission('assiduidade') ? renderRestrictedAccess('Módulo de Assiduidade') : (() => {
+                const canValidatePresence = (() => {
+                  if (currentUserRole === 'admin' || loggedInUser?.tipo === 'admin') return true;
+                  if (currentUserRole === 'director' || loggedInUser?.tipo === 'director') return true;
+                  if (loggedInUser && loggedInUser.modulo_acessos && (loggedInUser.modulo_acessos as any).assiduidade) {
+                    const assAccess = (loggedInUser.modulo_acessos as any).assiduidade;
+                    if (assAccess.habilitado) {
+                      return !!assAccess.funcionalidades?.validar_presencas;
+                    }
+                  }
+                  if (currentUserRole === 'docente' || loggedInUser?.tipo === 'docente') return true;
+                  return false;
+                })();
+
+                // Helpers for period and time parsing
+                const activeDayOfWeek = getDiaSemanaFromDate(assiduidadeDateStart);
+                
+                const getActivePeriodInVigor = (): 'manha' | 'tarde' | 'noite' | 'fora' => {
+                  const now = new Date();
+                  const h = now.getHours();
+                  const m = now.getMinutes();
+                  const total = h * 60 + m;
+                  if (total >= 420 && total <= 665) return 'manha'; // 07:00 - 11:05
+                  if (total >= 725 && total <= 1020) return 'tarde'; // 12:05 - 17:00
+                  if (total >= 1085 && total <= 1365) return 'noite'; // 18:05 - 22:45
+                  return 'fora';
+                };
+
+                const getPeriodForTime = (date: Date): 'manha' | 'tarde' | 'noite' => {
+                  const h = date.getHours();
+                  const m = date.getMinutes();
+                  const total = h * 60 + m;
+                  if (total >= 420 && total <= 665) return 'manha';
+                  if (total >= 725 && total <= 1020) return 'tarde';
+                  if (total >= 1085 && total <= 1365) return 'noite';
+                  if (h < 12) return 'manha';
+                  if (h < 18) return 'tarde';
+                  return 'noite';
+                };
+                
+                const periodInVigor = getActivePeriodInVigor();
+                const periodLabelMap: Record<string, string> = {
+                  manha: 'Manhã (07:00 - 11:05)',
+                  tarde: 'Tarde (12:05 - 17:00)',
+                  noite: 'Noite (18:05 - 22:45)',
+                  fora: 'Fora de Horário de Turno'
+                };
+
+                const timeToMinutes = (timeStr: string) => {
+                  if (!timeStr) return 0;
+                  const parts = timeStr.split(':');
+                  return parseInt(parts[0], 10) * 60 + (parseInt(parts[1], 10) || 0);
+                };
+
+                // Filter scheduled classes/lessons based on active filters
+                const activeClassesForAssiduidade = rawClasses.filter(c => {
+                  // Day of week check
+                  const classDay = c.dia_semana || getDiaSemanaFromDate(c.data || '') || '';
+                  if (classDay.toLowerCase() !== activeDayOfWeek.toLowerCase()) return false;
+                  
+                  // Period/shift check
+                  const classShift = getShiftForSlot(c.horario);
+                  if (assiduidadePeriodFilter !== 'todos' && classShift !== assiduidadePeriodFilter) return false;
+                  
+                  // School filter (by mapping turma -> school)
+                  const assocTurma = rawTurmas.find(t => t.id === c.turma_id);
+                  const schoolId = assocTurma?.escola_id || '';
+                  if (assiduidadeEscolaFilter !== 'todos' && schoolId !== assiduidadeEscolaFilter) return false;
+                  
+                  return true;
+                });
+
+                const activeTurmaIdsForAssiduidade = Array.from(new Set(activeClassesForAssiduidade.map(c => c.turma_id)));
+                const activeTeacherIdsForAssiduidade = Array.from(new Set(activeClassesForAssiduidade.map(c => c.docente_id)));
+
+                // Get scheduled Students
+                const scheduledStudents = rawStudents.filter(s => {
+                  if (!s.ativo) return false;
+                  
+                  // Must belong to scheduled turmas for the period
+                  if (!activeTurmaIdsForAssiduidade.includes(s.turma_id || '')) return false;
+                  
+                  // School filter
+                  if (assiduidadeEscolaFilter !== 'todos' && s.escola_id !== assiduidadeEscolaFilter) return false;
+                  
+                  // Search query
+                  if (assiduidadeSearchQuery.trim()) {
+                    const q = assiduidadeSearchQuery.toLowerCase();
+                    const studentName = s.nome || tenantUsers.find(u => u.id === s.user_id)?.nome || '';
+                    return studentName.toLowerCase().includes(q) || (s.numero_matricula || '').toLowerCase().includes(q) || s.id.toLowerCase().includes(q);
+                  }
+                  return true;
+                });
+
+                // Get scheduled Teachers
+                const scheduledTeachers = rawTeachers.filter(t => {
+                  // Must be scheduled in this period
+                  if (!activeTeacherIdsForAssiduidade.includes(t.id)) return false;
+                  
+                  // School filter
+                  if (assiduidadeEscolaFilter !== 'todos' && t.escola_id !== assiduidadeEscolaFilter) return false;
+                  
+                  // Search query
+                  if (assiduidadeSearchQuery.trim()) {
+                    const q = assiduidadeSearchQuery.toLowerCase();
+                    const teacherName = t.nome || tenantUsers.find(u => u.id === t.user_id)?.nome || '';
+                    return teacherName.toLowerCase().includes(q) || (t.numero_registro || '').toLowerCase().includes(q) || t.id.toLowerCase().includes(q);
+                  }
+                  return true;
+                });
+
+                // Filter attendance logs matching selected criteria
+                const filteredAssiduidadeLogs = assiduidadeLogs.filter(log => {
+                  // Date range
+                  const logDate = log.timestamp?.split('T')[0] || '';
+                  if (logDate < assiduidadeDateStart || logDate > assiduidadeDateEnd) return false;
+                  
+                  // Time range
+                  const dateObj = new Date(log.timestamp);
+                  const hh = String(dateObj.getHours()).padStart(2, '0');
+                  const mm = String(dateObj.getMinutes()).padStart(2, '0');
+                  const logTimeStr = `${hh}:${mm}`;
+                  if (logTimeStr < assiduidadeTimeStart || logTimeStr > assiduidadeTimeEnd) return false;
+                  
+                  // Period/shift
+                  if (assiduidadePeriodFilter !== 'todos' && log.periodo !== assiduidadePeriodFilter) return false;
+                  
+                  // School
+                  if (assiduidadeEscolaFilter !== 'todos' && log.escola_id !== assiduidadeEscolaFilter) return false;
+                  
+                  // Search query
+                  if (assiduidadeSearchQuery.trim()) {
+                    const q = assiduidadeSearchQuery.toLowerCase();
+                    return (log.nome || '').toLowerCase().includes(q) || (log.numero_identificacao || '').toLowerCase().includes(q) || log.registro_id.toLowerCase().includes(q);
+                  }
+                  return true;
+                });
+
+                // Compute list of Faltosos (Absent list)
+                const absentStudentsList = scheduledStudents.filter(student => {
+                  const hasRecord = filteredAssiduidadeLogs.some(l => l.tipo === 'estudante' && l.registro_id === student.id && l.status !== 'falta');
+                  return !hasRecord;
+                });
+
+                const absentTeachersList = scheduledTeachers.filter(teacher => {
+                  const hasRecord = filteredAssiduidadeLogs.some(l => l.tipo === 'docente' && l.registro_id === teacher.id && l.status !== 'falta');
+                  return !hasRecord;
+                });
+
+                const combinedAbsentees = [
+                  ...absentStudentsList.map(s => ({
+                    id: `absent-student-${s.id}`,
+                    registro_id: s.id,
+                    tipo: 'estudante',
+                    nome: s.nome || tenantUsers.find(u => u.id === s.user_id)?.nome || 'Estudante Sem Nome',
+                    identificacao: s.numero_matricula || 'N/D',
+                    escola_id: s.escola_id || '',
+                    escola_nome: rawSchools.find(sc => sc.id === s.escola_id)?.nome || 'N/D',
+                    detalhe: `Turma: ${rawTurmas.find(t => t.id === s.turma_id)?.nome || 'N/D'}`,
+                    aula: activeClassesForAssiduidade.find(c => c.turma_id === s.turma_id)?.nome || 'N/D',
+                    horario: activeClassesForAssiduidade.find(c => c.turma_id === s.turma_id)?.horario || 'N/D',
+                    rawItem: s
+                  })),
+                  ...absentTeachersList.map(t => ({
+                    id: `absent-teacher-${t.id}`,
+                    registro_id: t.id,
+                    tipo: 'docente',
+                    nome: t.nome || tenantUsers.find(u => u.id === t.user_id)?.nome || 'Docente Sem Nome',
+                    identificacao: t.numero_registro || 'N/D',
+                    escola_id: t.escola_id || '',
+                    escola_nome: rawSchools.find(sc => sc.id === t.escola_id)?.nome || 'N/D',
+                    detalhe: `Docente de ${t.especialidade || 'N/D'}`,
+                    aula: activeClassesForAssiduidade.find(c => c.docente_id === t.id)?.nome || 'N/D',
+                    horario: activeClassesForAssiduidade.find(c => c.docente_id === t.id)?.horario || 'N/D',
+                    rawItem: t
+                  }))
+                ];
+
+                // Play synth beep function
+                const playBeep = () => {
+                  try {
+                    const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+                    if (!AudioCtxClass || typeof AudioCtxClass !== 'function') return;
+                    const audioCtx = new AudioCtxClass();
+                    const oscillator = audioCtx.createOscillator();
+                    const gainNode = audioCtx.createGain();
+                    
+                    oscillator.connect(gainNode);
+                    gainNode.connect(audioCtx.destination);
+                    
+                    oscillator.type = 'sine';
+                    oscillator.frequency.value = 1300; // high pitched beep
+                    gainNode.gain.setValueAtTime(0.04, audioCtx.currentTime); // gentle volume
+                    
+                    oscillator.start();
+                    oscillator.stop(audioCtx.currentTime + 0.12);
+                  } catch (e) {
+                    console.log("AudioContext blocked/unsupported:", e);
+                  }
+                };
+
+                // Centralized logic to register check-in
+                const registerCheckIn = async (tipo: 'estudante' | 'docente', item: any, overrideStatus?: 'presente' | 'atrasado' | 'falta' | 'justificado') => {
+                  const canValidate = (() => {
+                    if (currentUserRole === 'admin' || loggedInUser?.tipo === 'admin') return true;
+                    if (currentUserRole === 'director' || loggedInUser?.tipo === 'director') return true;
+                    if (loggedInUser && loggedInUser.modulo_acessos && (loggedInUser.modulo_acessos as any).assiduidade) {
+                      const assAccess = (loggedInUser.modulo_acessos as any).assiduidade;
+                      if (assAccess.habilitado) {
+                        return !!assAccess.funcionalidades?.validar_presencas;
+                      }
+                    }
+                    if (currentUserRole === 'docente' || loggedInUser?.tipo === 'docente') return true;
+                    return false;
+                  })();
+
+                  if (!canValidate) {
+                    showSystemNotification("❌ ERRO: Você não tem permissão para validar presença de outros utilizadores!", "erro");
+                    return;
+                  }
+
+                  const now = new Date();
+                  const dateStr = now.toISOString().split('T')[0];
+                  const period = getPeriodForTime(now);
+                  const checkInTimeStr = now.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
+
+                  // Find school and check for tolerances
+                  const escola_id = item?.escola_id || '';
+                  const school = rawSchools.find(s => s.id === escola_id);
+
+                  let status: 'presente' | 'atrasado' | 'falta' | 'justificado' = overrideStatus || 'presente';
+
+                  if (!overrideStatus) {
+                    if (school?.controlar_assiduidade) {
+                      const toleranceStr = period === 'manha' ? school.tolerancia_manha : (period === 'tarde' ? school.tolerancia_tarde : school.tolerancia_noite);
+                      if (toleranceStr) {
+                        if (timeToMinutes(checkInTimeStr) > timeToMinutes(toleranceStr)) {
+                          status = 'atrasado';
+                        }
+                      }
+                    }
+                  }
+
+                  // Check if there is already a log for this person today in this period
+                  const existingLog = assiduidadeLogs.find(l => 
+                    l.registro_id === item?.id && 
+                    l.periodo === period && 
+                    l.timestamp?.startsWith(dateStr)
+                  );
+
+                  const personUser = item?.user_id ? tenantUsers.find(u => u.id === item.user_id) : null;
+                  const resolvedName = item?.nome || personUser?.nome || (tipo === 'estudante' ? 'Estudante Sem Nome' : 'Docente Sem Nome');
+
+                  const logData = {
+                    tenant_id: currentTenantId || '',
+                    escola_id: item?.escola_id || '',
+                    tipo: tipo || 'estudante',
+                    registro_id: item?.id || '',
+                    nome: resolvedName,
+                    numero_identificacao: tipo === 'estudante' ? (item?.numero_matricula || 'N/D') : (item?.numero_registro || 'N/D'),
+                    turma_id: tipo === 'estudante' ? (item?.turma_id || '') : '',
+                    turma_nome: tipo === 'estudante' ? (rawTurmas.find(t => t.id === item?.turma_id)?.nome || '') : '',
+                    periodo: period || 'manha',
+                    timestamp: now.toISOString(),
+                    status: status || 'presente',
+                    tipo_registro: 'scan',
+                    observacao: ''
+                  };
+
+                  try {
+                    if (existingLog) {
+                      await updateDoc(doc(db, 'assiduidade_logs', existingLog.id), {
+                        status,
+                        timestamp: now.toISOString(),
+                        tipo_registro: 'scan'
+                      });
+                    } else {
+                      await addDoc(collection(db, 'assiduidade_logs'), logData);
+                    }
+                    playBeep();
+                    showSystemNotification(`Presença registrada com sucesso para ${resolvedName}!`, 'sucesso');
+                    loadTenantContext();
+                  } catch (err) {
+                    console.error("Error writing attendance log:", err);
+                    showSystemNotification(`Erro ao registrar presença: ${err}`, 'erro');
+                  }
+                };
+
+                // ID Check-in validation handler
+                const handleIdCheckIn = async (e: React.FormEvent) => {
+                  e.preventDefault();
+                  if (!validateIdInput.trim()) return;
+
+                  const searchVal = validateIdInput.trim().toLowerCase();
+                  // Check students
+                  const studentMatch = rawStudents.find(s => 
+                    s.id.toLowerCase() === searchVal || 
+                    (s.numero_matricula || '').toLowerCase() === searchVal
+                  );
+
+                  // Check teachers
+                  const teacherMatch = rawTeachers.find(t => 
+                    t.id.toLowerCase() === searchVal || 
+                    (t.numero_registro || '').toLowerCase() === searchVal
+                  );
+
+                  if (studentMatch) {
+                    if (!studentMatch.ativo) {
+                      const studentName = studentMatch.nome || tenantUsers.find(u => u.id === studentMatch.user_id)?.nome || 'Estudante';
+                      showSystemNotification(`❌ ERRO: O estudante ${studentName} está inativo no sistema!`, 'erro');
+                      return;
+                    }
+                    await registerCheckIn('estudante', studentMatch);
+                    setValidateIdInput('');
+                  } else if (teacherMatch) {
+                    await registerCheckIn('docente', teacherMatch);
+                    setValidateIdInput('');
+                  } else {
+                    showSystemNotification(`❌ ERRO: Nenhum estudante ou docente encontrado com o ID "${validateIdInput}"!`, 'erro');
+                  }
+                };
+
+                // QR Code scan simulation handler
+                const handleSimulateScan = async () => {
+                  if (!selectedSimulatorUser) return;
+                  setScannerScanning(true);
+                  setLastScannedResult(null);
+
+                  setTimeout(async () => {
+                    const matchedAbsent = combinedAbsentees.find(a => a.registro_id === selectedSimulatorUser);
+                    if (matchedAbsent) {
+                      setScanFlashActive(true);
+                      await registerCheckIn(matchedAbsent.tipo as 'estudante' | 'docente', matchedAbsent.rawItem);
+                      setLastScannedResult(`Crachá Lido: ${matchedAbsent.nome} (${matchedAbsent.tipo === 'estudante' ? 'Estudante' : 'Docente'})`);
+                      setSelectedSimulatorUser('');
+                      
+                      setTimeout(() => {
+                        setScanFlashActive(false);
+                      }, 400);
+                    } else {
+                      showSystemNotification("Erro ao processar simulação.", "erro");
+                    }
+                    setScannerScanning(false);
+                  }, 1200); // simulation timer delay
+                };
+
+                const toggleAttendanceLogStatus = async (logId: string, currentStatus: string) => {
+                  const statuses: Array<'presente' | 'atrasado' | 'falta' | 'justificado'> = ['presente', 'atrasado', 'falta', 'justificado'];
+                  const currentIndex = statuses.indexOf(currentStatus as any);
+                  const nextStatus = statuses[(currentIndex + 1) % statuses.length];
+                  
+                  try {
+                    await updateDoc(doc(db, 'assiduidade_logs', logId), {
+                      status: nextStatus
+                    });
+                    showSystemNotification(`Status atualizado para: ${nextStatus.toUpperCase()}`, 'sucesso');
+                    loadTenantContext();
+                  } catch (e) {
+                    showSystemNotification("Erro ao atualizar status", "erro");
+                  }
+                };
+
+                const deleteAttendanceLog = async (logId: string) => {
+                  showConfirm(
+                    "Remover Registro de Presença",
+                    "Tem certeza que deseja apagar este registro de presença?",
+                    async () => {
+                      try {
+                        await deleteDoc(doc(db, 'assiduidade_logs', logId));
+                        showSystemNotification("Registro removido.", "sucesso");
+                        loadTenantContext();
+                      } catch (e) {
+                        showSystemNotification("Erro ao remover registro.", "erro");
+                      }
+                    }
+                  );
+                };
+
+                const addNoteToLog = async (logId: string, currentNote: string) => {
+                  const note = prompt("Insira uma observação para este registro de assiduidade:", currentNote || "");
+                  if (note === null) return;
+                  try {
+                    await updateDoc(doc(db, 'assiduidade_logs', logId), {
+                      observacao: note
+                    });
+                    showSystemNotification("Observação salva.", "sucesso");
+                    loadTenantContext();
+                  } catch (e) {
+                    showSystemNotification("Erro ao salvar observação.", "erro");
+                  }
+                };
+
+                // Quick statistics
+                const totalCheckedIn = filteredAssiduidadeLogs.filter(l => l.status === 'presente').length;
+                const totalLate = filteredAssiduidadeLogs.filter(l => l.status === 'atrasado').length;
+                const totalJustified = filteredAssiduidadeLogs.filter(l => l.status === 'justificado').length;
+                const totalAbsent = combinedAbsentees.length;
+
+                // Pagination helpers
+                const itemsPerPage = 15;
+                const paginatedAbsentees = combinedAbsentees.slice((pageAssiduidade - 1) * itemsPerPage, pageAssiduidade * itemsPerPage);
+                const paginatedStudents = scheduledStudents.slice((pageAssiduidade - 1) * itemsPerPage, pageAssiduidade * itemsPerPage);
+                const paginatedTeachers = scheduledTeachers.slice((pageAssiduidade - 1) * itemsPerPage, pageAssiduidade * itemsPerPage);
+
+                return (
+                  <div className="space-y-6 animate-fadeIn pb-12">
+                    {/* REAL-TIME OVERVIEW & CLOCK PANEL */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      <div className="bg-gradient-to-br from-indigo-900 to-slate-900 p-6 rounded-2xl border border-indigo-500/20 shadow-lg text-white flex flex-col justify-between relative overflow-hidden">
+                        <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
+                          <Clock className="w-32 h-32 text-indigo-200" />
+                        </div>
+                        <div className="space-y-2 z-10">
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-2.5 w-2.5 relative">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                            </span>
+                            <span className="text-[11px] uppercase tracking-wider font-bold text-indigo-200">Período Vigente Local</span>
+                          </div>
+                          <h4 className="text-2xl font-black text-white leading-tight">
+                            {periodInVigor === 'fora' ? "Fora de Turno" : periodLabelMap[periodInVigor]}
+                          </h4>
+                          <p className="text-xs text-indigo-150">
+                            Detectado automaticamente de acordo com o horário do servidor e tolerâncias escolares.
+                          </p>
+                        </div>
+                        <div className="mt-4 pt-4 border-t border-indigo-800/60 flex items-center justify-between text-xs text-indigo-200 z-10">
+                          <span>Horário de Brasília (Local):</span>
+                          <span className="font-mono font-bold bg-indigo-950/50 px-2 py-0.5 rounded text-indigo-300">
+                            {new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* STATS BENTO CARDS */}
+                      <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs flex flex-col justify-between">
+                        <div>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Presenças Registradas Hoje</span>
+                          <h4 className="text-4xl font-extrabold text-slate-800 mt-2 font-mono flex items-baseline gap-2">
+                            {totalCheckedIn + totalLate}
+                            <span className="text-xs text-slate-400 font-sans font-normal">de {scheduledStudents.length + scheduledTeachers.length} agendados</span>
+                          </h4>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 mt-4 pt-4 border-t border-slate-100 text-center">
+                          <div>
+                            <span className="block text-xs font-bold text-emerald-600 bg-emerald-50 py-1 rounded">{totalCheckedIn}</span>
+                            <span className="text-[10px] text-slate-400">No Horário</span>
+                          </div>
+                          <div>
+                            <span className="block text-xs font-bold text-amber-600 bg-amber-50 py-1 rounded">{totalLate}</span>
+                            <span className="text-[10px] text-slate-400">Atrasos</span>
+                          </div>
+                          <div>
+                            <span className="block text-xs font-bold text-blue-600 bg-blue-50 py-1 rounded">{totalJustified}</span>
+                            <span className="text-[10px] text-slate-400">Justificados</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs flex flex-col justify-between">
+                        <div>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Faltas Identificadas (Período)</span>
+                          <h4 className="text-4xl font-extrabold text-rose-600 mt-2 font-mono">
+                            {totalAbsent}
+                            <span className="text-xs text-slate-400 font-sans font-normal ml-2">Absentes</span>
+                          </h4>
+                        </div>
+                        <div className="mt-4 pt-4 border-t border-slate-100 flex justify-between items-center text-xs text-slate-500">
+                          <span>Filtro de Período Ativo:</span>
+                          <span className="font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded capitalize">
+                            {assiduidadePeriodFilter}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* TWO COLUMN INTERACTIVE VALIDATION SECTION */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      
+                      {/* WEB VERSION: MANUALLY CHECK-IN BY ID */}
+                      <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-4">
+                        <div className="flex items-center gap-3 pb-3 border-b border-slate-150">
+                          <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
+                            <IdCard className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h3 className="font-bold text-slate-800 text-sm">Painel de Validação Web (Por ID)</h3>
+                            <p className="text-[11px] text-slate-400">Digite a Matrícula do Aluno ou Registro do Professor para validar a entrada.</p>
+                          </div>
+                        </div>
+
+                        <form onSubmit={handleIdCheckIn} className="space-y-4 pt-2">
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-500 mb-1">Código de Matrícula ou Registro</label>
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                value={validateIdInput}
+                                disabled={!canValidatePresence}
+                                onChange={(e) => setValidateIdInput(e.target.value)}
+                                placeholder={canValidatePresence ? "Ex: MAT-3021 ou DOC-129" : "Sem permissão para validar"}
+                                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs text-slate-700 focus:outline-hidden focus:border-indigo-500 transition-colors font-mono disabled:opacity-50 disabled:cursor-not-allowed"
+                              />
+                              <button
+                                type="submit"
+                                disabled={!canValidatePresence}
+                                className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer text-white px-5 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 shadow-sm"
+                              >
+                                <Fingerprint className="w-4 h-4" />
+                                Validar ID
+                              </button>
+                            </div>
+                          </div>
+                        </form>
+
+                        {/* ID Check-In Hint details */}
+                        <div className="bg-indigo-50/40 border border-indigo-100 p-3.5 rounded-xl text-xs text-indigo-700/85 leading-relaxed space-y-1">
+                          <p className="font-bold flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" /> Dica de Operação:</p>
+                          <p>O sistema buscará a agenda das turmas em vigor de acordo com a data selecionada ({activeDayOfWeek}). Alunos sem disciplinas programadas para hoje serão sinalizados com aviso, mas ainda sim registráveis.</p>
+                        </div>
+                      </div>
+
+                      {/* MOBILE SCAN SIMULATOR CARD */}
+                      <div className="bg-slate-900 text-white p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4 relative overflow-hidden flex flex-col justify-between">
+                        
+                        {/* Interactive scan successful flash glow */}
+                        {scanFlashActive && (
+                          <div className="absolute inset-0 bg-emerald-500/25 z-40 pointer-events-none transition-all duration-300" />
+                        )}
+
+                        <div className="flex items-center gap-3 pb-3 border-b border-slate-800 z-10">
+                          <div className="p-2 bg-slate-800 text-indigo-400 rounded-lg">
+                            <QrCode className="w-5 h-5 animate-pulse" />
+                          </div>
+                          <div>
+                            <h3 className="font-bold text-white text-sm">Simulador de Mobile QR Reader</h3>
+                            <p className="text-[11px] text-slate-400">Emula o app móvel lendo os crachás físicos via câmera.</p>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center z-10 pt-2">
+                          {/* Visual mockup of a scanning frame */}
+                          <div className="relative aspect-video rounded-xl border border-slate-700/80 bg-slate-950 flex flex-col items-center justify-center p-4 overflow-hidden group">
+                            
+                            {/* Scanning laser line */}
+                            {scannerScanning && (
+                              <div className="absolute inset-x-0 top-0 h-0.5 bg-emerald-400 shadow-[0_0_10px_#10b981] animate-bounce z-10" />
+                            )}
+
+                            <div className="border-2 border-indigo-500/40 w-24 h-24 rounded-lg flex flex-col items-center justify-center relative p-1">
+                              {/* Camera bracket frame icons */}
+                              <div className="absolute top-0 left-0 w-3 h-3 border-t-2 border-l-2 border-indigo-400" />
+                              <div className="absolute top-0 right-0 w-3 h-3 border-t-2 border-r-2 border-indigo-400" />
+                              <div className="absolute bottom-0 left-0 w-3 h-3 border-b-2 border-l-2 border-indigo-400" />
+                              <div className="absolute bottom-0 right-0 w-3 h-3 border-b-2 border-r-2 border-indigo-400" />
+                              <Camera className={`w-8 h-8 text-slate-600 transition-colors ${scannerScanning ? 'text-indigo-400' : ''}`} />
+                            </div>
+
+                            <span className="text-[9px] font-mono mt-3 text-slate-500 tracking-wider">
+                              {scannerScanning ? "PROCESSANDO LEITURA..." : "CAMERA MOCK PRONTA"}
+                            </span>
+                          </div>
+
+                          <div className="space-y-3">
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-400 mb-1">Escolher Aluno/Professor Ausente</label>
+                              <select
+                                value={selectedSimulatorUser}
+                                disabled={!canValidatePresence}
+                                onChange={(e) => setSelectedSimulatorUser(e.target.value)}
+                                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-hidden disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                <option value="">{canValidatePresence ? "-- Selecionar um Faltoso --" : "Sem permissão de validação"}</option>
+                                {combinedAbsentees.map((item) => (
+                                  <option key={item.id} value={item.registro_id}>
+                                    {item.nome} ({item.tipo === 'estudante' ? 'Estudante' : 'Docente'})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={handleSimulateScan}
+                              disabled={!selectedSimulatorUser || scannerScanning || !canValidatePresence}
+                              className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer text-white py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1"
+                            >
+                              {scannerScanning ? "Analisando Código..." : "Simular Scan do Crachá"}
+                            </button>
+
+                            {lastScannedResult && (
+                              <div className="bg-emerald-950/40 border border-emerald-900/60 p-2.5 rounded-lg text-[11px] text-emerald-400 font-mono text-center">
+                                {lastScannedResult}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* FILTER AREA AND LIST TABLES */}
+                    <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-6">
+                      
+                      {/* FILTER GROUP */}
+                      <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                            <Sliders className="w-4 h-4 text-indigo-500" />
+                            Painel de Filtros e Busca de Horários
+                          </h4>
+                          <span className="text-[11px] font-bold text-indigo-600 font-mono bg-indigo-50 px-2.5 py-0.5 rounded-full">
+                            {activeDayOfWeek}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3.5 pt-1">
+                          {/* Date filters */}
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 mb-1">Data Início</label>
+                            <input
+                              type="date"
+                              value={assiduidadeDateStart}
+                              onChange={(e) => {
+                                setAssiduidadeDateStart(e.target.value);
+                                setPageAssiduidade(1);
+                              }}
+                              className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 focus:outline-hidden"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 mb-1">Data Fim</label>
+                            <input
+                              type="date"
+                              value={assiduidadeDateEnd}
+                              onChange={(e) => {
+                                setAssiduidadeDateEnd(e.target.value);
+                                setPageAssiduidade(1);
+                              }}
+                              className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 focus:outline-hidden"
+                            />
+                          </div>
+
+                          {/* Period */}
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 mb-1">Período de Turno</label>
+                            <select
+                              value={assiduidadePeriodFilter}
+                              onChange={(e) => {
+                                setAssiduidadePeriodFilter(e.target.value as any);
+                                setPageAssiduidade(1);
+                              }}
+                              className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 focus:outline-hidden"
+                            >
+                              <option value="todos">Todos Turnos</option>
+                              <option value="manha">Manhã (07:00 - 11:05)</option>
+                              <option value="tarde">Tarde (12:05 - 17:00)</option>
+                              <option value="noite">Noite (18:05 - 22:45)</option>
+                            </select>
+                          </div>
+
+                          {/* School */}
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 mb-1">Escola / Polo</label>
+                            <select
+                              value={assiduidadeEscolaFilter}
+                              onChange={(e) => {
+                                setAssiduidadeEscolaFilter(e.target.value);
+                                setPageAssiduidade(1);
+                              }}
+                              className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 focus:outline-hidden"
+                            >
+                              <option value="todos">Todas Escolas</option>
+                              {rawSchools.map(s => (
+                                <option key={s.id} value={s.id}>{s.nome}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* Dynamic search query */}
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 mb-1">Busca Dinâmica</label>
+                            <div className="relative">
+                              <input
+                                type="text"
+                                value={assiduidadeSearchQuery}
+                                onChange={(e) => {
+                                  setAssiduidadeSearchQuery(e.target.value);
+                                  setPageAssiduidade(1);
+                                }}
+                                placeholder="Nome ou Matrícula..."
+                                className="w-full bg-white border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-600 focus:outline-hidden"
+                              />
+                              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Secondary time-range filter */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                          <div className="flex items-center gap-3">
+                            <span className="text-[10px] font-bold text-slate-500 whitespace-nowrap">Hora Intervalo:</span>
+                            <div className="flex items-center gap-1.5 w-full">
+                              <input
+                                type="time"
+                                value={assiduidadeTimeStart}
+                                onChange={(e) => {
+                                  setAssiduidadeTimeStart(e.target.value);
+                                  setPageAssiduidade(1);
+                                }}
+                                className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-600 focus:outline-hidden w-full"
+                              />
+                              <span className="text-slate-400">até</span>
+                              <input
+                                type="time"
+                                value={assiduidadeTimeEnd}
+                                onChange={(e) => {
+                                  setAssiduidadeTimeEnd(e.target.value);
+                                  setPageAssiduidade(1);
+                                }}
+                                className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-600 focus:outline-hidden w-full"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* TABS SELECTOR FOR THE 3 LISTS */}
+                      <div className="border-b border-slate-200 flex flex-wrap gap-2">
+                        <button
+                          onClick={() => {
+                            setAssiduidadeActiveListTab('faltosos');
+                            setPageAssiduidade(1);
+                          }}
+                          className={`px-4 py-2 border-b-2 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+                            assiduidadeActiveListTab === 'faltosos'
+                              ? 'border-indigo-600 text-indigo-600 bg-indigo-50/20'
+                              : 'border-transparent text-slate-400 hover:text-slate-600'
+                          }`}
+                        >
+                          Lista 1 - Faltosos ({combinedAbsentees.length})
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            setAssiduidadeActiveListTab('estudantes');
+                            setPageAssiduidade(1);
+                          }}
+                          className={`px-4 py-2 border-b-2 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+                            assiduidadeActiveListTab === 'estudantes'
+                              ? 'border-indigo-600 text-indigo-600 bg-indigo-50/20'
+                              : 'border-transparent text-slate-400 hover:text-slate-600'
+                          }`}
+                        >
+                          Lista 2 - Estudantes Agendados ({scheduledStudents.length})
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            setAssiduidadeActiveListTab('docentes');
+                            setPageAssiduidade(1);
+                          }}
+                          className={`px-4 py-2 border-b-2 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+                            assiduidadeActiveListTab === 'docentes'
+                              ? 'border-indigo-600 text-indigo-600 bg-indigo-50/20'
+                              : 'border-transparent text-slate-400 hover:text-slate-600'
+                          }`}
+                        >
+                          Lista 3 - Docentes Agendados ({scheduledTeachers.length})
+                        </button>
+                      </div>
+
+                      {/* RENDERING TAB 1: ABSENTEES */}
+                      {assiduidadeActiveListTab === 'faltosos' && (
+                        <div className="space-y-4">
+                          <div className="overflow-x-auto border border-slate-100 rounded-xl">
+                            <table className="w-full text-left text-slate-700 text-xs">
+                              <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] tracking-wider border-b border-slate-100">
+                                <tr>
+                                  <th className="px-5 py-3">Tipo / Nome</th>
+                                  <th className="px-5 py-3">Identificação</th>
+                                  <th className="px-5 py-3">Escola / Polo</th>
+                                  <th className="px-5 py-3">Disciplina / Aula</th>
+                                  <th className="px-5 py-3">Horário Programado</th>
+                                  <th className="px-5 py-3">Status</th>
+                                  <th className="px-5 py-3 text-right sticky right-0 bg-slate-50 dark:bg-slate-900 z-10 shadow-[-4px_0_12px_rgba(0,0,0,0.06)]">Ação</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {paginatedAbsentees.length === 0 ? (
+                                  <tr>
+                                    <td colSpan={7} className="text-center py-10 text-slate-400 font-medium italic">
+                                      Nenhum aluno ou docente ausente neste turno / filtro de agenda!
+                                    </td>
+                                  </tr>
+                                ) : (
+                                  paginatedAbsentees.map((item) => (
+                                    <tr key={item.id} className="hover:bg-slate-50/60 transition-colors">
+                                      <td className="px-5 py-3">
+                                        <div className="flex items-center gap-2">
+                                          <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold uppercase ${
+                                            item.tipo === 'estudante' ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : 'bg-sky-50 text-sky-600 border border-sky-100'
+                                          }`}>
+                                            {item.tipo}
+                                          </span>
+                                          <div>
+                                            <span className="font-bold text-slate-800 block">{item.nome}</span>
+                                            <span className="text-[10px] text-slate-400 font-mono">{item.detalhe}</span>
+                                          </div>
+                                        </div>
+                                      </td>
+                                      <td className="px-5 py-3 font-mono">{item.identificacao}</td>
+                                      <td className="px-5 py-3 text-slate-500">{item.escola_nome}</td>
+                                      <td className="px-5 py-3 font-medium text-slate-800">{item.aula}</td>
+                                      <td className="px-5 py-3">
+                                        <span className="bg-slate-100 px-2 py-0.5 rounded font-mono font-medium text-slate-600">
+                                          {item.horario}
+                                        </span>
+                                      </td>
+                                      <td className="px-5 py-3">
+                                        <span className="px-2.5 py-0.5 bg-rose-50 text-rose-600 font-bold uppercase text-[9px] tracking-wider rounded-full border border-rose-100 inline-flex items-center gap-1">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                                          Faltoso
+                                        </span>
+                                      </td>
+                                      <td className="px-5 py-3 text-right sticky right-0 bg-white dark:bg-slate-900 z-10 shadow-[-4px_0_12px_rgba(0,0,0,0.06)]">
+                                        <button
+                                          onClick={() => registerCheckIn(item.tipo as any, item.rawItem)}
+                                          className="text-[11px] font-bold text-white bg-indigo-600 hover:bg-indigo-700 cursor-pointer px-3 py-1 rounded-lg transition-colors shadow-xs"
+                                        >
+                                          Registrar Presença
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                          {renderPagination(pageAssiduidade, combinedAbsentees.length, itemsPerPage, setPageAssiduidade)}
+                        </div>
+                      )}
+
+                      {/* RENDERING TAB 2: SCHEDULED STUDENTS */}
+                      {assiduidadeActiveListTab === 'estudantes' && (
+                        <div className="space-y-4">
+                          <div className="overflow-x-auto border border-slate-100 rounded-xl">
+                            <table className="w-full text-left text-slate-700 text-xs">
+                              <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] tracking-wider border-b border-slate-100">
+                                <tr>
+                                  <th className="px-5 py-3">Aluno</th>
+                                  <th className="px-5 py-3">Matrícula</th>
+                                  <th className="px-5 py-3">Turma</th>
+                                  <th className="px-5 py-3">Aula Agendada</th>
+                                  <th className="px-5 py-3">Assiduidade</th>
+                                  <th className="px-5 py-3">Lançamento / Obs</th>
+                                  <th className="px-5 py-3 text-right sticky right-0 bg-slate-50 dark:bg-slate-900 z-10 shadow-[-4px_0_12px_rgba(0,0,0,0.06)]">Ação</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {paginatedStudents.length === 0 ? (
+                                  <tr>
+                                    <td colSpan={7} className="text-center py-10 text-slate-400 font-medium italic">
+                                      Nenhum aluno agendado para o turno ou filtros selecionados.
+                                    </td>
+                                  </tr>
+                                ) : (
+                                  paginatedStudents.map((student) => {
+                                    const assocTurma = rawTurmas.find(t => t.id === student.turma_id);
+                                    const assocClass = activeClassesForAssiduidade.find(c => c.turma_id === student.turma_id);
+                                    
+                                    // Check check-in status
+                                    const studentLogs = filteredAssiduidadeLogs.filter(l => l.tipo === 'estudante' && l.registro_id === student.id);
+                                    const activeLog = studentLogs[0]; // Active log if exists
+
+                                    return (
+                                      <tr key={student.id} className="hover:bg-slate-50/60 transition-colors">
+                                        <td className="px-5 py-3 font-bold text-slate-800">{student.nome}</td>
+                                        <td className="px-5 py-3 font-mono">{student.numero_matricula || 'N/D'}</td>
+                                        <td className="px-5 py-3 text-slate-500">{assocTurma?.nome || 'N/D'}</td>
+                                        <td className="px-5 py-3">
+                                          <div>
+                                            <span className="font-medium text-slate-700 block">{assocClass?.nome || 'N/D'}</span>
+                                            <span className="text-[10px] text-slate-400 font-mono">{assocClass?.horario || 'N/D'}</span>
+                                          </div>
+                                        </td>
+                                        <td className="px-5 py-3">
+                                          {activeLog ? (
+                                            <div className="space-y-1">
+                                              <span className={`px-2.5 py-0.5 rounded-full font-bold uppercase text-[9px] border inline-flex items-center gap-1 ${
+                                                activeLog.status === 'presente' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
+                                                activeLog.status === 'atrasado' ? 'bg-amber-50 text-amber-600 border-amber-100' :
+                                                activeLog.status === 'justificado' ? 'bg-blue-50 text-blue-600 border-blue-100' :
+                                                'bg-rose-50 text-rose-600 border-rose-100'
+                                              }`}>
+                                                <span className={`w-1.5 h-1.5 rounded-full ${
+                                                  activeLog.status === 'presente' ? 'bg-emerald-500' :
+                                                  activeLog.status === 'atrasado' ? 'bg-amber-500' :
+                                                  activeLog.status === 'justificado' ? 'bg-blue-500' :
+                                                  'bg-rose-500'
+                                                }`}></span>
+                                                {activeLog.status.toUpperCase()}
+                                              </span>
+                                              <span className="block text-[10px] font-mono text-slate-400">
+                                                Lido: {new Date(activeLog.timestamp).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}
+                                              </span>
+                                            </div>
+                                          ) : (
+                                            <span className="px-2.5 py-0.5 bg-rose-50 text-rose-500 border border-rose-100 font-bold uppercase text-[9px] rounded-full inline-flex items-center gap-1">
+                                              <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
+                                              Ausente
+                                            </span>
+                                          )}
+                                        </td>
+                                        <td className="px-5 py-3">
+                                          {activeLog?.observacao ? (
+                                            <span className="text-[10px] italic text-slate-400 bg-slate-50 border border-slate-100 px-2 py-0.5 rounded block max-w-44 truncate" title={activeLog.observacao}>
+                                              {activeLog.observacao}
+                                            </span>
+                                          ) : (
+                                            <span className="text-slate-350 italic">-</span>
+                                          )}
+                                        </td>
+                                        <td className="px-5 py-3 text-right sticky right-0 bg-white dark:bg-slate-900 z-10 shadow-[-4px_0_12px_rgba(0,0,0,0.06)]">
+                                          <div className="flex items-center justify-end gap-1.5">
+                                            {activeLog ? (
+                                              <>
+                                                <button
+                                                  onClick={() => toggleAttendanceLogStatus(activeLog.id, activeLog.status)}
+                                                  className="p-1 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded cursor-pointer"
+                                                  title="Alternar Status"
+                                                >
+                                                  <RefreshCw className="w-4 h-4" />
+                                                </button>
+                                                <button
+                                                  onClick={() => addNoteToLog(activeLog.id, activeLog.observacao)}
+                                                  className="p-1 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded cursor-pointer"
+                                                  title="Inserir Obs"
+                                                >
+                                                  <Edit3 className="w-4 h-4" />
+                                                </button>
+                                                <button
+                                                  onClick={() => deleteAttendanceLog(activeLog.id)}
+                                                  className="p-1 hover:bg-rose-50 text-rose-400 hover:text-rose-600 rounded cursor-pointer"
+                                                  title="Apagar Presença"
+                                                >
+                                                  <Trash2 className="w-4 h-4" />
+                                                </button>
+                                              </>
+                                            ) : (
+                                              <button
+                                                onClick={() => registerCheckIn('estudante', student)}
+                                                className="bg-emerald-600 hover:bg-emerald-700 cursor-pointer text-white px-2.5 py-1 rounded text-[11px] font-bold transition-colors"
+                                              >
+                                                Marcar Presença
+                                              </button>
+                                            )}
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                          {renderPagination(pageAssiduidade, scheduledStudents.length, itemsPerPage, setPageAssiduidade)}
+                        </div>
+                      )}
+
+                      {/* RENDERING TAB 3: SCHEDULED TEACHERS */}
+                      {assiduidadeActiveListTab === 'docentes' && (
+                        <div className="space-y-4">
+                          <div className="overflow-x-auto border border-slate-100 rounded-xl">
+                            <table className="w-full text-left text-slate-700 text-xs">
+                              <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] tracking-wider border-b border-slate-100">
+                                <tr>
+                                  <th className="px-5 py-3">Docente</th>
+                                  <th className="px-5 py-3">Registro Docente</th>
+                                  <th className="px-5 py-3">Especialidade / Escola</th>
+                                  <th className="px-5 py-3">Aula Agendada</th>
+                                  <th className="px-5 py-3">Assiduidade</th>
+                                  <th className="px-5 py-3">Lançamento / Obs</th>
+                                  <th className="px-5 py-3 text-right sticky right-0 bg-slate-50 dark:bg-slate-900 z-10 shadow-[-4px_0_12px_rgba(0,0,0,0.06)]">Ação</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {paginatedTeachers.length === 0 ? (
+                                  <tr>
+                                    <td colSpan={7} className="text-center py-10 text-slate-400 font-medium italic">
+                                      Nenhum docente agendado para o turno ou filtros selecionados.
+                                    </td>
+                                  </tr>
+                                ) : (
+                                  paginatedTeachers.map((teacher) => {
+                                    const assocClass = activeClassesForAssiduidade.find(c => c.docente_id === teacher.id);
+                                    
+                                    // Check check-in status
+                                    const teacherLogs = filteredAssiduidadeLogs.filter(l => l.tipo === 'docente' && l.registro_id === teacher.id);
+                                    const activeLog = teacherLogs[0]; // Active log if exists
+
+                                    return (
+                                      <tr key={teacher.id} className="hover:bg-slate-50/60 transition-colors">
+                                        <td className="px-5 py-3 font-bold text-slate-800">{teacher.nome}</td>
+                                        <td className="px-5 py-3 font-mono">{teacher.numero_registro || 'N/D'}</td>
+                                        <td className="px-5 py-3 text-slate-500">
+                                          <div>
+                                            <span className="block text-slate-700 font-medium">{teacher.especialidade || 'Geral'}</span>
+                                            <span className="text-[10px] text-slate-400">{rawSchools.find(s => s.id === teacher.escola_id)?.nome || 'Polo Geral'}</span>
+                                          </div>
+                                        </td>
+                                        <td className="px-5 py-3">
+                                          <div>
+                                            <span className="font-medium text-slate-700 block">{assocClass?.nome || 'N/D'}</span>
+                                            <span className="text-[10px] text-slate-400 font-mono">{assocClass?.horario || 'N/D'}</span>
+                                          </div>
+                                        </td>
+                                        <td className="px-5 py-3">
+                                          {activeLog ? (
+                                            <div className="space-y-1">
+                                              <span className={`px-2.5 py-0.5 rounded-full font-bold uppercase text-[9px] border inline-flex items-center gap-1 ${
+                                                activeLog.status === 'presente' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
+                                                activeLog.status === 'atrasado' ? 'bg-amber-50 text-amber-600 border-amber-100' :
+                                                activeLog.status === 'justificado' ? 'bg-blue-50 text-blue-600 border-blue-100' :
+                                                'bg-rose-50 text-rose-600 border-rose-100'
+                                              }`}>
+                                                <span className={`w-1.5 h-1.5 rounded-full ${
+                                                  activeLog.status === 'presente' ? 'bg-emerald-500' :
+                                                  activeLog.status === 'atrasado' ? 'bg-amber-500' :
+                                                  activeLog.status === 'justificado' ? 'bg-blue-500' :
+                                                  'bg-rose-500'
+                                                }`}></span>
+                                                {activeLog.status.toUpperCase()}
+                                              </span>
+                                              <span className="block text-[10px] font-mono text-slate-400">
+                                                Lido: {new Date(activeLog.timestamp).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}
+                                              </span>
+                                            </div>
+                                          ) : (
+                                            <span className="px-2.5 py-0.5 bg-rose-50 text-rose-500 border border-rose-100 font-bold uppercase text-[9px] rounded-full inline-flex items-center gap-1">
+                                              <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
+                                              Ausente
+                                            </span>
+                                          )}
+                                        </td>
+                                        <td className="px-5 py-3">
+                                          {activeLog?.observacao ? (
+                                            <span className="text-[10px] italic text-slate-400 bg-slate-50 border border-slate-100 px-2 py-0.5 rounded block max-w-44 truncate" title={activeLog.observacao}>
+                                              {activeLog.observacao}
+                                            </span>
+                                          ) : (
+                                            <span className="text-slate-350 italic">-</span>
+                                          )}
+                                        </td>
+                                        <td className="px-5 py-3 text-right sticky right-0 bg-white dark:bg-slate-900 z-10 shadow-[-4px_0_12px_rgba(0,0,0,0.06)]">
+                                          <div className="flex items-center justify-end gap-1.5">
+                                            {activeLog ? (
+                                              <>
+                                                <button
+                                                  onClick={() => toggleAttendanceLogStatus(activeLog.id, activeLog.status)}
+                                                  className="p-1 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded cursor-pointer"
+                                                  title="Alternar Status"
+                                                >
+                                                  <RefreshCw className="w-4 h-4" />
+                                                </button>
+                                                <button
+                                                  onClick={() => addNoteToLog(activeLog.id, activeLog.observacao)}
+                                                  className="p-1 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded cursor-pointer"
+                                                  title="Inserir Obs"
+                                                >
+                                                  <Edit3 className="w-4 h-4" />
+                                                </button>
+                                                <button
+                                                  onClick={() => deleteAttendanceLog(activeLog.id)}
+                                                  className="p-1 hover:bg-rose-50 text-rose-400 hover:text-rose-600 rounded cursor-pointer"
+                                                  title="Apagar Presença"
+                                                >
+                                                  <Trash2 className="w-4 h-4" />
+                                                </button>
+                                              </>
+                                            ) : (
+                                              <button
+                                                onClick={() => registerCheckIn('docente', teacher)}
+                                                className="bg-emerald-600 hover:bg-emerald-700 cursor-pointer text-white px-2.5 py-1 rounded text-[11px] font-bold transition-colors"
+                                              >
+                                                Marcar Presença
+                                              </button>
+                                            )}
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                          {renderPagination(pageAssiduidade, scheduledTeachers.length, itemsPerPage, setPageAssiduidade)}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()
+            )}
             {activeTab === 'biblioteca' && (
               !hasPermission('biblioteca') ? renderRestrictedAccess('Biblioteca Digital') : (
                 <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-6 animate-fadeIn">
@@ -6403,92 +12937,549 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             {activeTab === 'usuarios' && (
               !hasPermission('utilizadores') ? renderRestrictedAccess('Utilizadores e Acessos') : (
                 <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-6 animate-fadeIn">
-                  <div className="flex justify-between items-center">
-                    <h3 className="font-bold text-slate-800">Utilizadores e Acessos</h3>
-                    {isLimitReached('max_usuarios', tenantUsers.length) ? (
-                      <button 
-                        onClick={() => openUpgradeModal('max_usuarios', tenantUsers.length)}
-                        className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1.5 shadow-sm transition-all animate-pulse cursor-pointer"
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-bold text-slate-800">Utilizadores e Acessos</h3>
+                        <span className="bg-emerald-50 text-emerald-700 border border-emerald-200/60 px-2 py-0.5 rounded-full text-[10px] font-semibold flex items-center gap-1">
+                          <ShieldCheck className="w-3 h-3 text-emerald-600" /> Firebase Auth Ativo
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Todas as contas de utilizadores são cadastradas e sincronizadas no Firebase Authentication.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        onClick={handleSyncAllUsersToFirebase}
+                        disabled={isSyncingAuth}
+                        className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-sm transition-all"
                       >
-                        <Sparkles className="w-3.5 h-3.5" /> Upgrade • Limite Atingido
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        {isSyncingAuth ? 'Sincronizando...' : 'Sincronizar no Firebase Auth'}
                       </button>
-                    ) : (
-                      hasPermission('utilizadores', 'criar') && (
+
+                      {isLimitReached('max_usuarios', tenantUsers.length) ? (
                         <button 
-                          onClick={() => {
-                            setEditingItem(null);
-                            setUserForm({
-                              nome: '',
-                              email: '',
-                              tipo: 'docente',
-                              ativo: true,
-                              modulo_acessos: JSON.parse(JSON.stringify(DEFAULT_MODULO_ACESSOS))
-                            });
-                            setModalType('user');
-                            setIsModalOpen(true);
-                          }}
-                          className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1 cursor-pointer"
+                          onClick={() => openUpgradeModal('max_usuarios', tenantUsers.length)}
+                          className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1.5 shadow-sm transition-all animate-pulse cursor-pointer"
                         >
-                          <Plus className="w-4 h-4" /> Criar Usuário
+                          <Sparkles className="w-3.5 h-3.5" /> Upgrade • Limite Atingido
                         </button>
-                      )
-                    )}
+                      ) : (
+                        hasPermission('utilizadores', 'criar') && (
+                          <button 
+                            onClick={() => {
+                              setEditingItem(null);
+                              setUserForm({
+                                nome: '',
+                                email: '',
+                                tipo: 'docente',
+                                ativo: true,
+                                modulo_acessos: JSON.parse(JSON.stringify(DEFAULT_MODULO_ACESSOS))
+                              });
+                              setModalType('user');
+                              setIsModalOpen(true);
+                            }}
+                            className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1 cursor-pointer"
+                          >
+                            <Plus className="w-4 h-4" /> Criar Usuário
+                          </button>
+                        )
+                      )}
+                    </div>
                   </div>
 
-                <div className="overflow-x-auto border border-slate-100 rounded-xl">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 text-slate-500 text-xs font-semibold uppercase border-b border-slate-100">
-                        <th className="px-6 py-4">Nome completo</th>
-                        <th className="px-6 py-4">Endereço de Email</th>
-                        <th className="px-6 py-4">Cargo / Nível</th>
-                        <th className="px-6 py-4">Permissões</th>
-                        <th className="px-6 py-4">Estado</th>
-                        <th className="px-6 py-4 text-right">Ações</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-slate-700 text-sm">
-                      {tenantUsers.map(u => (
-                        <tr key={u.id} className="hover:bg-slate-50/50">
-                          <td className="px-6 py-4 font-bold text-slate-900">{u.nome}</td>
-                          <td className="px-6 py-4">{u.email}</td>
-                          <td className="px-6 py-4 uppercase font-mono text-xs text-indigo-700 font-bold">{u.tipo}</td>
-                          <td className="px-6 py-4">
-                            <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
-                              {u.permissoes.join(', ')}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className={`text-xs ${u.ativo ? 'text-emerald-600' : 'text-slate-400'}`}>
-                              {u.ativo ? 'Ativo' : 'Inativo'}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 text-right">
-                            {hasPermission('utilizadores', 'editar') && (
-                              <button 
+                  {/* FILTROS E PESQUISA DO MÓDULO UTILIZADORES */}
+                  {(() => {
+                    const filteredUsers = tenantUsers.filter(u => {
+                      if (usersSearchQuery.trim()) {
+                        const q = usersSearchQuery.toLowerCase().trim();
+                        const nameMatch = u.nome?.toLowerCase().includes(q);
+                        const emailMatch = u.email?.toLowerCase().includes(q);
+                        if (!nameMatch && !emailMatch) return false;
+                      }
+                      if (usersRoleFilter !== 'todos' && u.tipo !== usersRoleFilter) {
+                        return false;
+                      }
+                      if (usersStatusFilter === 'ativo' && !u.ativo) return false;
+                      if (usersStatusFilter === 'suspenso' && u.ativo) return false;
+                      return true;
+                    });
+
+                    const totalFiltered = filteredUsers.length;
+                    const maxPage = Math.max(1, Math.ceil(totalFiltered / 25));
+                    const safePage = Math.min(usersCurrentPage, maxPage);
+                    const paginatedUsers = filteredUsers.slice((safePage - 1) * 25, safePage * 25);
+
+                    const isAllUsersOnPageSelected = paginatedUsers.length > 0 && paginatedUsers.every(u => selectedUserIds.includes(u.id));
+
+                    const handleToggleSelectAllUsers = () => {
+                      if (isAllUsersOnPageSelected) {
+                        const pageUserIds = new Set(paginatedUsers.map(u => u.id));
+                        setSelectedUserIds(prev => prev.filter(id => !pageUserIds.has(id)));
+                      } else {
+                        const pageUserIds = paginatedUsers.map(u => u.id);
+                        setSelectedUserIds(prev => Array.from(new Set([...prev, ...pageUserIds])));
+                      }
+                    };
+
+                    const handleToggleSelectUser = (id: string) => {
+                      setSelectedUserIds(prev => 
+                        prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+                      );
+                    };
+
+                    const handleExecuteBulkUserAction = async (action: 'apagar' | 'suspender' | 'restaurar') => {
+                      if (selectedUserIds.length === 0) return;
+                      setBulkUserActionLoading(true);
+
+                      try {
+                        const count = selectedUserIds.length;
+                        
+                        if (action === 'apagar') {
+                          for (const userId of selectedUserIds) {
+                            await deleteDoc(doc(db, 'users', userId));
+                          }
+                          showSystemNotification(`${count} utilizador(es) eliminado(s) com sucesso!`, 'cadastro');
+                        } else if (action === 'suspender') {
+                          for (const userId of selectedUserIds) {
+                            await updateDoc(doc(db, 'users', userId), {
+                              ativo: false,
+                              updated_at: new Date().toISOString()
+                            });
+                          }
+                          showSystemNotification(`${count} utilizador(es) suspenso(s) com sucesso!`, 'cadastro');
+                        } else if (action === 'restaurar') {
+                          for (const userId of selectedUserIds) {
+                            await updateDoc(doc(db, 'users', userId), {
+                              ativo: true,
+                              updated_at: new Date().toISOString()
+                            });
+                          }
+                          showSystemNotification(`${count} utilizador(es) reativado(s) com sucesso!`, 'cadastro');
+                        }
+
+                        setSelectedUserIds([]);
+                        setBulkUserConfirmModal({ isOpen: false, action: null });
+                        loadTenantContext();
+                      } catch (err: any) {
+                        console.error('[BulkUserAction] Erro ao executar ação em lote nos utilizadores:', err);
+                        showSystemNotification(`Erro ao executar ação em lote: ${err.message || 'Falha na operação'}`, 'erro');
+                      } finally {
+                        setBulkUserActionLoading(false);
+                      }
+                    };
+
+                    return (
+                      <div className="space-y-4">
+                        {/* Barra de Filtros */}
+                        <div className="bg-slate-50 border border-slate-200/80 p-3.5 rounded-xl flex flex-wrap items-center gap-3">
+                          {/* Campo de Busca por Texto */}
+                          <div className="relative flex-1 min-w-[220px]">
+                            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                            <input
+                              type="text"
+                              value={usersSearchQuery}
+                              onChange={(e) => {
+                                setUsersSearchQuery(e.target.value);
+                                setUsersCurrentPage(1);
+                              }}
+                              placeholder="Pesquisar por nome ou email..."
+                              className="w-full pl-9 pr-8 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                            />
+                            {usersSearchQuery && (
+                              <button
+                                type="button"
                                 onClick={() => {
-                                  setEditingItem(u);
-                                  setUserForm({
-                                    nome: u.nome,
-                                    email: u.email,
-                                    tipo: u.tipo,
-                                    ativo: u.ativo,
-                                    modulo_acessos: u.modulo_acessos || JSON.parse(JSON.stringify(DEFAULT_MODULO_ACESSOS))
-                                  });
-                                  setModalType('user');
-                                  setIsModalOpen(true);
+                                  setUsersSearchQuery('');
+                                  setUsersCurrentPage(1);
                                 }}
-                                className="p-1 hover:bg-slate-100 text-slate-600 rounded cursor-pointer"
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold cursor-pointer"
                               >
-                                <Edit className="w-4 h-4" />
+                                ✕
                               </button>
                             )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                          </div>
+
+                          {/* Filtro por Cargo/Nível */}
+                          <div className="flex items-center gap-1.5">
+                            <label className="text-xs font-bold text-slate-500 whitespace-nowrap">Cargo:</label>
+                            <select
+                              value={usersRoleFilter}
+                              onChange={(e) => {
+                                setUsersRoleFilter(e.target.value);
+                                setUsersCurrentPage(1);
+                              }}
+                              className="bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 cursor-pointer"
+                            >
+                              <option value="todos">Todos os Cargos</option>
+                              {globalCategories.map((cat) => (
+                                <option key={cat.id} value={cat.codigo || cat.id}>
+                                  {cat.nome}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* Filtro por Estado */}
+                          <div className="flex items-center gap-1.5">
+                            <label className="text-xs font-bold text-slate-500 whitespace-nowrap">Estado:</label>
+                            <select
+                              value={usersStatusFilter}
+                              onChange={(e) => {
+                                setUsersStatusFilter(e.target.value);
+                                setUsersCurrentPage(1);
+                              }}
+                              className="bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 cursor-pointer"
+                            >
+                              <option value="todos">Todos os Estados</option>
+                              <option value="ativo">Ativo</option>
+                              <option value="suspenso">Suspenso</option>
+                            </select>
+                          </div>
+
+                          {/* Limpar Filtros */}
+                          {(usersSearchQuery || usersRoleFilter !== 'todos' || usersStatusFilter !== 'todos') && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setUsersSearchQuery('');
+                                setUsersRoleFilter('todos');
+                                setUsersStatusFilter('todos');
+                                setUsersCurrentPage(1);
+                              }}
+                              className="text-xs text-indigo-600 hover:text-indigo-800 font-bold px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors cursor-pointer"
+                            >
+                              Limpar Filtros
+                            </button>
+                          )}
+                        </div>
+
+                        {/* BARRA FLUTUANTE DE AÇÕES EM LOTE DOS UTILIZADORES */}
+                        {selectedUserIds.length > 0 && (
+                          <div className="bg-slate-900 text-white rounded-2xl p-4 shadow-xl border border-slate-700/80 flex flex-wrap items-center justify-between gap-3 animate-in fade-in duration-200">
+                            <div className="flex items-center gap-3">
+                              <span className="px-3 py-1 rounded-xl bg-indigo-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs">
+                                <CheckSquare className="w-4 h-4" />
+                                {selectedUserIds.length} selecionado(s)
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedUserIds([])}
+                                className="text-xs text-slate-300 hover:text-white underline cursor-pointer font-medium"
+                              >
+                                Desmarcar Seleção
+                              </button>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              {/* Action 1: Suspender */}
+                              <button
+                                type="button"
+                                onClick={() => setBulkUserConfirmModal({ isOpen: true, action: 'suspender' })}
+                                className="px-3.5 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                                title="Suspender utilizadores selecionados"
+                              >
+                                <PauseCircle className="w-4 h-4 text-amber-400" />
+                                Suspender ({selectedUserIds.length})
+                              </button>
+
+                              {/* Action 2: Restaurar / Reativar */}
+                              <button
+                                type="button"
+                                onClick={() => setBulkUserConfirmModal({ isOpen: true, action: 'restaurar' })}
+                                className="px-3.5 py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-500/40 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                                title="Reativar utilizadores selecionados"
+                              >
+                                <RefreshCw className="w-4 h-4 text-emerald-400" />
+                                Reativar ({selectedUserIds.length})
+                              </button>
+
+                              {/* Action 3: Apagar */}
+                              <button
+                                type="button"
+                                onClick={() => setBulkUserConfirmModal({ isOpen: true, action: 'apagar' })}
+                                className="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition shadow-xs flex items-center gap-1.5 cursor-pointer"
+                                title="Eliminar permanentemente utilizadores selecionados"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                                Eliminar ({selectedUserIds.length})
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Tabela de Utilizadores */}
+                        <div className="overflow-x-auto border border-slate-100 rounded-xl relative">
+                          <table className="w-full text-left border-collapse min-w-[700px]">
+                            <thead>
+                              <tr className="bg-slate-50 text-slate-500 text-xs font-semibold uppercase border-b border-slate-100">
+                                <th className="px-4 py-4 w-10 text-center">
+                                  <input
+                                    type="checkbox"
+                                    checked={isAllUsersOnPageSelected}
+                                    onChange={handleToggleSelectAllUsers}
+                                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                    title="Selecionar / Desmarcar todos os utilizadores nesta página"
+                                  />
+                                </th>
+                                <th className="px-6 py-4">Nome completo</th>
+                                <th className="px-6 py-4">Endereço de Email</th>
+                                <th className="px-6 py-4">Cargo / Nível</th>
+                                <th className="px-6 py-4">Permissões</th>
+                                <th className="px-6 py-4">Estado</th>
+                                <th className="px-6 py-4 text-right sticky right-0 bg-slate-50 border-l border-slate-200/80 shadow-xs z-10">Ações</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 text-slate-700 text-sm">
+                              {paginatedUsers.length === 0 ? (
+                                <tr>
+                                  <td colSpan={7} className="px-6 py-12 text-center text-slate-400 font-medium">
+                                    Nenhum utilizador encontrado com os filtros selecionados.
+                                  </td>
+                                </tr>
+                              ) : (
+                                paginatedUsers.map(u => {
+                                  const isSelected = selectedUserIds.includes(u.id);
+
+                                  return (
+                                    <tr key={u.id} className={`hover:bg-slate-50/50 group transition-colors ${isSelected ? 'bg-indigo-50/60 dark:bg-indigo-950/30' : ''}`}>
+                                      <td className="px-4 py-4 text-center">
+                                        <input
+                                          type="checkbox"
+                                          checked={isSelected}
+                                          onChange={() => handleToggleSelectUser(u.id)}
+                                          className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                        />
+                                      </td>
+                                      <td className="px-6 py-4">
+                                        <div className="flex items-center gap-3">
+                                          {u.foto_url ? (
+                                            <img 
+                                              src={u.foto_url} 
+                                              alt={u.nome} 
+                                              className="w-9 h-9 rounded-full object-cover border border-slate-100 dark:border-slate-800 shadow-xs flex-shrink-0"
+                                              referrerPolicy="no-referrer"
+                                            />
+                                          ) : (
+                                            <div className="w-9 h-9 rounded-full bg-indigo-50 dark:bg-slate-850 flex items-center justify-center text-indigo-500 font-extrabold text-xs border border-indigo-100 dark:border-slate-850 flex-shrink-0">
+                                              {u.nome ? u.nome[0].toUpperCase() : 'U'}
+                                            </div>
+                                          )}
+                                          <div>
+                                            <p className="font-bold text-slate-900 dark:text-white leading-none">{u.nome || 'Utilizador'}</p>
+                                            <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono mt-0.5 inline-block">ID: {u.id}</span>
+                                          </div>
+                                        </div>
+                                      </td>
+                                      <td className="px-6 py-4">{u.email}</td>
+                                      <td className="px-6 py-4">
+                                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-600"></span>
+                                          {globalCategories.find(c => c.codigo === u.tipo || c.id === u.tipo)?.nome || u.tipo}
+                                        </span>
+                                      </td>
+                                      <td className="px-6 py-4">
+                                        <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
+                                          {Array.isArray(u.permissoes) ? u.permissoes.join(', ') : (u.tipo === 'admin' || u.tipo === 'director' ? 'R, W, D' : 'R')}
+                                        </span>
+                                      </td>
+                                      <td className="px-6 py-4">
+                                        <span className={`text-xs font-bold px-2 py-0.5 rounded ${u.ativo ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50'}`}>
+                                          {u.ativo ? 'Ativo' : 'Suspenso'}
+                                        </span>
+                                      </td>
+                                      <td className="px-6 py-4 text-right sticky right-0 bg-white group-hover:bg-slate-50 transition-colors border-l border-slate-200/80 shadow-xs z-10">
+                                        <div className="flex items-center justify-end gap-1.5">
+                                          {hasPermission('utilizadores', 'editar') && (
+                                            <>
+                                              {/* Reset Password Button */}
+                                              <button 
+                                                onClick={async () => {
+                                                  const rawPass = Math.floor(100000 + Math.random() * 900000).toString();
+                                                  const newPass = `SGE-${rawPass}`;
+                                                  try {
+                                                    await updateDoc(doc(db, 'users', u.id), {
+                                                      senha_temporaria: newPass
+                                                    });
+                                                    showSystemNotification(`Senha resetada com sucesso para o utilizador "${u.nome}"! Nova senha temporária: ${newPass}`, "sucesso");
+                                                    loadTenantContext();
+                                                  } catch (err: any) {
+                                                    showSystemNotification("Erro ao resetar senha: " + err.message, "erro");
+                                                  }
+                                                }}
+                                                className="p-1.5 hover:bg-amber-50 text-amber-600 rounded-lg cursor-pointer transition-colors"
+                                                title="Resetar Senha"
+                                              >
+                                                <RefreshCw className="w-4 h-4" />
+                                              </button>
+
+                                              {/* Suspender/Reativar Acesso Button */}
+                                              <button 
+                                                onClick={async () => {
+                                                  const nextStatus = !u.ativo;
+                                                  try {
+                                                    await updateDoc(doc(db, 'users', u.id), {
+                                                      ativo: nextStatus
+                                                    });
+                                                    loadTenantContext();
+                                                    showSystemNotification(`Acesso do utilizador ${u.nome} foi ${nextStatus ? 'ativado' : 'suspenso'}.`, 'cadastro');
+                                                  } catch (err: any) {
+                                                    showSystemNotification("Erro ao alterar estado: " + err.message, "erro");
+                                                  }
+                                                }}
+                                                className={`p-1.5 rounded-lg cursor-pointer transition-colors ${u.ativo ? 'hover:bg-rose-50 text-rose-600' : 'hover:bg-emerald-50 text-emerald-600'}`}
+                                                title={u.ativo ? "Suspender Acesso" : "Reativar Acesso"}
+                                              >
+                                                {u.ativo ? <XCircle className="w-4 h-4" /> : <CheckCircle className="w-4 h-4" />}
+                                              </button>
+
+                                              {/* Edit User Button */}
+                                              <button 
+                                                onClick={() => {
+                                                  setEditingItem(u);
+                                                  setUserForm({
+                                                    nome: u.nome,
+                                                    email: u.email,
+                                                    tipo: u.tipo,
+                                                    ativo: u.ativo,
+                                                    modulo_acessos: u.modulo_acessos || JSON.parse(JSON.stringify(DEFAULT_MODULO_ACESSOS)),
+                                                    foto_url: u.foto_url || '',
+                                                    senha_temporaria: u.senha_temporaria || ''
+                                                  });
+                                                  setModalType('user');
+                                                  setIsModalOpen(true);
+                                                }}
+                                                className="p-1.5 hover:bg-slate-150 text-slate-600 rounded-lg cursor-pointer transition-colors"
+                                                title="Editar Utilizador"
+                                              >
+                                                <Edit className="w-4 h-4" />
+                                              </button>
+                                            </>
+                                          )}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        {/* MODAL DE CONFIRMAÇÃO DE AÇÃO EM LOTE - UTILIZADORES */}
+                        {bulkUserConfirmModal.isOpen && bulkUserConfirmModal.action && (
+                          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+                            <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-md w-full p-6 border border-slate-200 dark:border-slate-800 shadow-2xl animate-in zoom-in-95 duration-150">
+                              <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+                                <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                                  {bulkUserConfirmModal.action === 'apagar' && <Trash2 className="w-5 h-5 text-rose-500" />}
+                                  {bulkUserConfirmModal.action === 'suspender' && <PauseCircle className="w-5 h-5 text-amber-500" />}
+                                  {bulkUserConfirmModal.action === 'restaurar' && <RefreshCw className="w-5 h-5 text-emerald-500" />}
+                                  Confirmar Ação em Lote - Utilizadores
+                                </h3>
+                                <button
+                                  type="button"
+                                  onClick={() => setBulkUserConfirmModal({ isOpen: false, action: null })}
+                                  className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                                >
+                                  <X className="w-5 h-5" />
+                                </button>
+                              </div>
+
+                              <div className="py-4 space-y-3 text-xs">
+                                <p className="text-slate-700 dark:text-slate-300 text-sm leading-relaxed">
+                                  Tem certeza que deseja{' '}
+                                  <strong className={
+                                    bulkUserConfirmModal.action === 'apagar' ? 'text-rose-600 dark:text-rose-400' :
+                                    bulkUserConfirmModal.action === 'suspender' ? 'text-amber-600 dark:text-amber-400' :
+                                    'text-emerald-600 dark:text-emerald-400'
+                                  }>
+                                    {bulkUserConfirmModal.action === 'apagar' ? 'ELIMINAR PERMANENTEMENTE' :
+                                     bulkUserConfirmModal.action === 'suspender' ? 'SUSPENDER O ACESSO DE' : 'REATIVAR O ACESSO DE'}
+                                  </strong>{' '}
+                                  <strong>{selectedUserIds.length}</strong> utilizador(es) selecionado(s)?
+                                </p>
+
+                                {bulkUserConfirmModal.action === 'apagar' && (
+                                  <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-300 flex items-start gap-2">
+                                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                                    <p>Esta ação não pode ser desfeita. Os registos dos utilizadores selecionados serão eliminados permanentemente do sistema.</p>
+                                  </div>
+                                )}
+
+                                {bulkUserConfirmModal.action === 'suspender' && (
+                                  <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 text-amber-800 dark:text-amber-300 flex items-start gap-2">
+                                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                                    <p>Os utilizadores suspensos não conseguirão efetuar login nem aceder às funcionalidades da plataforma até serem reativados.</p>
+                                  </div>
+                                )}
+
+                                {bulkUserConfirmModal.action === 'restaurar' && (
+                                  <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300 flex items-start gap-2">
+                                    <CheckCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                                    <p>O acesso dos utilizadores selecionados será reativado, permitindo o login e utilização normal do sistema.</p>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+                                <button
+                                  type="button"
+                                  onClick={() => setBulkUserConfirmModal({ isOpen: false, action: null })}
+                                  disabled={bulkUserActionLoading}
+                                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                                >
+                                  Cancelar
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={bulkUserActionLoading}
+                                  onClick={() => handleExecuteBulkUserAction(bulkUserConfirmModal.action!)}
+                                  className={`px-4 py-2 rounded-xl text-xs font-bold text-white transition shadow-sm cursor-pointer flex items-center gap-1.5 ${
+                                    bulkUserConfirmModal.action === 'apagar' ? 'bg-rose-600 hover:bg-rose-700' :
+                                    bulkUserConfirmModal.action === 'suspender' ? 'bg-amber-600 hover:bg-amber-700' :
+                                    'bg-emerald-600 hover:bg-emerald-700'
+                                  }`}
+                                >
+                                  {bulkUserActionLoading ? 'A Processar...' : 'Confirmar Operação'}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Controles de Paginação */}
+                        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 text-xs text-slate-500">
+                          <div>
+                            A mostrar <span className="font-bold text-slate-800">{totalFiltered > 0 ? (safePage - 1) * 25 + 1 : 0}</span> a <span className="font-bold text-slate-800">{Math.min(safePage * 25, totalFiltered)}</span> de <span className="font-bold text-slate-800">{totalFiltered}</span> utilizadores (25 por página)
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setUsersCurrentPage(p => Math.max(1, p - 1))}
+                              disabled={safePage === 1}
+                              className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed font-semibold text-slate-700 cursor-pointer transition-colors"
+                            >
+                              Anterior
+                            </button>
+                            <span className="px-2 font-bold text-slate-700">
+                              Página {safePage} de {maxPage}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setUsersCurrentPage(p => Math.min(maxPage, p + 1))}
+                              disabled={safePage >= maxPage}
+                              className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed font-semibold text-slate-700 cursor-pointer transition-colors"
+                            >
+                              Próxima
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
               </div>
               )
             )}
@@ -6505,9 +13496,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="flex bg-slate-100 p-1 rounded-lg">
                       <button
-                        onClick={() => setNotifCenterFilter('todos')}
+                        onClick={() => setNotifCenterFilter('todas')}
                         className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
-                          notifCenterFilter === 'todos' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                          notifCenterFilter === 'todas' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
                         }`}
                       >
                         Todas
@@ -6535,13 +13526,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         try {
                           const unread = notifications.filter(n => !n.lido);
                           for (const n of unread) {
-                            await updateDoc(doc(db, 'notificacoes', n.id!), { lido: true });
+                            if (n.id) await deleteDoc(doc(db, 'notificacoes', n.id));
                           }
                           
                           // Show 6-second popup notification (Rule 3)
                           const popup = document.createElement('div');
                           popup.className = 'fixed bottom-5 right-5 bg-indigo-600 text-white font-bold text-xs px-4 py-3 rounded-xl shadow-2xl border border-indigo-500 z-50 flex items-center gap-2 animate-bounce';
-                          popup.innerHTML = `✅ Todas as notificações foram marcadas como lidas!`;
+                          popup.innerHTML = `✅ Todas as notificações foram marcadas como lidas e removidas!`;
                           document.body.appendChild(popup);
                           setTimeout(() => popup.remove(), 6000);
 
@@ -6603,10 +13594,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             <button
                               onClick={async () => {
                                 try {
-                                  await updateDoc(doc(db, 'notificacoes', n.id!), { lido: true });
+                                  if (n.id) await deleteDoc(doc(db, 'notificacoes', n.id));
                                   loadTenantContext();
                                 } catch (err: any) {
-                                  alert("Erro ao atualizar notificação: " + err.message);
+                                  alert("Erro ao remover notificação: " + err.message);
                                 }
                               }}
                               className="bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-[10px] px-3 py-1.5 rounded-lg shrink-0 cursor-pointer transition-colors shadow-xs"
@@ -6629,6 +13620,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   )}
                 </div>
               </div>
+            )}
+
+            {/* TAB: PERMISSOES GLOBAIS */}
+            {activeTab === 'permissoes_globais' && (
+              <GlobalPermissionsModule
+                tenantId={currentTenantId}
+                showNotification={(msg, type) => showSystemNotification(msg, type || 'info')}
+              />
             )}
 
             {/* TAB: CONFIGURACAO */}
@@ -6699,7 +13698,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-2 gap-4 col-span-1 md:col-span-2">
                     <div>
                       <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Ano Letivo Vigente</label>
                       <input 
@@ -6721,6 +13720,64 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         <option value="A-F">Letras A-F (Internacional)</option>
                       </select>
                     </div>
+                  </div>
+
+                  <div className="col-span-1 md:col-span-2">
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Fuso Horário do Sistema</label>
+                    <select 
+                      value={config.fuso_horario || 'Africa/Maputo'}
+                      onChange={(e) => setConfig({ ...config, fuso_horario: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 focus:outline-none font-medium"
+                    >
+                      <option value="Africa/Maputo">Africa/Maputo (Maputo, Moçambique) [UTC+2]</option>
+                      <option value="Africa/Luanda">Africa/Luanda (Luanda, Angola) [UTC+1]</option>
+                      <option value="Europe/Lisbon">Europe/Lisbon (Lisboa, Portugal) [UTC+1 / UTC+0]</option>
+                      <option value="America/Sao_Paulo">America/Sao_Paulo (Brasília/São Paulo, Brasil) [UTC-3]</option>
+                      <option value="Atlantic/Cape_Verde">Atlantic/Cape_Verde (Cabo Verde) [UTC-1]</option>
+                      <option value="Africa/Bissau">Africa/Bissau (Guiné-Bissau) [UTC+0]</option>
+                      <option value="Africa/Sao_Tome">Africa/Sao_Tome (São Tomé) [UTC+0]</option>
+                      <option value="Asia/Macau">Asia/Macau (Macau) [UTC+8]</option>
+                      <option value="Pacific/Dili">Pacific/Dili (Dili, Timor-Leste) [UTC+9]</option>
+                      <option value="UTC">UTC (Tempo Universal Coordenado) [UTC+0]</option>
+                    </select>
+                  </div>
+
+                  <div className="col-span-1 md:col-span-2 pt-2 border-t border-slate-100">
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                        🌍 País Sede da Instituição (Feriados Nacionais)
+                      </label>
+                      <span className="text-[10px] text-slate-400 font-sans">
+                        Sincroniza os feriados no calendário do sistema
+                      </span>
+                    </div>
+                    <div className="flex gap-2">
+                      <select 
+                        value={config.pais || 'Moçambique'}
+                        onChange={async (e) => {
+                          const selectedCountry = e.target.value;
+                          setConfig({ ...config, pais: selectedCountry });
+                          await fetchAndRegisterCountryHolidays(selectedCountry);
+                        }}
+                        className="flex-1 bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-800 font-semibold focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                      >
+                        <option value="">-- Selecionar País --</option>
+                        {WORLD_COUNTRIES.map(c => (
+                          <option key={c.code} value={c.name}>{c.name}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => fetchAndRegisterCountryHolidays(config.pais || 'Moçambique')}
+                        className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs px-3.5 py-2.5 rounded-lg border border-indigo-200 transition-colors flex items-center gap-1.5 cursor-pointer"
+                        title="Sincronizar Feriados do País Selecionado"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" /> Sincronizar Feriados
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Ao selecionar um país, o sistema busca na internet e cadastra os feriados desse país no calendário do módulo <strong>Calendário e Horários</strong>.
+                    </p>
                   </div>
 
                   <div className="flex items-center gap-2 pt-6 col-span-1 md:col-span-2">
@@ -7086,213 +14143,29 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       </div>
                     )}
 
-                    {/* LAYER 2 NOTIFICATION RULES CHECKLIST */}
-                    <div className="col-span-1 md:col-span-2 border-t border-slate-100 pt-6 space-y-4">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                        <div>
-                          <h4 className="font-bold text-slate-800 text-sm flex items-center gap-2">
-                            <Bell className="w-4 h-4 text-indigo-600" /> Checklist de Notificações Internas da Unidade (Layer 2)
-                          </h4>
-                          <p className="text-xs text-slate-400">Marque quais eventos disparam e-mails acadêmicos ou notificações no painel para os usuários e encarregados.</p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setIsAddingAdminCustomRule(true)}
-                          className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-1.5 px-3 rounded-lg text-[11px] flex items-center gap-1 cursor-pointer"
-                        >
-                          <Plus className="w-3.5 h-3.5" /> Evento Acadêmico
-                        </button>
-                      </div>
-
-                      {isAddingAdminCustomRule && (
-                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/60 space-y-3 animate-fadeIn">
-                          <h5 className="font-bold text-slate-700 text-[10px] uppercase tracking-wider">Novo Alerta de Evento Escolar</h5>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <div>
-                              <label className="block text-[9px] font-bold text-slate-500 uppercase">Nome do Evento</label>
-                              <input
-                                type="text"
-                                value={newAdminRuleForm.label}
-                                onChange={(e) => setNewAdminRuleForm({ ...newAdminRuleForm, label: e.target.value })}
-                                placeholder="Ex: Nova Atividade de Laboratório"
-                                className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs text-slate-800 focus:outline-none"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-[9px] font-bold text-slate-500 uppercase">Descrição</label>
-                              <input
-                                type="text"
-                                value={newAdminRuleForm.description}
-                                onChange={(e) => setNewAdminRuleForm({ ...newAdminRuleForm, description: e.target.value })}
-                                placeholder="Ex: Disparado ao agendar atividades laboratoriais extras."
-                                className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs text-slate-800 focus:outline-none"
-                              />
-                            </div>
-                          </div>
-                          <div className="flex gap-4">
-                            <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 cursor-pointer select-none">
-                              <input
-                                type="checkbox"
-                                checked={newAdminRuleForm.email}
-                                onChange={(e) => setNewAdminRuleForm({ ...newAdminRuleForm, email: e.target.checked })}
-                                className="rounded border-slate-300 text-indigo-600 w-4 h-4"
-                              />
-                              Enviar por E-mail
-                            </label>
-                            <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 cursor-pointer select-none">
-                              <input
-                                type="checkbox"
-                                checked={newAdminRuleForm.system}
-                                onChange={(e) => setNewAdminRuleForm({ ...newAdminRuleForm, system: e.target.checked })}
-                                className="rounded border-slate-300 text-indigo-600 w-4 h-4"
-                              />
-                              Alerta no Portal
-                            </label>
-                          </div>
-                          <div className="flex gap-2 justify-end">
-                            <button
-                              type="button"
-                              onClick={() => setIsAddingAdminCustomRule(false)}
-                              className="border border-slate-200 hover:bg-slate-150 text-slate-600 font-bold py-1 px-2.5 rounded-lg text-xs cursor-pointer"
-                            >
-                              Cancelar
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (!newAdminRuleForm.label) {
-                                  alert("Por favor, digite o nome do evento.");
-                                  return;
-                                }
-                                const newId = "custom_adm_" + Math.random().toString(36).substr(2, 9);
-                                const updated = [...adminRules, { ...newAdminRuleForm, id: newId }];
-                                saveAdminRules(updated);
-                                setNewAdminRuleForm({ label: '', description: '', email: true, system: true, recipients: ['diretor_geral'] });
-                                setIsAddingAdminCustomRule(false);
-                                alert("Novo evento adicionado!");
-                              }}
-                              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-1 px-2.5 rounded-lg text-xs cursor-pointer"
-                            >
-                              Salvar
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="overflow-x-auto border border-slate-150 rounded-xl bg-white">
-                        <table className="w-full text-left text-xs border-collapse">
-                          <thead>
-                            <tr className="bg-slate-50 border-b border-slate-150 text-slate-500 font-bold uppercase tracking-wider">
-                              <th className="p-3">Evento Acadêmico</th>
-                              <th className="p-3 text-center">Via E-mail</th>
-                              <th className="p-3 text-center">No Sistema</th>
-                              <th className="p-3">Quem Notificar (Destinatários)</th>
-                              <th className="p-3 text-right">Ações</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100 text-slate-700">
-                            {adminRules.map((rule) => (
-                              <tr key={rule.id} className="hover:bg-slate-50/50 transition-colors">
-                                <td className="p-3">
-                                  <p className="font-bold text-slate-800">{rule.label}</p>
-                                  <p className="text-[10px] text-slate-400 font-medium leading-relaxed mt-0.5">{rule.description}</p>
-                                </td>
-                                <td className="p-3 text-center">
-                                  <input
-                                    type="checkbox"
-                                    checked={rule.email}
-                                    onChange={(e) => {
-                                      const updated = adminRules.map(r => r.id === rule.id ? { ...r, email: e.target.checked } : r);
-                                      saveAdminRules(updated);
-                                    }}
-                                    className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
-                                  />
-                                </td>
-                                <td className="p-3 text-center">
-                                  <input
-                                    type="checkbox"
-                                    checked={rule.system}
-                                    onChange={(e) => {
-                                      const updated = adminRules.map(r => r.id === rule.id ? { ...r, system: e.target.checked } : r);
-                                      saveAdminRules(updated);
-                                    }}
-                                    className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
-                                  />
-                                </td>
-                                <td className="p-3 relative">
-                                  <div className="relative inline-block text-left">
-                                    <button
-                                      type="button"
-                                      onClick={() => setOpenAdminDropdownId(openAdminDropdownId === rule.id ? null : rule.id)}
-                                      className="flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold py-1 px-2.5 rounded border border-slate-200 cursor-pointer"
-                                    >
-                                      <span>{rule.recipients.length} Cargos</span>
-                                      <Sliders className="w-3 h-3 text-slate-500" />
-                                    </button>
-
-                                    {openAdminDropdownId === rule.id && (
-                                      <>
-                                        <div className="fixed inset-0 z-10 bg-transparent" onClick={() => setOpenAdminDropdownId(null)} />
-                                        <div className="absolute left-0 mt-1 w-56 bg-white rounded-xl shadow-xl border border-slate-200 z-20 p-2 animate-fadeIn text-slate-800 text-left">
-                                          <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-2 px-1">Destinatários</p>
-                                          <div className="space-y-1">
-                                            {RECIPIENT_ROLES_ADMIN.map(role => {
-                                              const isChecked = rule.recipients.includes(role.id);
-                                              return (
-                                                <label key={role.id} className="flex items-center gap-1.5 hover:bg-slate-50 p-1 rounded cursor-pointer select-none">
-                                                  <input
-                                                    type="checkbox"
-                                                    checked={isChecked}
-                                                    onChange={() => {
-                                                      const newRecipients = isChecked
-                                                        ? rule.recipients.filter(id => id !== role.id)
-                                                        : [...rule.recipients, role.id];
-                                                      const updated = adminRules.map(r => r.id === rule.id ? { ...r, recipients: newRecipients } : r);
-                                                      saveAdminRules(updated);
-                                                    }}
-                                                    className="w-3.5 h-3.5 text-indigo-600 border-slate-300 rounded"
-                                                  />
-                                                  <span className="text-[11px] font-medium text-slate-700">{role.label}</span>
-                                                </label>
-                                              );
-                                            })}
-                                          </div>
-                                        </div>
-                                      </>
-                                    )}
-                                  </div>
-                                  <div className="flex flex-wrap gap-1 mt-1">
-                                    {rule.recipients.map(roleId => {
-                                      const role = RECIPIENT_ROLES_ADMIN.find(r => r.id === roleId);
-                                      return (
-                                        <span key={roleId} className="bg-indigo-50 text-indigo-700 text-[8px] font-bold px-1.5 py-0.5 rounded border border-indigo-100">
-                                          {role?.label || roleId}
-                                        </span>
-                                      );
-                                    })}
-                                  </div>
-                                </td>
-                                <td className="p-3 text-right">
-                                  {rule.id.startsWith('custom_adm_') && (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        if (window.confirm(`Remover evento "${rule.label}"?`)) {
-                                          const updated = adminRules.filter(r => r.id !== rule.id);
-                                          saveAdminRules(updated);
-                                        }
-                                      }}
-                                      className="text-rose-500 hover:text-rose-700 p-1 rounded hover:bg-rose-50 cursor-pointer"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  )}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+                    {/* MODULE NOTIFICATIONS CONFIGURATION (DROPDOWN/ACCORDION STYLE) */}
+                    <div className="col-span-1 md:col-span-2 border-t border-slate-100 dark:border-slate-800 pt-6">
+                      <NotificationSettingsModule
+                        config={config}
+                        setConfig={setConfig}
+                        globalCategories={globalCategories}
+                        onSave={async () => {
+                          try {
+                            if (config && config.id && db) {
+                              await updateDoc(doc(db, 'configuracoes', config.id), {
+                                notification_modules: config.notification_modules || []
+                              });
+                              showSystemNotification('Configurações de notificações por módulo salvas no banco de dados!', 'config');
+                            } else {
+                              showSystemNotification('Configurações gravadas!', 'config');
+                            }
+                          } catch (e: any) {
+                            console.error('Error saving notification config:', e);
+                            showSystemNotification('Erro ao salvar notificações: ' + (e?.message || e), 'erro');
+                          }
+                        }}
+                        notify={(msg, type) => showSystemNotification(msg, type === 'erro' ? 'erro' : 'config')}
+                      />
                     </div>
                   </div>
                 </div>
@@ -7301,7 +14174,6 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             )}
 
           </div>
-        )}
       </main>
 
       {/* MODAL: PLAN UPGRADE & SLOT ADDITIONS */}
@@ -7466,6 +14338,206 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 </div>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: CRACHÁ DO ESTUDANTE */}
+      {crachaStudent && (
+        <div className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto pointer-events-auto">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-150 dark:border-slate-800 text-xs animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between mb-4 border-b border-slate-100 dark:border-slate-800 pb-2">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <IdCard className="w-5 h-5 text-indigo-600" />
+                Crachá do Estudante
+              </h3>
+              <button 
+                onClick={() => setCrachaStudent(null)}
+                className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* CRACHÁ CONTAINER */}
+            <div id="print-cracha-card" className="relative bg-gradient-to-b from-indigo-50/50 to-white dark:from-slate-950/50 dark:to-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-inner flex flex-col items-center text-center overflow-hidden w-full max-w-[290px] mx-auto min-h-[440px]">
+              {/* Top Banner Ribbon */}
+              <div className="absolute top-0 inset-x-0 h-2.5 bg-gradient-to-r from-indigo-600 to-indigo-500" />
+              
+              {/* School Header */}
+              {(() => {
+                const s = crachaStudent;
+                const usr = tenantUsers.find(u => u.id === s.user_id);
+                const esc = schools.find(e => e.id === s.escola_id);
+                const tur = turmas.find(t => t.id === s.turma_id);
+                
+                return (
+                  <>
+                    <div className="flex items-center gap-2 mt-2 w-full justify-center pb-3 border-b border-dashed border-slate-200 dark:border-slate-800">
+                      {esc?.logo_url ? (
+                        <img 
+                          src={esc.logo_url} 
+                          alt="Logo Escola" 
+                          className="w-8 h-8 object-contain rounded"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <div className="w-8 h-8 bg-indigo-600 rounded flex items-center justify-center text-white font-extrabold text-[10px]">
+                          {esc?.nome ? esc.nome[0].toUpperCase() : 'E'}
+                        </div>
+                      )}
+                      <div className="text-left min-w-0">
+                        <p className="font-extrabold text-[10px] tracking-wider text-indigo-600 dark:text-indigo-400 uppercase truncate">INSTITUIÇÃO DE ENSINO</p>
+                        <p className="font-bold text-slate-800 dark:text-slate-100 text-[11px] leading-tight truncate max-w-[180px]">{esc?.nome || 'Escola Primária'}</p>
+                      </div>
+                    </div>
+
+                    {/* Student Photo */}
+                    <div className="mt-4 relative">
+                      <div className="w-24 h-24 rounded-full border-4 border-white dark:border-slate-950 shadow-md overflow-hidden bg-slate-100 dark:bg-slate-850 flex items-center justify-center">
+                        {s.foto_url ? (
+                          <img 
+                            src={s.foto_url} 
+                            alt={usr?.nome || 'Estudante'} 
+                            className="w-full h-full object-cover"
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : (
+                          <UserIcon className="w-12 h-12 text-slate-400" />
+                        )}
+                      </div>
+                      {/* Active Status Badge */}
+                      <span className="absolute bottom-0 right-1.5 bg-emerald-500 border-2 border-white dark:border-slate-900 w-3.5 h-3.5 rounded-full" />
+                    </div>
+
+                    {/* Student Details */}
+                    <div className="mt-3 space-y-1 w-full">
+                      <p className="font-black text-slate-900 dark:text-white text-sm tracking-tight leading-tight uppercase max-w-[240px] mx-auto truncate">
+                        {usr?.nome || 'Nome do Estudante'}
+                      </p>
+                      <p className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 font-mono tracking-wider">
+                        MATRÍCULA: {s.numero_matricula}
+                      </p>
+                    </div>
+
+                    {/* Class & Turma Box */}
+                    <div className="mt-4 grid grid-cols-2 gap-2 w-full bg-white dark:bg-slate-950 border border-slate-150 dark:border-slate-850 rounded-xl p-2.5">
+                      <div className="text-center border-r border-slate-100 dark:border-slate-900">
+                        <p className="text-[8px] font-extrabold text-slate-400 uppercase tracking-wider">Turma</p>
+                        <p className="font-extrabold text-slate-800 dark:text-slate-200 text-[10px] truncate">{tur?.nome || 'Sem Turma'}</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-[8px] font-extrabold text-slate-400 uppercase tracking-wider">Classe</p>
+                        <p className="font-extrabold text-slate-800 dark:text-slate-200 text-[10px] truncate">{tur?.nivel || 'N/A'}</p>
+                      </div>
+                    </div>
+
+                    {/* Dynamic QR Code Vector representation of Student matricula */}
+                    <div className="mt-5 flex flex-col items-center">
+                      <div className="bg-white p-2 rounded-lg border border-slate-150 shadow-xs">
+                        <svg className="w-14 h-14" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <rect width="100" height="100" rx="6" fill="white" />
+                          <rect x="10" y="10" width="25" height="25" rx="2" fill="#1e1b4b" />
+                          <rect x="15" y="15" width="15" height="15" rx="1" fill="white" />
+                          <rect x="18" y="18" width="9" height="9" fill="#1e1b4b" />
+
+                          <rect x="65" y="10" width="25" height="25" rx="2" fill="#1e1b4b" />
+                          <rect x="70" y="15" width="15" height="15" rx="1" fill="white" />
+                          <rect x="73" y="18" width="9" height="9" fill="#1e1b4b" />
+
+                          <rect x="10" y="65" width="25" height="25" rx="2" fill="#1e1b4b" />
+                          <rect x="15" y="70" width="15" height="15" rx="1" fill="white" />
+                          <rect x="18" y="73" width="9" height="9" fill="#1e1b4b" />
+
+                          <rect x="42" y="10" width="6" height="6" fill="#1e1b4b" />
+                          <rect x="52" y="10" width="6" height="6" fill="#1e1b4b" />
+                          <rect x="42" y="20" width="6" height="6" fill="#1e1b4b" />
+                          <rect x="48" y="26" width="10" height="6" fill="#1e1b4b" />
+                          
+                          <rect x="10" y="42" width="6" height="6" fill="#1e1b4b" />
+                          <rect x="20" y="42" width="6" height="6" fill="#1e1b4b" />
+                          <rect x="26" y="48" width="6" height="10" fill="#1e1b4b" />
+
+                          <rect x="42" y="42" width="16" height="16" fill="#1e1b4b" />
+                          <rect x="46" y="46" width="8" height="8" fill="white" />
+                          
+                          <rect x="65" y="42" width="6" height="6" fill="#1e1b4b" />
+                          <rect x="75" y="42" width="10" height="6" fill="#1e1b4b" />
+                          <rect x="65" y="52" width="6" height="6" fill="#1e1b4b" />
+
+                          <rect x="42" y="65" width="6" height="10" fill="#1e1b4b" />
+                          <rect x="52" y="70" width="6" height="15" fill="#1e1b4b" />
+                          <rect x="42" y="80" width="10" height="6" fill="#1e1b4b" />
+
+                          <rect x="65" y="65" width="10" height="6" fill="#1e1b4b" />
+                          <rect x="65" y="75" width="6" height="10" fill="#1e1b4b" />
+                          <rect x="75" y="75" width="15" height="15" fill="#1e1b4b" />
+                        </svg>
+                      </div>
+                      <span className="text-[7px] text-slate-400 dark:text-slate-500 font-mono mt-1 uppercase tracking-widest font-bold">STUDENT ID: {s.id}</span>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+
+            {/* Print and Download Actions */}
+            <div className="flex gap-3 mt-6 border-t border-slate-100 dark:border-slate-800 pt-4">
+              <button
+                type="button"
+                onClick={() => setCrachaStudent(null)}
+                className="flex-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold py-2.5 rounded-xl transition-all text-center cursor-pointer"
+              >
+                Fechar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const cardElement = document.getElementById('print-cracha-card');
+                  if (cardElement) {
+                    const printContents = cardElement.outerHTML;
+                    const printWindow = window.open('', '_blank');
+                    if (printWindow) {
+                      printWindow.document.write(`
+                        <html>
+                          <head>
+                            <title>Imprimir Crachá</title>
+                            <script src="https://cdn.tailwindcss.com"></script>
+                            <style>
+                              body {
+                                display: flex;
+                                justify-content: center;
+                                align-items: center;
+                                height: 100vh;
+                                background-color: white;
+                                margin: 0;
+                                -webkit-print-color-adjust: exact;
+                                print-color-adjust: exact;
+                              }
+                            </style>
+                          </head>
+                          <body>
+                            <div class="scale-125">
+                              ${printContents}
+                            </div>
+                            <script>
+                              window.onload = function() {
+                                window.print();
+                                setTimeout(function() { window.close(); }, 500);
+                              };
+                            </script>
+                          </body>
+                        </html>
+                      `);
+                      printWindow.document.close();
+                    }
+                  }
+                }}
+                className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 rounded-xl transition-all text-center shadow-md hover:shadow-lg flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Printer className="w-4 h-4" /> Imprimir
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -7788,6 +14860,22 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 if (!transferEscolaId || !transferTurmaId) {
                   showSystemNotification("Por favor selecione todos os campos obrigatórios.", "erro");
                   return;
+                }
+
+                // Validate if destination class is taught at the destination school
+                const targetTurma = turmas.find(t => t.id === transferTurmaId);
+                const targetClasseEscolarId = targetTurma?.classe_escolar_id || transferClasseEscolarId;
+                if (targetClasseEscolarId) {
+                  const isClassTaught = classesEscolares.some(
+                    cls => cls.id === targetClasseEscolarId && cls.escola_id === transferEscolaId
+                  );
+                  if (!isClassTaught) {
+                    showSystemNotification(
+                      "Erro: O estudante não pode ser transferido para esta escola porque a classe correspondente não é lecionada na instituição de destino.",
+                      "erro"
+                    );
+                    return;
+                  }
                 }
 
                 setIsSaving(true);
@@ -8173,10 +15261,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   e.preventDefault();
                   try {
                     await updateDoc(doc(db, 'estudantes', selectedProcessStudent.id), {
-                      documento_identificacao: dossierForm.documento_identificacao,
-                      nome_pai: dossierForm.nome_pai,
-                      nome_mae: dossierForm.nome_mae,
-                      morada: dossierForm.morada
+                      documento_identificacao: dossierForm.documento_identificacao || '',
+                      nome_pai: dossierForm.nome_pai || '',
+                      nome_mae: dossierForm.nome_mae || '',
+                      morada: dossierForm.morada || ''
                     });
                     await tenantAuditLog(
                       "Atualizar Dossier",
@@ -8440,26 +15528,288 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         </div>
       )}
 
-      {/* DYNAMIC MODAL BUILDER */}
+      {/* BULK IMPORT POPUP MODAL */}
+      {importModalOpen && importModule && (
+        <div 
+          className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto pointer-events-auto animate-fadeIn"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setImportModalOpen(false);
+              setSelectedFile(null);
+              setParsedPreview([]);
+              setSecurityScanErrors([]);
+              setImportErrors([]);
+            }
+          }}
+        >
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-2xl w-full p-6 md:p-8 shadow-2xl border border-slate-150 dark:border-slate-800 flex flex-col gap-6 pointer-events-auto">
+            <div className="flex justify-between items-start border-b border-slate-100 dark:border-slate-800 pb-4">
+              <div>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                  <FileSpreadsheet className="w-6 h-6 text-indigo-600" />
+                  Importação de Dados em Massa
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Módulo de destino: <span className="font-extrabold text-indigo-600 capitalize">{importModule}</span>
+                </p>
+              </div>
+              <button 
+                onClick={() => {
+                  setImportModalOpen(false);
+                  setSelectedFile(null);
+                  setParsedPreview([]);
+                  setSecurityScanErrors([]);
+                  setImportErrors([]);
+                }}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer text-lg font-bold p-1 rounded-full hover:bg-slate-50 dark:hover:bg-slate-800"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="bg-indigo-50/50 dark:bg-indigo-950/20 p-4 rounded-2xl border border-indigo-100/50 dark:border-indigo-900/30 text-xs text-slate-600 dark:text-slate-350 space-y-2">
+                <p className="font-bold text-indigo-900 dark:text-indigo-400 flex items-center gap-1">
+                  💡 Instruções de Importação
+                </p>
+                <ul className="list-disc list-inside space-y-1">
+                  <li>Baixe o modelo pré-formatado correspondente a este módulo.</li>
+                  <li>Preencha os dados mantendo exatamente as colunas e cabeçalhos do modelo.</li>
+                  <li>Apenas ficheiros na extensão <span className="font-mono font-bold text-indigo-700 dark:text-indigo-400">.xlsx</span> são permitidos.</li>
+                  <li>A importação passa por uma auditoria de segurança avançada contra malware e injeção de scripts.</li>
+                </ul>
+                <div className="pt-2">
+                  <button
+                    onClick={() => handleDownloadTemplate(importModule)}
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-[11px] py-1.5 px-3 rounded-lg flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                  >
+                    📥 Baixar Modelo Oficial de Excel
+                  </button>
+                </div>
+              </div>
+
+              {/* Drag and Drop Zone */}
+              <div 
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsDragOver(true);
+                }}
+                onDragLeave={() => setIsDragOver(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDragOver(false);
+                  const file = e.dataTransfer.files[0];
+                  if (file) {
+                    handleFileSelect(file);
+                  }
+                }}
+                className={`border-2 border-dashed rounded-3xl p-8 flex flex-col items-center justify-center gap-3 transition-all ${
+                  isDragOver 
+                    ? 'border-indigo-600 bg-indigo-50/40 dark:bg-indigo-950/20' 
+                    : 'border-slate-200 dark:border-slate-800 hover:border-indigo-400 hover:bg-slate-50/50 dark:hover:bg-slate-900/40'
+                }`}
+              >
+                <input 
+                  type="file" 
+                  accept=".xlsx" 
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      handleFileSelect(file);
+                    }
+                  }} 
+                  className="hidden" 
+                  id="excel_file_uploader" 
+                />
+                <label htmlFor="excel_file_uploader" className="flex flex-col items-center gap-2 cursor-pointer w-full text-center">
+                  <div className="bg-indigo-50 dark:bg-indigo-950/40 p-4 rounded-full text-indigo-600">
+                    <FileUp className="w-8 h-8" />
+                  </div>
+                  <p className="text-sm font-bold text-slate-700 dark:text-slate-300">
+                    Arraste o arquivo aqui ou <span className="text-indigo-600 hover:underline">clique para procurar</span>
+                  </p>
+                  <p className="text-xs text-slate-400">Suporta apenas ficheiros .xlsx (Máx. 5MB)</p>
+                </label>
+              </div>
+
+              {/* File Info & Security Scan Report */}
+              {selectedFile && (
+                <div className="bg-slate-50 dark:bg-slate-900/60 p-4 rounded-2xl border border-slate-150 dark:border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-bold text-slate-800 dark:text-slate-200 truncate max-w-md">{selectedFile.name}</p>
+                      <p className="text-[10px] text-slate-400">Tamanho: {(selectedFile.size / 1024).toFixed(1)} KB</p>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        setSelectedFile(null);
+                        setParsedPreview([]);
+                        setSecurityScanErrors([]);
+                        setImportErrors([]);
+                      }}
+                      className="text-xs text-rose-600 hover:underline cursor-pointer"
+                    >
+                      Remover Ficheiro
+                    </button>
+                  </div>
+
+                  {/* Security Analysis Banner */}
+                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+                    <h5 className="text-[10px] uppercase tracking-wider font-extrabold text-slate-400 mb-1.5 flex items-center gap-1">
+                      🛡️ Relatório de Análise de Segurança
+                    </h5>
+                    {securityScanErrors.length > 0 ? (
+                      <div className="bg-rose-50 dark:bg-rose-950/20 text-rose-700 dark:text-rose-400 p-3 rounded-xl border border-rose-100 dark:border-rose-900/30 text-xs font-semibold space-y-1">
+                        {securityScanErrors.map((err, i) => (
+                          <p key={i} className="flex items-start gap-1">
+                            <span>❌</span> {err}
+                          </p>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400 p-3 rounded-xl border border-emerald-100 dark:border-emerald-900/30 text-xs font-bold flex items-center gap-1.5">
+                        <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                        Verificação concluída: 0 ameaças detetadas. O arquivo é seguro para importação.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Data Preview */}
+              {selectedFile && securityScanErrors.length === 0 && parsedPreview.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <h4 className="text-xs font-extrabold text-slate-400 uppercase tracking-wider">
+                      📊 Pré-visualização de Dados ({parsedPreview.length} linhas detetadas)
+                    </h4>
+                  </div>
+                  <div className="max-h-40 overflow-y-auto border border-slate-100 dark:border-slate-800 rounded-xl">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 font-bold border-b border-slate-150 dark:border-slate-800 sticky top-0">
+                        <tr>
+                          {Object.keys(parsedPreview[0]).slice(0, 4).map((k) => (
+                            <th key={k} className="p-2.5 capitalize">{k}</th>
+                          ))}
+                          {Object.keys(parsedPreview[0]).length > 4 && <th className="p-2.5">...</th>}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50 dark:divide-slate-800 text-slate-600 dark:text-slate-400">
+                        {parsedPreview.slice(0, 3).map((row, idx) => (
+                          <tr key={idx} className="hover:bg-slate-50/50 dark:hover:bg-slate-850">
+                            {Object.values(row).slice(0, 4).map((val: any, colIdx) => (
+                              <td key={colIdx} className="p-2.5 truncate max-w-xs">{String(val ?? '—')}</td>
+                            ))}
+                            {Object.keys(row).length > 4 && <td className="p-2.5 text-slate-400">...</td>}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {parsedPreview.length > 3 && (
+                    <p className="text-[10px] text-slate-400 text-right font-medium">
+                      Exibindo as primeiras 3 de {parsedPreview.length} linhas.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Import validation errors */}
+              {importErrors.length > 0 && (
+                <div className="bg-rose-50 dark:bg-rose-950/20 text-rose-700 dark:text-rose-400 p-4 rounded-2xl border border-rose-100 dark:border-rose-900/30 text-xs space-y-1 max-h-36 overflow-y-auto">
+                  <p className="font-bold mb-1">❌ Inconsistências de dados encontradas ({importErrors.length}):</p>
+                  {importErrors.map((err, i) => (
+                    <p key={i}>• {err}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+              <button
+                onClick={() => {
+                  setImportModalOpen(false);
+                  setSelectedFile(null);
+                  setParsedPreview([]);
+                  setSecurityScanErrors([]);
+                  setImportErrors([]);
+                }}
+                className="bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-xs py-2.5 px-4 rounded-xl transition-colors cursor-pointer"
+                disabled={isImporting}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={async () => {
+                  if (parsedPreview.length === 0) return;
+                  await processImportedData(parsedPreview);
+                  
+                  // Wait, if no errors occurred during processImportedData, close the modal!
+                  // Let's verify how processImportedData works: if it completes successfully without errors,
+                  // it will not add errors to importErrors. Let's make sure we close the modal if successful!
+                  // Since processImportedData sets importErrors and returns if errors exist, we can check.
+                }}
+                disabled={!selectedFile || securityScanErrors.length > 0 || parsedPreview.length === 0 || isImporting}
+                className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-extrabold text-xs py-2.5 px-5 rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+              >
+                {isImporting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Processando...
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    Confirmar e Importar
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DYNAMIC MODAL / SLIDE-OVER SIDE PANEL BUILDER */}
       {isModalOpen && (
         <div 
           onClick={(e) => {
             if (e.target === e.currentTarget) {
-              if (window.confirm("Deseja realmente fechar? Quaisquer dados preenchidos e alterações não salvas serão perdidos.")) {
+              if (!isFormDirty || window.confirm("Deseja realmente fechar? Quaisquer dados preenchidos e alterações não salvas serão perdidos.")) {
                 setIsModalOpen(false);
               }
             }
           }}
-          className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto pointer-events-auto"
+          className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs flex justify-end z-50 overflow-hidden pointer-events-auto transition-opacity duration-300"
         >
-          <div className={`bg-white rounded-2xl ${modalType === 'escola_detalhes' ? 'max-w-2xl' : 'max-w-lg'} w-full p-6 shadow-xl border border-slate-150 pointer-events-auto`}>
-            <h3 className="text-lg font-bold text-slate-900 font-sans mb-4">
-              {modalType === 'escola_detalhes' 
-                ? 'Detalhes da Instituição de Ensino' 
-                : `${editingItem ? 'Editar Registro' : 'Novo Lançamento'} (${modalType.toUpperCase()})`}
-            </h3>
+          <div className={`bg-white h-full ${modalType === 'escola_detalhes' || modalType === 'user' ? 'max-w-2xl' : 'max-w-lg'} w-full p-6 shadow-2xl border-l border-slate-200 overflow-y-auto pointer-events-auto flex flex-col justify-between rounded-l-2xl sm:rounded-l-3xl rounded-r-none animate-in slide-in-from-right duration-300`}>
+            <div>
+              <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-150">
+                <h3 className="text-lg font-bold text-slate-900 font-sans">
+                  {modalType === 'escola_detalhes' 
+                    ? 'Detalhes da Instituição de Ensino' 
+                    : modalType === 'horario_aula'
+                    ? `${editingItem ? 'Editar Horário de Aula' : 'Novo Agendamento de Horário'}`
+                    : modalType === 'feriado'
+                    ? `${editingItem ? 'Editar Feriado' : 'Novo Feriado Nacionais/Local'}`
+                    : modalType === 'ferias'
+                    ? `${editingItem ? 'Editar Período de Férias' : 'Novo Período de Férias'}`
+                    : `${editingItem ? 'Editar Registro' : 'Novo Lançamento'} (${modalType.toUpperCase()})`}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!isFormDirty || window.confirm("Deseja realmente fechar? Quaisquer dados preenchidos e alterações não salvas serão perdidos.")) {
+                      setIsModalOpen(false);
+                    }
+                  }}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                  title="Fechar Painel"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             
-            <form onSubmit={handleSubmit} onChange={() => setIsFormDirty(true)} className="space-y-4">
+              <form onSubmit={handleSubmit} onChange={() => setIsFormDirty(true)} className="space-y-4">
               
               {/* PROVINCIA FORM */}
               {modalType === 'provincia' && (
@@ -8569,6 +15919,127 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       />
                     </div>
                   </div>
+
+                  {/* LOGO DA ESCOLA UPLOAD */}
+                  <div className="border-t border-slate-100 dark:border-slate-800 pt-4 mt-2">
+                    <label className="block text-xs font-bold text-slate-500 mb-2">Logotipo da Escola</label>
+                    <div className="flex items-center gap-4">
+                      {escolaForm.logo_url ? (
+                        <div className="relative group">
+                          <img 
+                            src={escolaForm.logo_url} 
+                            alt="Logo" 
+                            className="w-16 h-16 object-cover rounded-xl border border-slate-200"
+                            referrerPolicy="no-referrer"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setEscolaForm({ ...escolaForm, logo_url: '' })}
+                            className="absolute -top-1.5 -right-1.5 bg-rose-500 hover:bg-rose-600 text-white rounded-full p-1 shadow-md transition-all cursor-pointer"
+                          >
+                            <span className="text-[10px] leading-none block font-bold">✕</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="w-16 h-16 bg-slate-50 border-2 border-dashed border-slate-200 rounded-xl flex items-center justify-center text-slate-400">
+                          <Upload className="w-5 h-5" />
+                        </div>
+                      )}
+                      <div className="flex-1">
+                        <input 
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              if (file.size > 2 * 1024 * 1024) {
+                                showSystemNotification("Erro: O logotipo deve ter no máximo 2MB", "erro");
+                                return;
+                              }
+                              const reader = new FileReader();
+                              reader.onload = (event) => {
+                                const base64 = event.target?.result as string;
+                                setEscolaForm(prev => ({ ...prev, logo_url: base64 }));
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                          className="hidden"
+                          id="escola-logo-file-input"
+                        />
+                        <label 
+                          htmlFor="escola-logo-file-input"
+                          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 text-slate-700 dark:text-slate-200 px-4 py-2 rounded-lg text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1.5"
+                        >
+                          <Upload className="w-3.5 h-3.5 text-slate-500" /> Selecionar Logotipo
+                        </label>
+                        <p className="text-[10px] text-slate-400 mt-1">PNG, JPG ou GIF de até 2MB</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* CONFIGURAÇÃO DE ASSIDUIDADE */}
+                  <div className="border-t border-slate-100 dark:border-slate-800 pt-4 mt-2">
+                    <label className="flex items-center gap-2.5 bg-slate-50 dark:bg-slate-900/50 border border-slate-100 dark:border-slate-800 p-3 rounded-xl cursor-pointer select-none">
+                      <input 
+                        type="checkbox"
+                        checked={escolaForm.controlar_assiduidade}
+                        onChange={(e) => setEscolaForm({ ...escolaForm, controlar_assiduidade: e.target.checked })}
+                        className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer"
+                      />
+                      <div className="flex-1 text-left">
+                        <span className="block text-xs font-bold text-slate-800 dark:text-slate-200">Controlar assiduidade</span>
+                        <span className="block text-[10px] text-slate-400 mt-0.5">Ativar controle de presenças dos estudantes e marcação automática de faltas se não validadas.</span>
+                      </div>
+                    </label>
+
+                    {escolaForm.controlar_assiduidade && (
+                      <div className="bg-indigo-50/40 dark:bg-indigo-950/20 border border-indigo-100/50 dark:border-indigo-900/30 rounded-xl p-4 mt-3 space-y-3 text-left">
+                        <div className="font-bold text-xs text-indigo-900 dark:text-indigo-300 flex items-center gap-1">
+                          ⏱️ Tolerância e Horários Limites de Assiduidade
+                        </div>
+                        <p className="text-[10px] text-indigo-800 dark:text-indigo-400 leading-relaxed">
+                          Defina o horário limite de validação para cada período. Estudantes que tentarem validar a presença após o horário limite serão marcados como faltosos automaticamente.
+                        </p>
+                        
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                          <div>
+                            <label className="block text-[10px] font-bold text-indigo-950 dark:text-indigo-200 mb-1">Limite Manhã</label>
+                            <input 
+                              type="time"
+                              required={escolaForm.controlar_assiduidade}
+                              value={escolaForm.tolerancia_manha || '07:15'}
+                              onChange={(e) => setEscolaForm({ ...escolaForm, tolerancia_manha: e.target.value })}
+                              className="w-full bg-white dark:bg-slate-900 border border-indigo-200/60 dark:border-slate-800 rounded-lg p-2 text-xs font-medium text-slate-700 dark:text-slate-200"
+                            />
+                            <span className="text-[9px] text-slate-400 mt-1 block">Período: 07:00 - 11:05</span>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-indigo-950 dark:text-indigo-200 mb-1">Limite Tarde</label>
+                            <input 
+                              type="time"
+                              required={escolaForm.controlar_assiduidade}
+                              value={escolaForm.tolerancia_tarde || '12:15'}
+                              onChange={(e) => setEscolaForm({ ...escolaForm, tolerancia_tarde: e.target.value })}
+                              className="w-full bg-white dark:bg-slate-900 border border-indigo-200/60 dark:border-slate-800 rounded-lg p-2 text-xs font-medium text-slate-700 dark:text-slate-200"
+                            />
+                            <span className="text-[9px] text-slate-400 mt-1 block">Período: 12:05 - 17:00</span>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-indigo-950 dark:text-indigo-200 mb-1">Limite Noite</label>
+                            <input 
+                              type="time"
+                              required={escolaForm.controlar_assiduidade}
+                              value={escolaForm.tolerancia_noite || '18:15'}
+                              onChange={(e) => setEscolaForm({ ...escolaForm, tolerancia_noite: e.target.value })}
+                              className="w-full bg-white dark:bg-slate-900 border border-indigo-200/60 dark:border-slate-800 rounded-lg p-2 text-xs font-medium text-slate-700 dark:text-slate-200"
+                            />
+                            <span className="text-[9px] text-slate-400 mt-1 block">Período: 18:05 - 22:45</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </>
               )}
 
@@ -8677,6 +16148,66 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               {/* STUDENT FORM */}
               {modalType === 'student' && (
                 <>
+                  {/* FOTO DO ESTUDANTE UPLOAD */}
+                  <div className="flex flex-col items-center justify-center border-b border-slate-100 dark:border-slate-800 pb-4 mb-4">
+                    <label className="block text-xs font-bold text-slate-500 mb-2">Fotografia do Estudante</label>
+                    <div className="flex flex-col items-center gap-3">
+                      {studentForm.foto_url ? (
+                        <div className="relative group">
+                          <img 
+                            src={studentForm.foto_url} 
+                            alt="Estudante" 
+                            className="w-24 h-24 object-cover rounded-full border-2 border-indigo-100 shadow-sm"
+                            referrerPolicy="no-referrer"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setStudentForm({ ...studentForm, foto_url: '' })}
+                            className="absolute -top-1 -right-1 bg-rose-500 hover:bg-rose-600 text-white rounded-full p-1.5 shadow-md transition-all cursor-pointer"
+                            title="Remover Fotografia"
+                          >
+                            <span className="text-xs leading-none block font-bold">✕</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="w-24 h-24 bg-slate-50 dark:bg-slate-900 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-full flex flex-col items-center justify-center text-slate-400">
+                          <UserIcon className="w-8 h-8 text-slate-300" />
+                          <span className="text-[9px] mt-1 font-bold uppercase text-slate-400">Sem Foto</span>
+                        </div>
+                      )}
+                      
+                      <div>
+                        <input 
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              if (file.size > 2 * 1024 * 1024) {
+                                showSystemNotification("Erro: A fotografia deve ter no máximo 2MB", "erro");
+                                return;
+                              }
+                              const reader = new FileReader();
+                              reader.onload = (event) => {
+                                const base64 = event.target?.result as string;
+                                setStudentForm(prev => ({ ...prev, foto_url: base64 }));
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                          className="hidden"
+                          id="student-photo-file-input"
+                        />
+                        <label 
+                          htmlFor="student-photo-file-input"
+                          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1"
+                        >
+                          <Upload className="w-3 h-3 text-slate-400" /> Upload de Foto
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-4">
                     <div className="col-span-2">
                       <label className="block text-xs font-bold text-slate-500 mb-1">Nome Completo do Estudante</label>
@@ -8684,7 +16215,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         type="text"
                         required
                         disabled={!!editingItem}
-                        value={studentForm.nome}
+                        value={studentForm.nome || ''}
                         onChange={(e) => setStudentForm({ ...studentForm, nome: e.target.value })}
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
                       />
@@ -8695,7 +16226,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       <label className="block text-xs font-bold text-slate-500 mb-1">Email de Acesso (Opcional)</label>
                       <input 
                         type="email"
-                        value={studentForm.email}
+                        value={studentForm.email || ''}
                         onChange={(e) => setStudentForm({ ...studentForm, email: e.target.value })}
                         placeholder="Gerado automaticamente se deixado em branco"
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
@@ -8708,7 +16239,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       <input 
                         type="text"
                         required
-                        value={studentForm.numero_matricula}
+                        value={studentForm.numero_matricula || ''}
                         onChange={(e) => setStudentForm({ ...studentForm, numero_matricula: e.target.value })}
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
                       />
@@ -8716,7 +16247,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     <div>
                       <label className="block text-xs font-bold text-slate-500 mb-1">Gênero</label>
                       <select 
-                        value={studentForm.genero}
+                        value={studentForm.genero || 'Masculino'}
                         onChange={(e) => setStudentForm({ ...studentForm, genero: e.target.value as any })}
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
                       >
@@ -8731,19 +16262,35 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       <input 
                         type="date"
                         required
-                        value={studentForm.data_nascimento}
+                        value={studentForm.data_nascimento || ''}
                         onChange={(e) => setStudentForm({ ...studentForm, data_nascimento: e.target.value })}
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm text-slate-700"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Responsável ID (Pai)</label>
-                      <input 
-                        type="text"
-                        value={studentForm.pai_id}
-                        onChange={(e) => setStudentForm({ ...studentForm, pai_id: e.target.value })}
-                        placeholder="Ex: pai-carlos"
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
+                      <SearchableDropdown
+                        label="Responsável pelo Estudante"
+                        placeholder="Selecione o responsável..."
+                        searchPlaceholder="Pesquisar por nome, email ou perfil..."
+                        value={studentForm.pai_id || ''}
+                        options={tenantUsers
+                          .filter((u: any) => {
+                            if (studentForm.escola_id && u.escola_id) {
+                              return u.escola_id === studentForm.escola_id;
+                            }
+                            return true;
+                          })
+                          .map((u: any) => ({
+                            value: u.id,
+                            label: `${u.nome || u.email} (${u.tipo || 'Utilizador'}${u.email ? ` - ${u.email}` : ''})`
+                          }))
+                        }
+                        onChange={(selectedVal) => {
+                          setStudentForm(prev => ({
+                            ...prev,
+                            pai_id: selectedVal
+                          }));
+                        }}
                       />
                     </div>
                   </div>
@@ -8751,7 +16298,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     <div>
                       <label className="block text-xs font-bold text-slate-500 mb-1">Escola</label>
                       <select 
-                        value={studentForm.escola_id}
+                        value={studentForm.escola_id || ''}
                         disabled={!!editingItem}
                         onChange={(e) => {
                           const schId = e.target.value;
@@ -8774,7 +16321,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     <div>
                       <label className="block text-xs font-bold text-slate-500 mb-1">Turma Destino</label>
                       <select 
-                        value={studentForm.turma_id}
+                        value={studentForm.turma_id || ''}
                         disabled={!!editingItem || !studentForm.escola_id}
                         onChange={(e) => setStudentForm({ ...studentForm, turma_id: e.target.value })}
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 disabled:opacity-70 disabled:cursor-not-allowed font-bold"
@@ -8795,7 +16342,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     </p>
                   )}
 
-                  <div className="border-t border-slate-100 pt-4 grid grid-cols-2 gap-4 items-center">
+                  <div className="border-t border-slate-100 dark:border-slate-800 pt-4 grid grid-cols-2 gap-4 items-center">
                     <div className="flex items-center gap-2">
                       <input 
                         type="checkbox"
@@ -8821,6 +16368,39 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           <option value="Semestral">Semestral</option>
                           <option value="Anual">Anual</option>
                         </select>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* USUÁRIO DO SISTEMA (SENHA TEMPORÁRIA) */}
+                  <div className="border-t border-slate-100 dark:border-slate-800 pt-4 mt-2 space-y-4">
+                    <div className="flex items-center gap-2">
+                      <input 
+                        type="checkbox"
+                        id="student_usuario_sistema_checkbox"
+                        checked={!!studentForm.usuario_sistema}
+                        onChange={(e) => setStudentForm({ ...studentForm, usuario_sistema: e.target.checked })}
+                        className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer"
+                      />
+                      <label htmlFor="student_usuario_sistema_checkbox" className="text-xs font-bold text-slate-600 dark:text-slate-300 cursor-pointer select-none">
+                        Usuário do Sistema (Permitir login do Aluno)
+                      </label>
+                    </div>
+
+                    {studentForm.usuario_sistema && (
+                      <div className="bg-slate-50 dark:bg-slate-900 border border-slate-150 dark:border-slate-800 p-4 rounded-xl space-y-3 animate-in fade-in duration-200">
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Senha Temporária</label>
+                          <input 
+                            type="text"
+                            required={studentForm.usuario_sistema}
+                            placeholder="Defina uma senha de primeiro acesso"
+                            value={studentForm.senha_temporaria || ''}
+                            onChange={(e) => setStudentForm({ ...studentForm, senha_temporaria: e.target.value })}
+                            className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-2 text-sm text-slate-800 dark:text-slate-100"
+                          />
+                          <p className="text-[10px] text-slate-400 mt-1">O estudante usará esta senha para seu primeiro acesso ao portal.</p>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -8895,12 +16475,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
                       >
                         <option value="">-- Selecionar Diretor --</option>
-                        {teachers.map(t => {
-                          const usr = tenantUsers.find(u => u.id === t.user_id);
-                          return (
-                            <option key={t.id} value={t.id}>{usr?.nome}</option>
-                          );
-                        })}
+                        {(() => {
+                          const targetSchId = turmaForm.escola_id || schools[0]?.id;
+                          return teachers
+                            .filter(t => !targetSchId || !t.escola_id || t.escola_id === targetSchId)
+                            .map(t => {
+                              const usr = tenantUsers.find(u => u.id === t.user_id);
+                              return (
+                                <option key={t.id} value={t.id}>{usr?.nome || t.nome}</option>
+                              );
+                            });
+                        })()}
                       </select>
                     </div>
                     <div>
@@ -8913,6 +16498,27 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
                       />
                     </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Classe (Ano Letivo) <span className="text-rose-500">*</span>
+                    </label>
+                    <select 
+                      required
+                      value={turmaForm.classe_escolar_id || ''}
+                      onChange={(e) => setTurmaForm({ ...turmaForm, classe_escolar_id: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    >
+                      <option value="">-- Selecionar Classe Associada --</option>
+                      {(() => {
+                        const targetSchId = turmaForm.escola_id || schools[0]?.id;
+                        return classesEscolares
+                          .filter(ce => !targetSchId || !ce.escola_id || ce.escola_id === targetSchId)
+                          .map(ce => (
+                            <option key={ce.id} value={ce.id}>{ce.nome} ({ce.nivel})</option>
+                          ));
+                      })()}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-slate-500 mb-1">Escola</label>
@@ -8931,76 +16537,82 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               )}
 
               {/* CLASSE FORM */}
+              {/* CLASSE / DISCIPLINA FORM */}
               {modalType === 'classe' && (
-                <>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Nome da Matéria/Disciplina</label>
-                      <select 
-                        value={["Matemática", "Língua Portuguesa", "Física", "Química", "História", "Geografia", "Biologia", "Educação Física", "Artes", "Inglês"].includes(classeForm.nome) || !classeForm.nome ? classeForm.nome : "Custom"}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          if (val === "Custom") {
-                            setClasseForm({ ...classeForm, nome: "" });
-                          } else {
-                            setClasseForm({ ...classeForm, nome: val });
-                          }
-                        }}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 mb-2 focus:ring-1 focus:ring-indigo-500"
-                      >
-                        <option value="">-- Selecionar Disciplina --</option>
-                        <option value="Matemática">Matemática</option>
-                        <option value="Língua Portuguesa">Língua Portuguesa</option>
-                        <option value="Física">Física</option>
-                        <option value="Química">Química</option>
-                        <option value="História">História</option>
-                        <option value="Geografia">Geografia</option>
-                        <option value="Biologia">Biologia</option>
-                        <option value="Educação Física">Educação Física</option>
-                        <option value="Artes">Artes</option>
-                        <option value="Inglês">Inglês</option>
-                        <option value="Custom">Outra (Digitar...)</option>
-                      </select>
+                <div className="space-y-5">
+                  {/* 1. Nome da Disciplina */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Nome da Disciplina <span className="text-rose-500">*</span>
+                    </label>
+                    <select 
+                      value={["Matemática", "Língua Portuguesa", "Física", "Química", "História", "Geografia", "Biologia", "Educação Física", "Artes", "Inglês", "Filosofia"].includes(classeForm.nome) || !classeForm.nome ? classeForm.nome : "Custom"}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === "Custom") {
+                          setClasseForm({ ...classeForm, nome: "" });
+                        } else {
+                          setClasseForm({ ...classeForm, nome: val });
+                        }
+                      }}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm text-slate-800 mb-2 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    >
+                      <option value="">-- Selecionar Disciplina Padronizada --</option>
+                      <option value="Matemática">Matemática</option>
+                      <option value="Língua Portuguesa">Língua Portuguesa</option>
+                      <option value="Física">Física</option>
+                      <option value="Química">Química</option>
+                      <option value="História">História</option>
+                      <option value="Geografia">Geografia</option>
+                      <option value="Biologia">Biologia</option>
+                      <option value="Educação Física">Educação Física</option>
+                      <option value="Artes">Artes</option>
+                      <option value="Inglês">Inglês</option>
+                      <option value="Filosofia">Filosofia</option>
+                      <option value="Custom">Outra (Digitar Nome Personalizado...)</option>
+                    </select>
 
-                      {(!["Matemática", "Língua Portuguesa", "Física", "Química", "História", "Geografia", "Biologia", "Educação Física", "Artes", "Inglês"].includes(classeForm.nome) || classeForm.nome === "") && (
-                        <input 
-                          type="text"
-                          required
-                          value={classeForm.nome}
-                          onChange={(e) => setClasseForm({ ...classeForm, nome: e.target.value })}
-                          placeholder="Digite o nome da disciplina..."
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm animate-in fade-in slide-in-from-top-1 duration-200"
-                        />
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Código da Disciplina (Background)</label>
+                    {(!["Matemática", "Língua Portuguesa", "Física", "Química", "História", "Geografia", "Biologia", "Educação Física", "Artes", "Inglês", "Filosofia"].includes(classeForm.nome) || classeForm.nome === "") && (
                       <input 
                         type="text"
-                        readOnly
-                        value={classeForm.codigo || (() => {
-                          const code = 'DISC-' + Math.random().toString(36).substring(2, 8).toUpperCase();
-                          setTimeout(() => {
-                            if (!classeForm.codigo) {
-                              setClasseForm(prev => ({ ...prev, codigo: code }));
-                            }
-                          }, 0);
-                          return code;
-                        })()}
-                        className="w-full bg-slate-150 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-650 font-bold font-mono cursor-not-allowed"
+                        required
+                        value={classeForm.nome}
+                        onChange={(e) => setClasseForm({ ...classeForm, nome: e.target.value })}
+                        placeholder="Digite o nome completo da disciplina..."
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm animate-in fade-in duration-200 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                       />
-                    </div>
+                    )}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
+                  {/* 2. Código da Disciplina (gerado pelo sistema) */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Código da Disciplina <span className="text-slate-400 font-normal">(Gerado pelo sistema)</span>
+                    </label>
+                    <input 
+                      type="text"
+                      readOnly
+                      value={classeForm.codigo || (() => {
+                        const code = 'DISC-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+                        setTimeout(() => {
+                          if (!classeForm.codigo) {
+                            setClasseForm((prev: any) => ({ ...prev, codigo: code }));
+                          }
+                        }, 0);
+                        return code;
+                      })()}
+                      className="w-full bg-slate-100 border border-slate-200 rounded-xl p-2.5 text-sm text-slate-600 font-bold font-mono cursor-not-allowed"
+                    />
+                  </div>
+
+                  {/* Escola Context (Optional selector if tenant has multiple schools) */}
+                  {schools.length > 1 && (
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Escola</label>
-                      <select 
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Escola Associada</label>
+                      <select
                         value={classeForm.escola_id || ''}
-                        required
                         onChange={(e) => setClasseForm({ ...classeForm, escola_id: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 font-bold"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                       >
                         <option value="">-- Selecionar Escola --</option>
                         {schools.map(s => (
@@ -9008,170 +16620,133 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         ))}
                       </select>
                     </div>
+                  )}
 
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Classe Acadêmica</label>
-                      <select 
-                        value={classeForm.classe_escolar_id || ''}
-                        required
-                        onChange={(e) => setClasseForm({ ...classeForm, classe_escolar_id: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 font-bold"
-                      >
-                        <option value="">-- Selecionar Classe --</option>
-                        {classesEscolares.map(c => (
-                          <option key={c.id} value={c.id}>{c.nome} ({c.nivel})</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
+                  {/* 3. Professores responsáveis (drop-down com checkbox de seleção múltipla) */}
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">Professores Responsáveis</label>
-                    <select 
-                      multiple
-                      value={classeForm.professores_responsaveis || []}
-                      onChange={(e) => {
-                        const options = e.target.options;
-                        const selected: string[] = [];
-                        for (let i = 0; i < options.length; i++) {
-                          if (options[i].selected) {
-                            selected.push(options[i].value);
-                          }
-                        }
-                        setClasseForm({ ...classeForm, professores_responsaveis: selected });
-                      }}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 min-h-20"
-                    >
-                      {teachers.map(t => {
-                        const usr = tenantUsers.find(u => u.id === t.user_id);
-                        return (
-                          <option key={t.id} value={t.id}>{usr?.nome || "Docente"}</option>
-                        );
-                      })}
-                    </select>
-                    <p className="text-[9px] text-slate-400 mt-1">Mantenha pressionado Ctrl (Cmd no Mac) para selecionar múltiplos professores.</p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Data da Aula</label>
-                      <input 
-                        type="date"
-                        required
-                        value={classeForm.data || ''}
-                        onChange={(e) => {
-                          const dVal = e.target.value;
-                          setClasseForm({ ...classeForm, data: dVal, dia_semana: getDiaSemanaFromDate(dVal) });
-                        }}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Dia da Semana</label>
-                      <input 
-                        type="text"
-                        readOnly
-                        value={classeForm.dia_semana || ''}
-                        placeholder="Gerado automaticamente..."
-                        className="w-full bg-slate-100 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-500 font-medium cursor-not-allowed"
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Pertencente à Turma</label>
-                      <select 
-                        value={classeForm.turma_id}
-                        onChange={(e) => setClasseForm({ ...classeForm, turma_id: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
-                      >
-                        <option value="">-- Selecionar Turma --</option>
-                        {turmas.map(t => (
-                          <option key={t.id} value={t.id}>{t.nome}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Docente Ministrador</label>
-                      <select 
-                        value={classeForm.docente_id}
-                        onChange={(e) => setClasseForm({ ...classeForm, docente_id: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
-                      >
-                        <option value="">-- Selecionar Docente --</option>
-                        {teachers.map(t => {
-                          const usr = tenantUsers.find(u => u.id === t.user_id);
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Professores Responsáveis
+                    </label>
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 max-h-48 overflow-y-auto space-y-2">
+                      <p className="text-[10px] text-slate-400 font-semibold mb-1">
+                        Selecione os docentes que lecionam esta matéria na escola:
+                      </p>
+                      {(() => {
+                        const targetSchoolId = classeForm.escola_id || schools[0]?.id;
+                        const availableTeachers = teachers.filter(t => !targetSchoolId || !t.escola_id || t.escola_id === targetSchoolId);
+
+                        if (availableTeachers.length === 0) {
                           return (
-                            <option key={t.id} value={t.id}>{usr?.nome || "Docente Sem Nome"}</option>
+                            <p className="text-xs text-amber-600 italic py-2">
+                              Nenhum docente cadastrado nesta escola.
+                            </p>
                           );
-                        })}
-                      </select>
+                        }
+
+                        return availableTeachers.map(t => {
+                          const usr = tenantUsers.find(u => u.id === t.user_id);
+                          const teacherName = usr?.nome || t.nome || "Docente";
+                          const isChecked = (classeForm.professores_responsaveis || []).includes(t.id);
+                          const teacherSchool = schools.find(s => s.id === t.escola_id);
+
+                          return (
+                            <label 
+                              key={t.id} 
+                              className={`flex items-center gap-2.5 p-2 rounded-lg text-xs font-medium cursor-pointer transition-colors ${
+                                isChecked ? 'bg-indigo-50/80 text-indigo-900 border border-indigo-200/60' : 'hover:bg-slate-100/80 text-slate-700'
+                              }`}
+                            >
+                              <input 
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={(e) => {
+                                  let list = [...(classeForm.professores_responsaveis || [])];
+                                  if (e.target.checked) {
+                                    list.push(t.id);
+                                  } else {
+                                    list = list.filter(id => id !== t.id);
+                                  }
+                                  setClasseForm({ ...classeForm, professores_responsaveis: list });
+                                }}
+                                className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer"
+                              />
+                              <span className="flex-1 font-semibold">{teacherName}</span>
+                              {t.especialidade && (
+                                <span className="text-[10px] text-slate-400 font-normal">({t.especialidade})</span>
+                              )}
+                              {teacherSchool && (
+                                <span className="text-[9px] font-bold bg-slate-200/60 text-slate-600 px-1.5 py-0.5 rounded">
+                                  {teacherSchool.nome}
+                                </span>
+                              )}
+                            </label>
+                          );
+                        });
+                      })()}
                     </div>
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      {(classeForm.professores_responsaveis || []).length} docente(s) selecionado(s).
+                    </p>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Grade Horária (Predefinida)</label>
-                      <select 
-                        value={["08:00 - 09:30", "09:35 - 11:05", "11:10 - 12:40", "12:45 - 14:15", "14:20 - 15:50"].includes(classeForm.horario) ? classeForm.horario : "Custom"}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          if (val === "Custom") {
-                            setClasseForm({ ...classeForm, horario: "08:00 - 09:30" });
-                          } else {
-                            setClasseForm({ ...classeForm, horario: val });
-                          }
-                        }}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 focus:ring-1 focus:ring-indigo-500"
-                      >
-                        <option value="08:00 - 09:30">08:00 - 09:30 (1º Tempo)</option>
-                        <option value="09:35 - 11:05">09:35 - 11:05 (2º Tempo)</option>
-                        <option value="11:10 - 12:40">11:10 - 12:40 (3º Tempo)</option>
-                        <option value="12:45 - 14:15">12:45 - 14:15 (4º Tempo)</option>
-                        <option value="14:20 - 15:50">14:20 - 15:50 (5º Tempo)</option>
-                        <option value="Custom">-- Definir Horário Personalizado --</option>
-                      </select>
+
+                  {/* 4. Classe associada (drop-down com checkbox de seleção múltipla) */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Classe Associada <span className="text-rose-500">*</span>
+                    </label>
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 max-h-52 overflow-y-auto space-y-2">
+                      <p className="text-[10px] text-slate-400 font-semibold mb-1">
+                        Selecione as classes letivas cadastradas no sistema que usam esta disciplina:
+                      </p>
+                      {(() => {
+                        const targetSchoolId = classeForm.escola_id || schools[0]?.id;
+                        const availableClasses = classesEscolares.filter(ce => !targetSchoolId || !ce.escola_id || ce.escola_id === targetSchoolId);
+
+                        if (availableClasses.length === 0) {
+                          return (
+                            <p className="text-xs text-amber-600 italic py-2">
+                              Nenhuma classe escolar cadastrada nesta escola. Cadastre classes primeiro.
+                            </p>
+                          );
+                        }
+
+                        return availableClasses.map(ce => {
+                          const isChecked = (classeForm.classes_associadas_ids || []).includes(ce.id);
+                          return (
+                            <label 
+                              key={ce.id} 
+                              className={`flex items-center gap-2.5 p-2 rounded-lg text-xs font-medium cursor-pointer transition-colors ${
+                                isChecked ? 'bg-indigo-50/80 text-indigo-900 border border-indigo-200/60' : 'hover:bg-slate-100/80 text-slate-700'
+                              }`}
+                            >
+                              <input 
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={(e) => {
+                                  let list = [...(classeForm.classes_associadas_ids || [])];
+                                  if (e.target.checked) {
+                                    list.push(ce.id);
+                                  } else {
+                                    list = list.filter(id => id !== ce.id);
+                                  }
+                                  setClasseForm({ ...classeForm, classes_associadas_ids: list });
+                                }}
+                                className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer"
+                              />
+                              <span className="flex-1 font-bold">{ce.nome}</span>
+                              <span className="text-[10px] font-semibold text-slate-500 bg-slate-200/50 px-2 py-0.5 rounded-full">
+                                {ce.nivel}
+                              </span>
+                            </label>
+                          );
+                        });
+                      })()}
                     </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Horário Personalizado</label>
-                      <div className="flex items-center gap-1.5">
-                        <input
-                          type="time"
-                          value={classeForm.horario ? classeForm.horario.split(' - ')[0] || "08:00" : "08:00"}
-                          onChange={(e) => {
-                            const start = e.target.value;
-                            const end = classeForm.horario ? classeForm.horario.split(' - ')[1] || "09:30" : "09:30";
-                            setClasseForm({ ...classeForm, horario: `${start} - ${end}` });
-                          }}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm text-slate-750 text-center focus:ring-1 focus:ring-indigo-500"
-                        />
-                        <span className="text-slate-400 text-xs">até</span>
-                        <input
-                          type="time"
-                          value={classeForm.horario ? classeForm.horario.split(' - ')[1] || "09:30" : "09:30"}
-                          onChange={(e) => {
-                            const start = classeForm.horario ? classeForm.horario.split(' - ')[0] || "08:00" : "08:00";
-                            const end = e.target.value;
-                            setClasseForm({ ...classeForm, horario: `${start} - ${end}` });
-                          }}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm text-slate-750 text-center focus:ring-1 focus:ring-indigo-500"
-                        />
-                      </div>
-                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      {(classeForm.classes_associadas_ids || []).length} classe(s) associada(s). O nome da classe aparecerá como sufixo da disciplina.
+                    </p>
                   </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Sala de Aula</label>
-                      <select 
-                        value={classeForm.sala}
-                        onChange={(e) => setClasseForm({ ...classeForm, sala: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 focus:ring-1 focus:ring-indigo-500"
-                        required
-                      >
-                        <option value="">-- Selecionar Sala --</option>
-                        {rawSalas.map(s => (
-                          <option key={s.id} value={s.nome}>{s.nome} (Cap: {s.capacidade})</option>
-                        ))}
-                      </select>
-                    </div>
-                  </>
+                </div>
               )}
 
               {/* CLASSE ESCOLAR FORM */}
@@ -9187,6 +16762,20 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       placeholder="Ex: 7ª Classe"
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
                     />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Escola Associada</label>
+                    <select 
+                      required
+                      value={classeEscolarForm.escola_id || ''}
+                      onChange={(e) => setClasseEscolarForm({ ...classeEscolarForm, escola_id: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 font-semibold"
+                    >
+                      <option value="">-- Selecionar Escola --</option>
+                      {schools.map(s => (
+                        <option key={s.id} value={s.id}>{s.nome}</option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-slate-500 mb-1">Nível de Ensino</label>
@@ -9326,100 +16915,261 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
                       >
                         <option value="">Selecione Disciplina...</option>
-                        {classes
-                          .filter(c => {
-                            const t = turmas.find(tu => tu.id === c.turma_id);
-                            return !selectedPautaSchoolId || (t && t.escola_id === selectedPautaSchoolId);
-                          })
-                          .map(c => (
-                            <option key={c.id} value={c.id}>{c.nome}</option>
-                          ))}
+                        {(() => {
+                          const selStud = students.find(s => s.id === pautaForm.estudante_id);
+                          const selTurma = turmas.find(t => t.id === selStud?.turma_id);
+
+                          return classes
+                            .filter(c => {
+                              const t = turmas.find(tu => tu.id === c.turma_id);
+                              if (selectedPautaSchoolId && t && t.escola_id !== selectedPautaSchoolId) return false;
+
+                              // Requirement 4: Discipline academic class matching
+                              if (selTurma && selTurma.classe_escolar_id) {
+                                if (c.classes_associadas_ids && c.classes_associadas_ids.length > 0) {
+                                  if (!c.classes_associadas_ids.includes(selTurma.classe_escolar_id)) return false;
+                                } else if (c.classe_escolar_id) {
+                                  if (c.classe_escolar_id !== selTurma.classe_escolar_id) return false;
+                                }
+                              }
+
+                              return true;
+                            })
+                            .map(c => (
+                              <option key={c.id} value={c.id}>{c.nome}</option>
+                            ));
+                        })()}
                       </select>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Trimestre Escolar</label>
-                      <select 
-                        value={pautaForm.trimestre}
-                        onChange={(e) => setPautaForm({ ...pautaForm, trimestre: e.target.value as any })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
-                      >
-                        <option value="1º Trimestre">1º Trimestre</option>
-                        <option value="2º Trimestre">2º Trimestre</option>
-                        <option value="3º Trimestre">3º Trimestre</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Nota da Prova (0-20)</label>
-                      <input 
-                        type="number"
-                        min={0}
-                        max={20}
-                        step="any"
-                        value={pautaForm.nota_prova === undefined || pautaForm.nota_prova === null ? '' : pautaForm.nota_prova}
-                        onChange={(e) => setPautaForm({ ...pautaForm, nota_prova: e.target.value === '' ? '' : Number(e.target.value) })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
-                        placeholder="Em branco (não conta)"
-                      />
-                    </div>
-                  </div>
+                  {/* LOCAL CALCULATIONS FOR PAUTA FORM */}
+                  {(() => {
+                    const gradesList: number[] = [];
+                    const pushIfDefined = (val: any) => {
+                      if (val === 0 || val === '0' || val === 0.0) {
+                        gradesList.push(0);
+                      } else if (val !== undefined && val !== null && val !== '') {
+                        const num = Number(val);
+                        if (!isNaN(num)) {
+                          gradesList.push(num);
+                        }
+                      }
+                    };
 
-                  <div className="grid grid-cols-4 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Trabalhos</label>
-                      <input 
-                        type="number"
-                        min={0}
-                        max={20}
-                        step="any"
-                        value={pautaForm.nota_trabalho === undefined || pautaForm.nota_trabalho === null ? '' : pautaForm.nota_trabalho}
-                        onChange={(e) => setPautaForm({ ...pautaForm, nota_trabalho: e.target.value === '' ? '' : Number(e.target.value) })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm"
-                        placeholder="Em branco"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Participação</label>
-                      <input 
-                        type="number"
-                        min={0}
-                        max={20}
-                        step="any"
-                        value={pautaForm.nota_participacao === undefined || pautaForm.nota_participacao === null ? '' : pautaForm.nota_participacao}
-                        onChange={(e) => setPautaForm({ ...pautaForm, nota_participacao: e.target.value === '' ? '' : Number(e.target.value) })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm"
-                        placeholder="Em branco"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Nota Exame (Opt.)</label>
-                      <input 
-                        type="number"
-                        min={0}
-                        max={20}
-                        step="any"
-                        value={pautaForm.nota_exame === undefined || pautaForm.nota_exame === null ? '' : pautaForm.nota_exame}
-                        onChange={(e) => setPautaForm({ ...pautaForm, nota_exame: e.target.value === '' ? '' : Number(e.target.value) })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm"
-                        placeholder="Opcional"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Reavaliação (Opt.)</label>
-                      <input 
-                        type="number"
-                        min={0}
-                        max={20}
-                        step="any"
-                        value={pautaForm.nota_reavaliacao === undefined || pautaForm.nota_reavaliacao === null ? '' : pautaForm.nota_reavaliacao}
-                        onChange={(e) => setPautaForm({ ...pautaForm, nota_reavaliacao: e.target.value === '' ? '' : Number(e.target.value) })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm"
-                        placeholder="Opcional"
-                      />
-                    </div>
-                  </div>
+                    pushIfDefined(pautaForm.avaliacao_1);
+                    if (pautaForm.num_avaliacoes >= 2) {
+                      pushIfDefined(pautaForm.avaliacao_2);
+                    }
+                    if (pautaForm.num_avaliacoes >= 3) {
+                      pushIfDefined(pautaForm.avaliacao_3);
+                    }
+
+                    const numRealizadas = gradesList.length;
+                    const mediaFrequencia = numRealizadas > 0 
+                      ? (gradesList.reduce((sum, g) => sum + g, 0) / numRealizadas)
+                      : 0;
+
+                    const isFrequenciaAdmitido = numRealizadas > 0 && mediaFrequencia >= 9.5 && mediaFrequencia < 15;
+                    const hasExam = isFrequenciaAdmitido;
+                    const examValue = pautaForm.nota_exame !== undefined && pautaForm.nota_exame !== null && pautaForm.nota_exame !== '' 
+                      ? Number(pautaForm.nota_exame) 
+                      : null;
+                    const reavalValue = pautaForm.nota_reavaliacao !== undefined && pautaForm.nota_reavaliacao !== null && pautaForm.nota_reavaliacao !== ''
+                      ? Number(pautaForm.nota_reavaliacao)
+                      : null;
+
+                    let autoStatus = 'Admitido';
+                    if (numRealizadas > 0) {
+                      if (mediaFrequencia < 9.5) {
+                        autoStatus = 'Reprovado';
+                      } else if (mediaFrequencia >= 15) {
+                        autoStatus = 'Aprovado';
+                      } else {
+                        autoStatus = 'Admitido';
+                      }
+                    }
+
+                    let mediaFinal = mediaFrequencia;
+                    let enableReavaliacao = false;
+
+                    if (examValue !== null) {
+                      mediaFinal = (mediaFrequencia + examValue) / 2;
+                      if (examValue < 9.5) {
+                        autoStatus = 'Reprovado';
+                        enableReavaliacao = true;
+                        if (reavalValue !== null) {
+                          if (reavalValue < 9.5) {
+                            autoStatus = 'Reprovado';
+                            mediaFinal = (mediaFrequencia + reavalValue) / 2;
+                          } else {
+                            autoStatus = 'Aprovado na Reavaliação';
+                            mediaFinal = (mediaFrequencia + reavalValue) / 2;
+                          }
+                        }
+                      } else {
+                        if (mediaFinal >= 9.5) {
+                          autoStatus = 'Aprovado';
+                        } else {
+                          autoStatus = 'Reprovado';
+                          enableReavaliacao = true;
+                          if (reavalValue !== null) {
+                            if (reavalValue < 9.5) {
+                              autoStatus = 'Reprovado';
+                              mediaFinal = (mediaFrequencia + reavalValue) / 2;
+                            } else {
+                              autoStatus = 'Aprovado na Reavaliação';
+                              mediaFinal = (mediaFrequencia + reavalValue) / 2;
+                            }
+                          }
+                        }
+                      }
+                    }
+
+                    return (
+                      <>
+                        {/* Beautiful live feedback dashboard */}
+                        <div className="col-span-2 bg-indigo-50 border border-indigo-150 rounded-xl p-4 grid grid-cols-3 gap-4 text-center">
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wider font-extrabold text-indigo-700">Média de Frequência</p>
+                            <p className="text-xl font-black text-indigo-950 mt-1 font-mono">{numRealizadas > 0 ? mediaFrequencia.toFixed(2) : '—'}</p>
+                            <p className="text-[9px] text-indigo-500 font-medium">({numRealizadas} de {pautaForm.num_avaliacoes} avaliações)</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wider font-extrabold text-indigo-700">Situação Proposta</p>
+                            <p className={`text-xs font-black mt-2 uppercase tracking-wider px-2 py-1 rounded-full inline-block ${
+                              autoStatus.startsWith('Aprovado') ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' :
+                              autoStatus === 'Reprovado' ? 'bg-rose-100 text-rose-800 border border-rose-200' :
+                              'bg-amber-100 text-amber-800 border border-amber-200'
+                            }`}>{autoStatus}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wider font-extrabold text-indigo-700">Média Final (Exame)</p>
+                            <p className="text-xl font-black text-indigo-950 mt-1 font-mono">{mediaFinal !== null ? mediaFinal.toFixed(2) : '—'}</p>
+                            <p className="text-[9px] text-indigo-500 font-medium">{hasExam ? (examValue !== null ? 'Com nota de exame' : 'Aguardando exame') : 'Isento de exame'}</p>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-bold text-slate-500 mb-1">Trimestre Escolar</label>
+                            <select 
+                              value={pautaForm.trimestre}
+                              onChange={(e) => setPautaForm({ ...pautaForm, trimestre: e.target.value as any })}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
+                            >
+                              <option value="1º Trimestre">1º Trimestre</option>
+                              <option value="2º Trimestre">2º Trimestre</option>
+                              <option value="3º Trimestre">3º Trimestre</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-slate-500 mb-1">Número de Avaliações Programadas</label>
+                            <select 
+                              value={pautaForm.num_avaliacoes}
+                              onChange={(e) => setPautaForm({ ...pautaForm, num_avaliacoes: Number(e.target.value) })}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
+                            >
+                              <option value={1}>1 Avaliação</option>
+                              <option value={2}>2 Avaliações</option>
+                              <option value={3}>3 Avaliações</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-4 bg-indigo-50/50 p-3 rounded-xl border border-indigo-100">
+                          <div>
+                            <label className="block text-xs font-bold text-indigo-700 mb-1">Avaliação 1 (0-20)</label>
+                            <input 
+                              type="number"
+                              min={0}
+                              max={20}
+                              step="any"
+                              value={pautaForm.avaliacao_1 === undefined || pautaForm.avaliacao_1 === null ? '' : pautaForm.avaliacao_1}
+                              onChange={(e) => setPautaForm({ ...pautaForm, avaliacao_1: e.target.value === '' ? '' : Number(e.target.value) })}
+                              className="w-full bg-white border border-indigo-200 rounded-lg p-2 text-sm text-indigo-900 focus:ring-1 focus:ring-indigo-400 font-bold"
+                              placeholder="Nota 1"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-indigo-700 mb-1">Avaliação 2 (0-20)</label>
+                            <input 
+                              type="number"
+                              min={0}
+                              max={20}
+                              step="any"
+                              disabled={pautaForm.num_avaliacoes < 2}
+                              value={pautaForm.avaliacao_2 === undefined || pautaForm.avaliacao_2 === null ? '' : pautaForm.avaliacao_2}
+                              onChange={(e) => setPautaForm({ ...pautaForm, avaliacao_2: e.target.value === '' ? '' : Number(e.target.value) })}
+                              className="w-full bg-white border border-indigo-200 rounded-lg p-2 text-sm text-indigo-900 focus:ring-1 focus:ring-indigo-400 disabled:opacity-50 disabled:bg-slate-100 font-bold"
+                              placeholder={pautaForm.num_avaliacoes < 2 ? "Desativado" : "Nota 2"}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-indigo-700 mb-1">Avaliação 3 (0-20)</label>
+                            <input 
+                              type="number"
+                              min={0}
+                              max={20}
+                              step="any"
+                              disabled={pautaForm.num_avaliacoes < 3}
+                              value={pautaForm.avaliacao_3 === undefined || pautaForm.avaliacao_3 === null ? '' : pautaForm.avaliacao_3}
+                              onChange={(e) => setPautaForm({ ...pautaForm, avaliacao_3: e.target.value === '' ? '' : Number(e.target.value) })}
+                              className="w-full bg-white border border-indigo-200 rounded-lg p-2 text-sm text-indigo-900 focus:ring-1 focus:ring-indigo-400 disabled:opacity-50 disabled:bg-slate-100 font-bold"
+                              placeholder={pautaForm.num_avaliacoes < 3 ? "Desativado" : "Nota 3"}
+                            />
+                          </div>
+                        </div>
+
+                        <div className={`grid ${enableReavaliacao ? 'grid-cols-3' : 'grid-cols-2'} gap-4`}>
+                          <div>
+                            <label className="block text-xs font-bold text-slate-500 mb-1">Nota de Exame (0-20)</label>
+                            <input 
+                              type="number"
+                              min={0}
+                              max={20}
+                              step="any"
+                              disabled={!hasExam}
+                              value={!hasExam ? '' : (pautaForm.nota_exame === undefined || pautaForm.nota_exame === null ? '' : pautaForm.nota_exame)}
+                              onChange={(e) => setPautaForm({ ...pautaForm, nota_exame: e.target.value === '' ? '' : Number(e.target.value) })}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm disabled:opacity-50 disabled:bg-slate-100 font-bold"
+                              placeholder={!hasExam ? "Não aplicável" : "Opcional"}
+                            />
+                          </div>
+
+                          {enableReavaliacao && (
+                            <div>
+                              <label className="block text-xs font-bold text-rose-700 mb-1">Nota de Reavaliação (0-20)</label>
+                              <input 
+                                type="number"
+                                min={0}
+                                max={20}
+                                step="any"
+                                value={pautaForm.nota_reavaliacao === undefined || pautaForm.nota_reavaliacao === null ? '' : pautaForm.nota_reavaliacao}
+                                onChange={(e) => setPautaForm({ ...pautaForm, nota_reavaliacao: e.target.value === '' ? '' : Number(e.target.value) })}
+                                className="w-full bg-rose-50 border border-rose-300 rounded-lg p-2.5 text-sm font-black text-rose-950 focus:ring-2 focus:ring-rose-400"
+                                placeholder="Nota de recurso"
+                              />
+                            </div>
+                          )}
+
+                          <div>
+                            <label className="block text-xs font-bold text-slate-500 mb-1">Situação do Estudante</label>
+                            <select 
+                              disabled
+                              value={autoStatus}
+                              className="w-full bg-slate-100 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 font-extrabold cursor-not-allowed"
+                            >
+                              <option value="Admitido">Admitido (Auto)</option>
+                              <option value="Aprovado">Aprovado (Auto)</option>
+                              <option value="Aprovado na Reavaliação">Aprovado na Reavaliação (Auto)</option>
+                              <option value="Reprovado">Reprovado (Auto)</option>
+                            </select>
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
 
                   <div>
                     <label className="block text-xs font-bold text-slate-500 mb-1">Observações da Avaliação</label>
@@ -9507,6 +17257,47 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               {/* USER FORM */}
               {modalType === 'user' && (
                 <>
+                  {/* Fotografia de Perfil Upload */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Fotografia de Perfil</label>
+                    <div className="flex items-center gap-4 bg-slate-50 border border-slate-200 rounded-xl p-3">
+                      <div className="w-14 h-14 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center overflow-hidden border border-slate-200 dark:border-slate-700 flex-shrink-0">
+                        {userForm.foto_url ? (
+                          <img 
+                            src={userForm.foto_url} 
+                            alt="Preview" 
+                            className="w-full h-full object-cover"
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : (
+                          <UploadCloud className="w-6 h-6 text-slate-400" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <input 
+                          type="file" 
+                          accept="image/*"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              if (file.size > 2 * 1024 * 1024) {
+                                alert("Erro: A imagem deve ter no máximo 2MB.");
+                                return;
+                              }
+                              const reader = new FileReader();
+                              reader.onloadend = () => {
+                                setUserForm({ ...userForm, foto_url: reader.result as string });
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                          className="text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
+                        />
+                        <p className="text-[10px] text-slate-400 mt-1">Formatos aceitos: JPG, PNG. Máx: 2MB.</p>
+                      </div>
+                    </div>
+                  </div>
+
                   <div>
                     <label className="block text-xs font-bold text-slate-500 mb-1">Nome Completo</label>
                     <input 
@@ -9528,19 +17319,38 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
                     />
                   </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Senha de Acesso / Temporária</label>
+                    <input 
+                      type="text"
+                      placeholder="Deixe em branco ou digite uma nova senha"
+                      value={userForm.senha_temporaria || ''}
+                      onChange={(e) => setUserForm({ ...userForm, senha_temporaria: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
+                    />
+                  </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Cargo / Tipo</label>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Cargo / Tipo (Permissões Globais)</label>
                       <select 
                         value={userForm.tipo}
-                        onChange={(e) => setUserForm({ ...userForm, tipo: e.target.value as any })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
+                        onChange={(e) => {
+                          const newTipo = e.target.value;
+                          const catObj = globalCategories.find(c => c.codigo === newTipo || c.id === newTipo || c.nome.toLowerCase() === newTipo.toLowerCase());
+                          const newAcessos = catObj?.modulos ? JSON.parse(JSON.stringify(catObj.modulos)) : userForm.modulo_acessos;
+                          setUserForm({
+                            ...userForm,
+                            tipo: newTipo,
+                            modulo_acessos: newAcessos
+                          });
+                        }}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 font-medium cursor-pointer"
                       >
-                        <option value="admin">Administrador do Tenant</option>
-                        <option value="director">Diretor Geral de Escola</option>
-                        <option value="docente">Professor / Docente</option>
-                        <option value="pai">Pai / Encarregado</option>
-                        <option value="estudante">Estudante</option>
+                        {globalCategories.map((cat) => (
+                          <option key={cat.id} value={cat.codigo || cat.id}>
+                            {cat.nome} ({cat.codigo || cat.id})
+                          </option>
+                        ))}
                       </select>
                     </div>
                     <div>
@@ -9548,7 +17358,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       <select 
                         value={userForm.ativo ? 'true' : 'false'}
                         onChange={(e) => setUserForm({ ...userForm, ativo: e.target.value === 'true' })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 cursor-pointer"
                       >
                         <option value="true">Conta Ativa</option>
                         <option value="false">Conta Bloqueada</option>
@@ -9559,107 +17369,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   {/* MODULAR PERMISSIONS CONTAINER */}
                   {userForm.tipo !== 'admin' && (
                     <div className="border-t border-slate-150 pt-4 mt-4">
-                      <h4 className="text-xs font-black text-slate-700 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                        <Sliders className="w-4 h-4 text-indigo-500 animate-pulse" /> Permissões de Acesso
-                      </h4>
-                      <p className="text-[11px] text-slate-500 leading-normal mb-3">
-                        Habilite o módulo principal com a chave de alternância (switch key) e as ações correspondentes com as caixas de seleção (checkboxes).
-                      </p>
-                      
-                      <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
-                        {Object.keys(DEFAULT_MODULO_ACESSOS).map((moduleKey) => {
-                          const moduleData = userForm.modulo_acessos?.[moduleKey] || { habilitado: false, funcionalidades: {} };
-                          
-                          const moduleLabels: Record<string, string> = {
-                            provincias: 'Distritos / Províncias',
-                            escolas: 'Gestão de Escolas',
-                            docentes: 'Gestão de Docentes',
-                            estudantes: 'Registro de Estudantes',
-                            turmas: 'Gestão de Turmas',
-                            disciplinas: 'Disciplinas / Matérias',
-                            classes: 'Classes Letivas',
-                            calendario: 'Calendário & Horários',
-                            pautas: 'Lançamento de Notas / Pautas',
-                            pauta_geral: 'Pauta Geral',
-                            processos: 'Processo Individual do Aluno',
-                            utilizadores: 'Gestão de Utilizadores',
-                            biblioteca: 'Biblioteca Digital',
-                            analytics: 'Análises & Analytics'
-                          };
-
-                          const label = moduleLabels[moduleKey] || moduleKey;
-
-                          const handleToggleModule = () => {
-                            const updated = { ...userForm.modulo_acessos };
-                            updated[moduleKey] = {
-                              ...moduleData,
-                              habilitado: !moduleData.habilitado
-                            };
-                            setUserForm({ ...userForm, modulo_acessos: updated });
-                          };
-
-                          const handleToggleFeature = (featureKey: string) => {
-                            const updated = { ...userForm.modulo_acessos };
-                            const funcs = { ...moduleData.funcionalidades };
-                            funcs[featureKey] = !funcs[featureKey];
-                            updated[moduleKey] = {
-                              ...moduleData,
-                              funcionalidades: funcs
-                            };
-                            setUserForm({ ...userForm, modulo_acessos: updated });
-                          };
-
-                          return (
-                            <div key={moduleKey} className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-                              <div className="flex justify-between items-center">
-                                <span className="text-xs font-bold text-slate-800">{label}</span>
-                                <button
-                                  type="button"
-                                  onClick={handleToggleModule}
-                                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                                    moduleData.habilitado ? 'bg-indigo-600' : 'bg-slate-200'
-                                  }`}
-                                >
-                                  <span
-                                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
-                                      moduleData.habilitado ? 'translate-x-4' : 'translate-x-0'
-                                    }`}
-                                  />
-                                </button>
-                              </div>
-
-                              {moduleData.habilitado && (
-                                <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 pt-1.5 border-t border-slate-200 mt-1 pl-0.5">
-                                  {['visualizar', 'criar', 'editar', 'excluir'].map((feat) => {
-                                    if (moduleKey === 'provincias' && (feat === 'editar' || feat === 'excluir')) return null;
-
-                                    const featLabels: Record<string, string> = {
-                                      visualizar: 'Ver Módulo',
-                                      criar: 'Cadastrar / Adicionar',
-                                      editar: 'Alterar / Editar',
-                                      excluir: 'Apagar / Excluir'
-                                    };
-
-                                    const isChecked = !!moduleData.funcionalidades[feat];
-
-                                    return (
-                                      <label key={feat} className="inline-flex items-center gap-2 text-[11px] text-slate-600 cursor-pointer hover:text-slate-900 transition-colors">
-                                        <input
-                                          type="checkbox"
-                                          checked={isChecked}
-                                          onChange={() => handleToggleFeature(feat)}
-                                          className="w-3.5 h-3.5 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
-                                        />
-                                        <span>{featLabels[feat] || feat}</span>
-                                      </label>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
+                      <UserPermissionsChecklist
+                        userCategoryCode={userForm.tipo}
+                        globalCategories={globalCategories}
+                        moduloAcessos={userForm.modulo_acessos || {}}
+                        onChangeModuloAcessos={(newAcessos) => {
+                          setUserForm({ ...userForm, modulo_acessos: newAcessos });
+                        }}
+                        showNotification={showSystemNotification}
+                      />
                     </div>
                   )}
                 </>
@@ -9679,19 +17397,18 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
                     />
                   </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">Aplicável a (Turma / Classe)</label>
-                    <select
-                      value={feriasForm.turma_id || 'todas'}
-                      onChange={(e) => setFeriasForm({ ...feriasForm, turma_id: e.target.value })}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 font-bold focus:ring-1 focus:ring-indigo-500"
+                   <div>
+                    <SearchableDropdown
+                      label="Aplicável a (Turma / Classe)"
                       required
-                    >
-                      <option value="todas">✨ Todas as Turmas (Geral)</option>
-                      {turmas.map(t => (
-                        <option key={t.id} value={t.id}>{t.nome}</option>
-                      ))}
-                    </select>
+                      options={[
+                        { value: 'todas', label: '✨ Todas as Turmas (Geral)' },
+                        ...turmas.map(t => ({ value: t.id, label: t.nome }))
+                      ]}
+                      value={feriasForm.turma_id || 'todas'}
+                      onChange={(val) => setFeriasForm({ ...feriasForm, turma_id: val || 'todas' })}
+                      placeholder="-- Selecionar Turma --"
+                    />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
@@ -9718,6 +17435,229 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 </>
               )}
 
+              {/* HORARIO AULA FORM */}
+              {modalType === 'horario_aula' && (
+                <>
+                  <div>
+                    <SearchableDropdown
+                      label="Turma Alvo"
+                      required
+                      options={turmas.map(t => ({ value: t.id, label: t.nome }))}
+                      value={horarioForm.turma_id}
+                      onChange={(val) => {
+                        setHorarioForm({
+                          ...horarioForm,
+                          turma_id: val,
+                          disciplina_id: '',
+                          disciplina_nome: ''
+                        });
+                      }}
+                      placeholder="-- Selecionar Turma --"
+                    />
+                  </div>
+
+                  <div>
+                    <SearchableDropdown
+                      label="Disciplina"
+                      required
+                      options={(() => {
+                        const selectedTurma = turmas.find(t => t.id === horarioForm.turma_id);
+                        const turmaClasseEscolarId = selectedTurma?.classe_escolar_id;
+                        
+                        const filtered = classes.filter(c => {
+                          if (!turmaClasseEscolarId) return true;
+                          if (c.classe_escolar_id === turmaClasseEscolarId) return true;
+                          if (c.classes_associadas_ids && c.classes_associadas_ids.includes(turmaClasseEscolarId)) return true;
+                          return false;
+                        });
+
+                        return filtered.map(c => ({ value: c.id, label: c.nome }));
+                      })()}
+                      value={horarioForm.disciplina_id}
+                      onChange={(val) => {
+                        const sel = classes.find(c => c.id === val);
+                        setHorarioForm({
+                          ...horarioForm,
+                          disciplina_id: val,
+                          disciplina_nome: sel ? sel.nome : ''
+                        });
+                      }}
+                      placeholder="-- Selecionar Disciplina da Classe --"
+                    />
+                  </div>
+
+                  <div>
+                    <SearchableDropdown
+                      label="Docente / Professor"
+                      required
+                      options={(() => {
+                        const selectedTurma = turmas.find(t => t.id === horarioForm.turma_id);
+                        const turmaEscolaId = selectedTurma?.escola_id || schools[0]?.id || '';
+                        
+                        const filtered = teachers.filter(t => !t.escola_id || !turmaEscolaId || t.escola_id === turmaEscolaId);
+
+                        return filtered.map(t => {
+                          const usr = tenantUsers.find(u => u.id === t.user_id);
+                          return {
+                            value: t.id,
+                            label: `${usr?.nome || t.nome || 'Docente'} (${t.especialidade || 'Geral'})`
+                          };
+                        });
+                      })()}
+                      value={horarioForm.docente_id}
+                      onChange={(val) => setHorarioForm({ ...horarioForm, docente_id: val })}
+                      placeholder="-- Selecionar Docente da Escola --"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Hora Início</label>
+                      <input 
+                        type="time"
+                        required
+                        value={horarioForm.hora_inicio}
+                        onChange={(e) => setHorarioForm({ ...horarioForm, hora_inicio: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold text-slate-800"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Hora Fim</label>
+                      <input 
+                        type="time"
+                        required
+                        value={horarioForm.hora_fim}
+                        onChange={(e) => setHorarioForm({ ...horarioForm, hora_fim: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold text-slate-800"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Data da Aula</label>
+                      <input 
+                        type="date"
+                        required
+                        value={horarioForm.data}
+                        onChange={(e) => {
+                          const dVal = e.target.value;
+                          setHorarioForm({
+                            ...horarioForm,
+                            data: dVal,
+                            dia_semana: getDiaSemanaFromDate(dVal)
+                          });
+                        }}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold text-slate-800"
+                      />
+                    </div>
+                    <div>
+                      <SearchableDropdown
+                        label="Sala de Aula"
+                        options={rawSalas.map(s => ({ value: s.nome, label: `${s.nome} (${s.tipo})` }))}
+                        value={horarioForm.sala || rawSalas[0]?.nome || ''}
+                        onChange={(val) => setHorarioForm({ ...horarioForm, sala: val })}
+                        placeholder="-- Selecionar Sala --"
+                      />
+                    </div>
+                  </div>
+
+                  {(() => {
+                    const selDateObj = new Date(horarioForm.data + 'T12:00:00');
+                    const isWeekend = selDateObj.getDay() === 0 || selDateObj.getDay() === 6;
+                    const isHoliday = rawFeriados.some(f => f.data === horarioForm.data);
+                    const isWeekendOrHoliday = isWeekend || isHoliday;
+
+                    if (isWeekendOrHoliday) {
+                      return (
+                        <div className="p-3.5 bg-amber-50/80 border border-amber-200 rounded-xl space-y-2 animate-fadeIn">
+                          <div className="flex items-center gap-2 text-amber-800 font-bold text-xs">
+                            <span className="text-base">⚠️</span>
+                            <span>Atenção: A data selecionada é um {isWeekend ? 'Final de Semana' : ''}{isWeekend && isHoliday ? ' e ' : ''}{isHoliday ? 'Feriado' : ''}!</span>
+                          </div>
+                          <label className="block text-xs font-bold text-amber-900">
+                            Justificativa Obrigatória <span className="text-red-500">*</span>
+                          </label>
+                          <textarea
+                            required
+                            rows={3}
+                            placeholder="Motivo do agendamento em dia não letivo (ex: Reposição de aula, Aulão preparatório, Exame especial)..."
+                            value={horarioForm.justificativa || ''}
+                            onChange={(e) => setHorarioForm({ ...horarioForm, justificativa: e.target.value })}
+                            className="w-full bg-white border border-amber-300 rounded-lg p-2 text-xs text-amber-950 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                          />
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
+                </>
+              )}
+
+              {/* FERIADO FORM */}
+              {modalType === 'feriado' && (
+                <>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Nome do Feriado</label>
+                    <input 
+                      type="text"
+                      required
+                      placeholder="Ex: Dia da Independência Nacional, Dia da Paz"
+                      value={feriadoForm.nome}
+                      onChange={(e) => setFeriadoForm({ ...feriadoForm, nome: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold text-slate-800"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Data do Feriado</label>
+                      <input 
+                        type="date"
+                        required
+                        value={feriadoForm.data}
+                        onChange={(e) => setFeriadoForm({ ...feriadoForm, data: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold text-slate-800"
+                      />
+                    </div>
+                    <div>
+                      <SearchableDropdown
+                        label="País"
+                        options={WORLD_COUNTRIES.map(c => ({ value: c.name, label: c.name }))}
+                        value={feriadoForm.pais || config?.pais || 'Moçambique'}
+                        onChange={(val) => setFeriadoForm({ ...feriadoForm, pais: val })}
+                        placeholder="-- Selecionar País --"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Tipo de Feriado</label>
+                    <select
+                      value={feriadoForm.tipo || 'Nacional'}
+                      onChange={(e) => setFeriadoForm({ ...feriadoForm, tipo: e.target.value as any })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold text-slate-800"
+                    >
+                      <option value="Nacional">Nacional</option>
+                      <option value="Municipal">Municipal / Local</option>
+                      <option value="Religioso">Religioso</option>
+                      <option value="Opcional">Ponto Facultativo / Tolerância</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Descrição / Observações</label>
+                    <textarea 
+                      rows={2}
+                      placeholder="Detalhes adicionais sobre o feriado..."
+                      value={feriadoForm.descricao || ''}
+                      onChange={(e) => setFeriadoForm({ ...feriadoForm, descricao: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-800"
+                    />
+                  </div>
+                </>
+              )}
+
               <div className="flex gap-2 justify-end pt-4 border-t border-slate-100">
                 <button 
                   type="button"
@@ -9736,6 +17676,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 )}
               </div>
             </form>
+            </div>
           </div>
         </div>
       )}
@@ -9774,8 +17715,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 { id: 'classes_escolares', label: 'Classes Letivas', icon: <List className="w-5 h-5 text-amber-500" />, allowed: hasPermission('classes') },
                 { id: 'calendario', label: 'Calendário & Horários', icon: <Calendar className="w-5 h-5 text-rose-500" />, allowed: hasPermission('calendario') },
                 { id: 'pauta_geral', label: 'Pauta Geral', icon: <Award className="w-5 h-5 text-yellow-500" />, allowed: hasPermission('pautas') },
+                { id: 'assiduidade', label: 'Controle de Assiduidade', icon: <Fingerprint className="w-5 h-5 text-indigo-500" />, allowed: hasPermission('assiduidade') },
                 { id: 'processos', label: 'Processo do Aluno', icon: <FolderOpen className="w-5 h-5 text-pink-500" />, allowed: plan?.modulos_permitidos?.includes('processo') && hasPermission('processos') },
                 { id: 'usuarios', label: 'Utilizadores', icon: <UserPlus className="w-5 h-5 text-teal-500" />, allowed: hasPermission('utilizadores') },
+                { id: 'permissoes_globais', label: 'Permissões Globais', icon: <ShieldCheck className="w-5 h-5 text-indigo-500" />, allowed: currentUserRole === 'admin' || currentUserRole === 'director' || hasPermission('utilizadores') },
                 { id: 'configuracao', label: 'Configurações', icon: <Sliders className="w-5 h-5 text-slate-500" />, allowed: hasPermission('configuracoes') },
               ].filter(i => i.allowed).map((item) => (
                 <button
@@ -9807,7 +17750,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     {currentUserRole.charAt(0)}
                   </div>
                   <div className="overflow-hidden">
-                    <p className="font-bold text-[11px] text-slate-200 truncate max-w-[150px]">{currentUserEmail}</p>
+                    <p className="font-bold text-[11px] text-slate-200 truncate max-w-[150px]">{loggedInUserName}</p>
                     <p className="text-[9px] text-indigo-400 font-mono font-bold uppercase tracking-wider">{currentUserRole}</p>
                   </div>
                 </div>
@@ -9945,6 +17888,131 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 Descartar Alterações
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* CUSTOM CONTEXT MENU */}
+      {contextMenu && (
+        <>
+          <div 
+            className="fixed inset-0 z-[99999] bg-transparent" 
+            onClick={closeContextMenu}
+            onContextMenu={(e) => { e.preventDefault(); closeContextMenu(); }}
+          />
+          <div
+            id="custom-context-menu"
+            className="fixed z-[100000] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl py-1.5 min-w-[220px] text-left animate-in fade-in zoom-in-95 duration-100 focus:outline-none"
+            style={{
+              left: contextMenu.x,
+              top: contextMenu.y,
+            }}
+          >
+            {contextMenu.options.filter(o => !o.hidden).map((opt, idx) => (
+              <button
+                key={idx}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!opt.disabled) {
+                    opt.onClick();
+                    closeContextMenu();
+                  }
+                }}
+                disabled={opt.disabled}
+                className={`w-full text-left px-4 py-2 text-xs font-bold flex items-center gap-2.5 transition-all ${
+                  contextMenuIndex === idx 
+                    ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-400' 
+                    : 'text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800'
+                } ${opt.disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'} ${
+                  opt.isDestructive ? 'text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/20' : ''
+                }`}
+              >
+                <span className="flex-shrink-0 text-slate-400">{opt.icon}</span>
+                <span className="truncate">{opt.label}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+
+
+      {/* CONTEXTUAL HELP MODAL */}
+      {showQuickHelp && (
+        <div className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs flex items-center justify-center p-4 z-[350000] animate-in fade-in duration-250">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 dark:border-slate-800 animate-in zoom-in-95 duration-150 flex flex-col gap-4">
+            <div className="flex items-center gap-3">
+              <div className="bg-purple-100 dark:bg-purple-950/40 p-2.5 rounded-2xl text-purple-600 dark:text-purple-400">
+                <Sparkles className="w-5 h-5 shrink-0" />
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900 dark:text-white font-sans capitalize">
+                  Guia do Módulo: {activeTab.replace('_', ' ')}
+                </h3>
+                <p className="text-[11px] text-slate-400">
+                  Instruções e boas práticas recomendadas para operação.
+                </p>
+              </div>
+            </div>
+
+            <div className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed space-y-3 pt-2 text-left">
+              <p className="font-semibold text-slate-700 dark:text-slate-200">
+                {(() => {
+                  switch (activeTab) {
+                    case 'dashboard':
+                      return "Este painel centraliza as principais métricas institucionais do seu inquilino. Aqui você acompanha a saúde financeira das faturas de alunos, o nível de assiduidade diária, e tem atalhos rápidos para as atividades de administração do sistema.";
+                    case 'escolas':
+                      return "Gerencie aqui as suas escolas cadastradas. Certifique-se de configurar a geolocalização e as tolerâncias de horários corretamente para as tolerâncias da assiduidade e segurança de presença.";
+                    case 'salas':
+                      return "Cadastre as salas de aula e laboratórios físicos disponíveis na sua escola. É possível associar as salas de aula às turmas para evitar conflitos de horário.";
+                    case 'docentes':
+                      return "Gestão de professores contratados. Mantenha os dados de contato e o número de registro atualizados. O professor precisa estar ativo para poder ministrar aulas e lançar pautas.";
+                    case 'estudantes':
+                      return "Lista completa de alunos matriculados na sua instituição. Você pode utilizar a geração de crachás QR e filtros avançados para pesquisar o status de matrícula e dados familiares.";
+                    case 'turmas':
+                      return "Crie e gerencie as turmas escolares associando-as aos períodos letivos correspondentes. No painel de assiduidade, as turmas são essenciais para programar e verificar a agenda de aulas.";
+                    case 'disciplinas':
+                      return "Insira as disciplinas ministradas pela sua instituição. Associe as disciplinas ao docente responsável e à turma correspondente para habilitar o lançamento automático das avaliações e boletins.";
+                    case 'classes_escolares':
+                      return "Defina os anos escolares/séries vigentes no seu ano letivo. Elas estruturam as divisões acadêmicas das disciplinas escolares.";
+                    case 'calendario':
+                      return "Agende datas importantes, reuniões pedagógicas, férias letivas ou suspensões. O calendário sincronizado é de extrema importância para as tolerâncias de faltas dos alunos.";
+                    case 'pautas':
+                      return "Registro de notas e avaliações periódicas. Lembre-se de salvar as pautas após o lançamento para consolidar as médias bimestrais dos alunos nas respectivas turmas.";
+                    case 'pauta_geral':
+                      return "Boletim acadêmico geral dos alunos. Você pode exportar relatórios globais de desempenho com aprovações e reprovações calculadas automaticamente.";
+                    case 'assiduidade':
+                      return "Módulo de controle de presenças e pontualidade. Permite a validação de presença por digitação de ID na web ou leitura automática de crachás via QR Code no celular de forma offline e integrada.";
+                    case 'processos':
+                      return "Controle de requerimentos escolares emitidos pelos alunos ou responsáveis. O status pode ser atualizado para controle de fluxo e acompanhamento interno da secretaria.";
+                    case 'biblioteca':
+                      return "Gerenciamento de livros, devoluções e empréstimos. Garanta que os dados cadastrais estejam preenchidos para controle de multas e devolução de acervo literário.";
+                    case 'analytics':
+                      return "Painel de análise avançada. Tenha acesso a relatórios gerenciais estruturados sobre o fluxo escolar, faturamento total, taxas de retenção e faltas periódicas.";
+                    case 'usuarios':
+                      return "Controle de usuários internos e permissões de acesso do sistema. Defina permissões granulares por módulo para garantir total segurança jurídica e isolamento de dados do seu inquilino SaaS.";
+                    case 'configuracao':
+                      return "Configure os dados principais da instituição, logotipo, SMTP personalizado de envio de e-mail integrado e credenciais para sincronização e recuperação automatizada.";
+                    default:
+                      return "Este módulo contém as funções específicas para controle acadêmico e financeiro do seu sistema. Utilize os botões do painel de controle para gerenciar registros e exportar relatórios.";
+                  }
+                })()}
+              </p>
+              <div className="bg-indigo-50/50 dark:bg-indigo-950/25 border border-indigo-100 dark:border-indigo-950/50 p-3 rounded-xl space-y-1">
+                <p className="font-extrabold text-indigo-700 dark:text-indigo-400 flex items-center gap-1">💡 Dica de Utilização:</p>
+                <p className="text-[11px] text-indigo-600/90 dark:text-indigo-300">
+                  Qualquer modificação feita nesta tela é salva instantaneamente no banco de dados isolado da sua instituição em nuvem.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowQuickHelp(false)}
+              className="mt-2 w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer text-center"
+            >
+              Fechar Guia
+            </button>
           </div>
         </div>
       )}

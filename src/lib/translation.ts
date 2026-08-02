@@ -335,7 +335,17 @@ export function getSystemLanguage(): string {
 // Set active language
 export function setSystemLanguage(lang: string): void {
   localStorage.setItem(LANG_STORAGE_KEY, lang);
-  window.dispatchEvent(new Event("languagechange"));
+  try {
+    window.dispatchEvent(new Event("languagechange"));
+  } catch (e) {
+    try {
+      const evt = document.createEvent('Event');
+      evt.initEvent("languagechange", true, true);
+      window.dispatchEvent(evt);
+    } catch (err) {
+      console.warn("Could not dispatch languagechange event", err);
+    }
+  }
 }
 
 // Memory and persistent cache for dynamic AI translation

@@ -13,6 +13,7 @@ import {
 import { db } from '../lib/firebase';
 import { collection, getDocs, addDoc, query, orderBy, getDoc, doc } from 'firebase/firestore';
 import { jsPDF } from 'jspdf';
+import { ActividadePendente } from '../types';
 
 // --- TS INTERFACES ---
 interface School {
@@ -56,8 +57,8 @@ interface Pauta {
   id: string;
   estudante_id: string;
   classe_id: string;
-  nota_media: number;
-  situacao: 'Aprovado' | 'Reprovado' | 'Recuperação';
+  nota_media?: number;
+  situacao?: 'Aprovado' | 'Reprovado' | 'Recuperação' | string;
   data_lancamento?: string;
   disciplina_id?: string;
 }
@@ -80,6 +81,7 @@ interface AnalyticsModuleProps {
   tenantUsers: TenantUser[];
   currentTeacher?: Teacher | null;
   loggedInUser?: any;
+  atividades?: ActividadePendente[];
 }
 
 interface MonthlyReport {
@@ -119,11 +121,12 @@ export function AnalyticsModule({
   pautas,
   tenantUsers,
   currentTeacher,
-  loggedInUser
+  loggedInUser,
+  atividades = []
 }: AnalyticsModuleProps) {
 
   // --- SUB-TABS STATE ---
-  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'academic' | 'efficiency' | 'library' | 'reports' | 'audit'>('overview');
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'academic' | 'efficiency' | 'atividades' | 'library' | 'reports' | 'audit'>('overview');
 
   // --- FILTERS STATE ---
   const [selectedSchoolId, setSelectedSchoolId] = useState<string>('todos');
@@ -568,7 +571,8 @@ export function AnalyticsModule({
   const exportToPDF = () => {
     logAnalyticsAction("Exportou PDF", `Gerou relatório executivo PDF para a instituição.`);
     
-    const doc = new jsPDF();
+    const JsPdfCtor = (jsPDF as any)?.jsPDF || jsPDF;
+    const doc = new JsPdfCtor();
     
     // Header Style
     doc.setFillColor(30, 41, 59); // Indigo/Dark slate
@@ -748,7 +752,8 @@ export function AnalyticsModule({
   const downloadSpecificReportPDF = (rep: MonthlyReport) => {
     logAnalyticsAction("Exportou PDF Relatório", `Descarregou o relatório de ${rep.mes} ${rep.ano} em formato PDF`);
     
-    const doc = new jsPDF();
+    const JsPdfCtor = (jsPDF as any)?.jsPDF || jsPDF;
+    const doc = new JsPdfCtor();
     doc.setFillColor(15, 23, 42); // slate 900
     doc.rect(0, 0, 210, 45, 'F');
     
@@ -859,10 +864,16 @@ export function AnalyticsModule({
           <Clock className="w-4 h-4" /> Eficiência de Ensino
         </button>
         <button
+          onClick={() => setActiveSubTab('atividades')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${activeSubTab === 'atividades' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+        >
+          <ListChecks className="w-4 h-4" /> Actividades Pendentes
+        </button>
+        <button
           onClick={() => setActiveSubTab('library')}
           className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${activeSubTab === 'library' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
         >
-          <BookOpenCheck className="w-4 h-4" /> Biblioteca & Atividades
+          <BookOpenCheck className="w-4 h-4 text-indigo-500" /> Biblioteca Digital
         </button>
         <button
           onClick={() => setActiveSubTab('reports')}
@@ -1552,6 +1563,90 @@ export function AnalyticsModule({
             </p>
           </div>
 
+        </div>
+      )}
+
+      {/* --- SUB-TAB CONTENTS: ATIVIDADES PENDENTES --- */}
+      {activeSubTab === 'atividades' && (
+        <div className="space-y-6 animate-fadeIn">
+          {/* Top KPI Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-1">
+              <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider block">Total de Actividades</span>
+              <p className="text-2xl font-black text-slate-900 dark:text-white font-sans">{atividades.length}</p>
+            </div>
+            <div className="bg-amber-50 dark:bg-amber-950/30 p-4 rounded-2xl border border-amber-200/60 dark:border-amber-800/40 space-y-1">
+              <span className="text-[10px] text-amber-700 dark:text-amber-400 font-extrabold uppercase tracking-wider block">Atividades Pendentes</span>
+              <p className="text-2xl font-black text-amber-600 font-sans">{atividades.filter(a => a.status === 'Pendente').length}</p>
+            </div>
+            <div className="bg-rose-50 dark:bg-rose-950/30 p-4 rounded-2xl border border-rose-200/60 dark:border-rose-800/40 space-y-1">
+              <span className="text-[10px] text-rose-700 dark:text-rose-400 font-extrabold uppercase tracking-wider block">Severidade Crítica</span>
+              <p className="text-2xl font-black text-rose-600 font-sans">{atividades.filter(a => a.severidade === 'Crítico' && a.status !== 'Finalizada').length}</p>
+            </div>
+            <div className="bg-emerald-50 dark:bg-emerald-950/30 p-4 rounded-2xl border border-emerald-200/60 dark:border-emerald-800/40 space-y-1">
+              <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-extrabold uppercase tracking-wider block">Taxa de Finalização</span>
+              <p className="text-2xl font-black text-emerald-600 font-sans">
+                {atividades.length > 0 ? Math.round((atividades.filter(a => a.status === 'Finalizada').length / atividades.length) * 100) : 0}%
+              </p>
+            </div>
+          </div>
+
+          {/* Visual Charts */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Chart 1: Status Distribution */}
+            <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-4">
+              <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-indigo-500" /> Distribuição por Status de Execução
+              </h3>
+              <div className="h-56">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={[
+                    { name: 'Pendente', qtd: atividades.filter(a => a.status === 'Pendente').length },
+                    { name: 'Em Progresso', qtd: atividades.filter(a => a.status === 'Em Progresso').length },
+                    { name: 'Finalizada', qtd: atividades.filter(a => a.status === 'Finalizada').length }
+                  ]}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
+                    <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} />
+                    <YAxis stroke="#94a3b8" fontSize={11} />
+                    <Tooltip />
+                    <Bar dataKey="qtd" fill="#6366f1" radius={[8, 8, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Chart 2: Severity Distribution */}
+            <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-4">
+              <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm flex items-center gap-2">
+                <ShieldAlert className="w-4 h-4 text-rose-500" /> Distribuição por Nível de Severidade
+              </h3>
+              <div className="h-56">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={[
+                        { name: 'Baixo', value: atividades.filter(a => a.severidade === 'Baixo').length || 1 },
+                        { name: 'Médio', value: atividades.filter(a => a.severidade === 'Médio').length || 1 },
+                        { name: 'Crítico', value: atividades.filter(a => a.severidade === 'Crítico').length || 1 }
+                      ]}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={50}
+                      outerRadius={80}
+                      paddingAngle={5}
+                      dataKey="value"
+                    >
+                      <Cell fill="#10b981" />
+                      <Cell fill="#f59e0b" />
+                      <Cell fill="#ef4444" />
+                    </Pie>
+                    <Tooltip />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

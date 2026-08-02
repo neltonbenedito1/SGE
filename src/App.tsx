@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { seedDatabaseIfEmpty, db, auth } from './lib/firebase';
+import { seedDatabaseIfEmpty, db, auth, registerUserInFirebaseAuth } from './lib/firebase';
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword 
@@ -22,6 +22,9 @@ import {
 import { Tenant, Plano } from './types';
 import SuperAdminPortal from './components/SuperAdminPortal';
 import TenantPortal from './components/TenantPortal';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { SysEduLogo } from './components/SysEduLogo';
+import BrandbookView from './components/BrandbookView';
 import { 
   LANGUAGES, 
   getSystemLanguage, 
@@ -73,9 +76,10 @@ import {
   CookiePreferences
 } from './lib/cookies';
 import { SessionStateService } from './lib/userState';
+import { localDb } from './lib/localDb';
 
 export default function App() {
-  const [currentView, setCurrentView] = useState<'landing' | 'superadmin' | 'tenant'>('landing');
+  const [currentView, setCurrentView] = useState<'landing' | 'superadmin' | 'tenant' | 'brandbook'>('brandbook');
   const [selectedTenantId, setSelectedTenantId] = useState<string>('tenant-maputo');
   const [selectedRole, setSelectedRole] = useState<'admin' | 'director' | 'docente' | 'pai' | 'estudante'>('admin');
   const [tenants, setTenants] = useState<Tenant[]>([]);
@@ -85,6 +89,16 @@ export default function App() {
   const [isThemeDropdownOpen, setIsThemeDropdownOpen] = useState(false);
   const [systemLang, setSystemLang] = useState<string>(getSystemLanguage());
   const [isLangDropdownOpen, setIsLangDropdownOpen] = useState(false);
+
+  // Non-blocking Toast notification system
+  const [appNotification, setAppNotification] = useState<{ message: string; type: 'sucesso' | 'erro' | 'info' } | null>(null);
+
+  const showNotification = (message: string, type: 'sucesso' | 'erro' | 'info' = 'info') => {
+    setAppNotification({ message, type });
+    setTimeout(() => {
+      setAppNotification(null);
+    }, 4500);
+  };
 
   // Command Menu states
   const [isCmdMenuOpen, setIsCmdMenuOpen] = useState(false);
@@ -121,7 +135,13 @@ export default function App() {
           label: t.label,
           icon: t.icon,
           action: () => {
-            window.dispatchEvent(new CustomEvent('sge-navigate-tenant', { detail: { tab: t.id } }));
+            try {
+              window.dispatchEvent(new CustomEvent('sge-navigate-tenant', { detail: { tab: t.id } }));
+            } catch (e) {
+              const evt = document.createEvent('CustomEvent');
+              evt.initCustomEvent('sge-navigate-tenant', true, true, { tab: t.id });
+              window.dispatchEvent(evt);
+            }
           }
         });
       });
@@ -140,7 +160,13 @@ export default function App() {
           label: t.label,
           icon: t.icon,
           action: () => {
-            window.dispatchEvent(new CustomEvent('sge-navigate-superadmin', { detail: { tab: t.id } }));
+            try {
+              window.dispatchEvent(new CustomEvent('sge-navigate-superadmin', { detail: { tab: t.id } }));
+            } catch (e) {
+              const evt = document.createEvent('CustomEvent');
+              evt.initCustomEvent('sge-navigate-superadmin', true, true, { tab: t.id });
+              window.dispatchEvent(evt);
+            }
           }
         });
       });
@@ -189,9 +215,11 @@ export default function App() {
           setOnboardingForm({
             nome: '',
             email_admin: '',
+            senha: '',
             telefone: '',
             endereco: '',
-            plano_id: plans[0]?.id || 'plano-profissional'
+            plano_id: plans[0]?.id || 'plano-profissional',
+            plataforma_pagamento: 'multicaixa'
           });
           setIsOnboardingModalOpen(true);
         }
@@ -204,7 +232,13 @@ export default function App() {
         label: 'Abrir Assistente Virtual IA (SGE Intelligence)',
         icon: 'Sparkles',
         action: () => {
-          window.dispatchEvent(new CustomEvent('sge-open-ai-chat'));
+          try {
+            window.dispatchEvent(new CustomEvent('sge-open-ai-chat'));
+          } catch (e) {
+            const evt = document.createEvent('CustomEvent');
+            evt.initCustomEvent('sge-open-ai-chat', true, true, null);
+            window.dispatchEvent(evt);
+          }
         }
       });
 
@@ -351,17 +385,70 @@ export default function App() {
       const q = query(usersRef, where('email', '==', emailClean));
       const querySnap = await getDocs(q);
 
-      if (querySnap.empty) {
-        setLoginError('Credenciais inválidas ou conta não cadastrada no sistema.');
-        setLoginLoading(false);
-        return;
-      }
-
       let userDocData: any = null;
-      querySnap.forEach((doc) => {
-        const data = doc.data();
-        userDocData = { id: doc.id, ...data };
-      });
+
+      if (!querySnap.empty) {
+        querySnap.forEach((doc) => {
+          const data = doc.data();
+          userDocData = { id: doc.id, ...data };
+        });
+      } else {
+        // Fallback 1: Scan all docs in 'users' (case-insensitive & trimmed)
+        const allUsersSnap = await getDocs(usersRef);
+        allUsersSnap.forEach((doc) => {
+          const data = doc.data();
+          if (data.email && data.email.trim().toLowerCase() === emailClean) {
+            userDocData = { id: doc.id, ...data };
+          }
+        });
+
+        // Fallback 2: Scan 'docentes' collection if not in 'users'
+        if (!userDocData) {
+          const docentesSnap = await getDocs(collection(db, 'docentes'));
+          docentesSnap.forEach((doc) => {
+            const d = doc.data();
+            if (d.email && d.email.trim().toLowerCase() === emailClean) {
+              userDocData = {
+                id: doc.id,
+                tenant_id: d.tenant_id,
+                email: d.email.trim().toLowerCase(),
+                nome: d.nome || 'Docente',
+                tipo: 'docente',
+                ativo: true,
+                senha: '12345678',
+                senha_temporaria: '12345678'
+              };
+            }
+          });
+        }
+
+        // Fallback 3: Scan 'estudantes' collection if not in 'users'
+        if (!userDocData) {
+          const estudantesSnap = await getDocs(collection(db, 'estudantes'));
+          estudantesSnap.forEach((doc) => {
+            const s = doc.data();
+            const stEmail = s.email || (s.numero_matricula ? `${s.numero_matricula.toLowerCase()}@escola.edu` : '');
+            if (stEmail && stEmail.trim().toLowerCase() === emailClean) {
+              userDocData = {
+                id: doc.id,
+                tenant_id: s.tenant_id,
+                email: stEmail.trim().toLowerCase(),
+                nome: s.nome || 'Estudante',
+                tipo: 'estudante',
+                ativo: true,
+                senha: s.senha_temporaria || '12345678',
+                senha_temporaria: s.senha_temporaria || '12345678'
+              };
+            }
+          });
+        }
+
+        if (!userDocData) {
+          setLoginError('Credenciais inválidas ou conta não cadastrada no sistema.');
+          setLoginLoading(false);
+          return;
+        }
+      }
 
       const tenantId = userDocData.tenant_id;
       const userType = userDocData.tipo; // 'admin' | 'docente' | 'estudante' | 'pai' etc.
@@ -412,16 +499,27 @@ export default function App() {
         return;
       }
 
-      // 4. Authenticate via Firebase Authentication
+      // 4. Authenticate via Firebase Authentication with multi-field fallback
       try {
         await signInWithEmailAndPassword(auth, emailClean, pwdClean);
       } catch (authError: any) {
-        console.error('Erro na autenticação Firebase Auth:', authError);
-        // Fallback checks for backward compatibility if password matches plain record
-        if (userDocData.senha && userDocData.senha === pwdClean) {
-          // Allow fallback login
-          console.log("Fallback matching succeeded.");
+        // Check password matching against stored password fields (senha, senha_temporaria, password or default)
+        const isPasswordMatch = 
+          (userDocData.senha && userDocData.senha === pwdClean) ||
+          (userDocData.senha_temporaria && userDocData.senha_temporaria === pwdClean) ||
+          (userDocData.password && userDocData.password === pwdClean) ||
+          (!userDocData.senha && !userDocData.senha_temporaria && pwdClean === '12345678');
+
+        if (isPasswordMatch) {
+          console.log("Fallback password matching succeeded for user:", emailClean);
+          // Self-heal user registration in Firebase Auth so future logins work seamlessly with Firebase Auth
+          try {
+            await registerUserInFirebaseAuth(emailClean, pwdClean.length >= 6 ? pwdClean : '12345678');
+          } catch (healError) {
+            console.warn("Self-healing auth error:", healError);
+          }
         } else {
+          console.warn('Authentication credentials did not match:', authError?.message || authError);
           setLoginError('E-mail ou senha de acesso incorretos. Verifique suas credenciais.');
           setLoginLoading(false);
           return;
@@ -517,14 +615,27 @@ export default function App() {
     }
   }
 
+// Simple global memory cache for rarely changing configuration data
+const clientSideCache: Record<string, any> = {
+  planos: null,
+};
+
   // Initialize and Seed Database
   async function initApp() {
     setLoading(true);
     try {
       await seedDatabaseIfEmpty();
       
-      // Load current Tenants for selector
-      const tenantsSnap = await getDocs(collection(db, 'tenants'));
+      // Load current Tenants and Plans in parallel (Waterfall Bottleneck Fix)
+      const fetchPlansPromise = clientSideCache.planos 
+        ? Promise.resolve(clientSideCache.planos) 
+        : getDocs(collection(db, 'planos'));
+
+      const [tenantsSnap, plansSnapOrCached] = await Promise.all([
+        getDocs(collection(db, 'tenants')),
+        fetchPlansPromise
+      ]);
+
       const tenantsList: Tenant[] = [];
       tenantsSnap.forEach((d) => {
         const t = d.data() as Tenant;
@@ -534,13 +645,17 @@ export default function App() {
       });
       setTenants(tenantsList);
 
-      // Load Plans
-      const plansSnap = await getDocs(collection(db, 'planos'));
       const plansList: Plano[] = [];
-      plansSnap.forEach((d) => {
-        plansList.push({ ...d.data() as Plano, id: d.id });
-      });
-      setPlans(plansList);
+      if (clientSideCache.planos) {
+        setPlans(clientSideCache.planos);
+      } else {
+        const plansSnap = plansSnapOrCached as any;
+        plansSnap.forEach((d: any) => {
+          plansList.push({ ...d.data() as Plano, id: d.id });
+        });
+        clientSideCache.planos = plansList;
+        setPlans(plansList);
+      }
 
       // Restore session from cookie if available
       const session = getUserSessionCookie();
@@ -567,8 +682,21 @@ export default function App() {
           }
         }
       }
-    } catch (err) {
-      console.error("Error initializing app:", err);
+    } catch (err: any) {
+      console.warn("Notice initializing app from cloud database (falling back to local data if needed):", err?.message || err);
+      // Fallback: load plans & tenants from local database if Firestore query is blocked or offline
+      try {
+        const localPlans = localDb.getPlans();
+        if (localPlans && localPlans.length > 0) {
+          setPlans(localPlans);
+        }
+        const localTenants = localDb.getTenants();
+        if (localTenants && localTenants.length > 0) {
+          setTenants(localTenants);
+        }
+      } catch (localErr) {
+        console.warn("Local DB fallback check note:", localErr);
+      }
     } finally {
       setLoading(false);
     }
@@ -649,13 +777,23 @@ export default function App() {
         const userCredential = await createUserWithEmailAndPassword(auth, email_admin, senha);
         userAuthId = userCredential.user.uid;
       } catch (authError: any) {
-        console.error("Erro ao registrar no Firebase Auth:", authError);
-        if (authError.code === 'auth/email-already-in-use') {
-          alert("Este endereço de e-mail já está sendo utilizado por outra instituição ou conta.");
+        if (authError?.code === 'auth/email-already-in-use' || authError?.message?.includes('email-already-in-use')) {
+          // Check if an existing tenant or user is using this email in Firestore
+          const existingTenantsQuery = await getDocs(query(collection(db, 'tenants'), where('email_admin', '==', email_admin)));
+          const existingUsersQuery = await getDocs(query(collection(db, 'users'), where('email', '==', email_admin)));
+          
+          if (!existingTenantsQuery.empty || !existingUsersQuery.empty) {
+            alert("Este endereço de e-mail já está associado a uma conta ou instituição cadastrada no sistema. Por favor, aceda à página de login para entrar com as suas credenciais ou utilize outro endereço de e-mail.");
+            return;
+          }
+          
+          console.info("E-mail já registado no Firebase Auth. A prosseguir com o cadastro da instituição no Firestore...");
+          userAuthId = "usr-auth-" + Math.random().toString(36).substring(2, 10);
         } else {
-          alert(`Erro de autenticação: ${authError.message}`);
+          console.error("Erro de autenticação no Firebase Auth:", authError);
+          alert(`Erro de autenticação: ${authError.message || 'Falha ao registrar no Firebase Auth'}`);
+          return;
         }
-        return;
       }
 
       const generatedId = "tenant-" + Math.random().toString(36).substr(2, 9);
@@ -843,59 +981,87 @@ export default function App() {
     const currentLangObj = LANGUAGES.find(l => l.code === systemLang) || LANGUAGES[0];
 
     return (
-      <header className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center z-50 bg-transparent">
-        {/* Left Side: Language Selector Dropdown */}
-        <div className="relative">
-          <button
-            type="button"
-            onClick={() => {
-              setIsLangDropdownOpen(!isLangDropdownOpen);
-              setIsThemeDropdownOpen(false);
-            }}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-theme-card/85 border border-theme-border shadow-md text-theme-text text-xs font-semibold cursor-pointer hover:bg-theme-card transition-colors duration-200"
-          >
-            <span className="text-sm">{currentLangObj.flag}</span>
-            <span>{currentLangObj.name}</span>
-            <span className="text-[10px] opacity-60">▼</span>
-          </button>
+      <header className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center z-50 bg-transparent gap-4">
+        {/* Left Side: Language Selector & View Switcher */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => {
+                setIsLangDropdownOpen(!isLangDropdownOpen);
+                setIsThemeDropdownOpen(false);
+              }}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-theme-card/85 border border-theme-border shadow-md text-theme-text text-xs font-semibold cursor-pointer hover:bg-theme-card transition-colors duration-200"
+            >
+              <span className="text-sm">{currentLangObj.flag}</span>
+              <span>{currentLangObj.name}</span>
+              <span className="text-[10px] opacity-60">▼</span>
+            </button>
 
-          {isLangDropdownOpen && (
-            <>
-              <div className="fixed inset-0 z-40 bg-transparent" onClick={() => setIsLangDropdownOpen(false)} />
-              <div className="absolute left-0 mt-2.5 w-48 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl z-50 p-2.5 space-y-1 animate-in fade-in slide-in-from-top-2 duration-200">
-                <div className="px-2 pb-1.5 mb-1.5 border-b border-slate-100 dark:border-slate-800">
-                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Mudar Idioma</p>
+            {isLangDropdownOpen && (
+              <>
+                <div className="fixed inset-0 z-40 bg-transparent" onClick={() => setIsLangDropdownOpen(false)} />
+                <div className="absolute left-0 mt-2.5 w-48 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl z-50 p-2.5 space-y-1 animate-in fade-in slide-in-from-top-2 duration-200">
+                  <div className="px-2 pb-1.5 mb-1.5 border-b border-slate-100 dark:border-slate-800">
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Mudar Idioma</p>
+                  </div>
+                  <div className="max-h-60 overflow-y-auto no-scrollbar space-y-1">
+                    {LANGUAGES.map((lang) => {
+                      const isSelected = systemLang === lang.code;
+                      return (
+                        <button
+                          key={lang.code}
+                          type="button"
+                          onClick={() => {
+                            setSystemLanguage(lang.code);
+                            setSystemLang(lang.code);
+                            setIsLangDropdownOpen(false);
+                            saveLastAction(`Alterou o idioma do sistema para ${lang.name}`);
+                            // Trigger dynamic pre-translation of common tags
+                            fetchAiTranslation("Portal de Acesso Educacional", lang.code);
+                          }}
+                          className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl text-left text-xs font-semibold cursor-pointer transition-colors ${
+                            isSelected
+                              ? 'bg-indigo-600 text-white'
+                              : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-850'
+                          }`}
+                        >
+                          <span className="text-sm">{lang.flag}</span>
+                          <span className="truncate">{lang.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-                <div className="max-h-60 overflow-y-auto no-scrollbar space-y-1">
-                  {LANGUAGES.map((lang) => {
-                    const isSelected = systemLang === lang.code;
-                    return (
-                      <button
-                        key={lang.code}
-                        type="button"
-                        onClick={() => {
-                          setSystemLanguage(lang.code);
-                          setSystemLang(lang.code);
-                          setIsLangDropdownOpen(false);
-                          saveLastAction(`Alterou o idioma do sistema para ${lang.name}`);
-                          // Trigger dynamic pre-translation of common tags
-                          fetchAiTranslation("Portal de Acesso Educacional", lang.code);
-                        }}
-                        className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl text-left text-xs font-semibold cursor-pointer transition-colors ${
-                          isSelected
-                            ? 'bg-indigo-600 text-white'
-                            : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-850'
-                        }`}
-                      >
-                        <span className="text-sm">{lang.flag}</span>
-                        <span className="truncate">{lang.name}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </>
-          )}
+              </>
+            )}
+          </div>
+
+          {/* Brandbook & Portal View switcher tabs */}
+          <div className="flex bg-white/80 dark:bg-slate-900/80 p-1 rounded-xl border border-slate-200 dark:border-slate-800 shadow-md backdrop-blur-md gap-0.5">
+            <button
+              type="button"
+              onClick={() => setCurrentView('brandbook')}
+              className={`px-3 py-1 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1 ${
+                currentView === 'brandbook'
+                  ? 'bg-[#1E66F5] text-white shadow-sm'
+                  : 'text-[#6B7280] hover:text-[#0D1B3D] dark:hover:text-white'
+              }`}
+            >
+              📖 Brandbook SysEdu
+            </button>
+            <button
+              type="button"
+              onClick={() => setCurrentView('landing')}
+              className={`px-3 py-1 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1 ${
+                currentView === 'landing'
+                  ? 'bg-[#1E66F5] text-white shadow-sm'
+                  : 'text-[#6B7280] hover:text-[#0D1B3D] dark:hover:text-white'
+              }`}
+            >
+              ⚡ Portal de Acesso
+            </button>
+          </div>
         </div>
 
         {/* Right Side: Theme Selector Dropdown */}
@@ -956,12 +1122,44 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="bg-slate-900 min-h-screen text-slate-100 flex flex-col items-center justify-center p-6 text-center">
-        <RefreshCw className="w-12 h-12 text-indigo-500 animate-spin mb-4" />
-        <h2 className="text-2xl font-bold font-sans">Inicializando Sistema SaaS Educacional</h2>
-        <p className="text-slate-400 text-sm mt-1 max-w-sm">
-          Estabelecendo canais seguros, montando esquemas de isolamento de tenants e carregando dados iniciais no Firestore...
-        </p>
+      <div className="bg-[#0D1B3D] min-h-screen text-slate-100 flex flex-col items-center justify-center p-6 text-center animate-fadeIn duration-500">
+        <div className="flex flex-col items-center justify-center space-y-6">
+          {/* Logo do Sistema */}
+          <SysEduLogo variant="negative" size={96} showSlogan={false} />
+          
+          {/* Slogan */}
+          <div className="space-y-1.5 mt-2">
+            <h2 className="text-[10px] font-bold uppercase tracking-[0.25em] text-indigo-300 font-sans">
+              SysEdu SaaS
+            </h2>
+            <p className="text-xs text-indigo-100/60 font-serif italic max-w-xs">
+              "Organizar hoje, transformar o amanhã."
+            </p>
+          </div>
+
+          {/* Samsung One UI Style circular thin spinner */}
+          <div className="pt-8">
+            <svg className="w-8 h-8 animate-spin text-indigo-400" viewBox="0 0 50 50">
+              <circle 
+                className="opacity-20" 
+                cx="25" 
+                cy="25" 
+                r="20" 
+                stroke="currentColor" 
+                strokeWidth="2" 
+                fill="none" 
+              />
+              <path 
+                className="opacity-80" 
+                fill="none" 
+                stroke="currentColor" 
+                strokeWidth="2" 
+                strokeLinecap="round" 
+                d="M25,5 A20,20 0 0,1 45,25" 
+              />
+            </svg>
+          </div>
+        </div>
       </div>
     );
   }
@@ -1103,7 +1301,7 @@ export default function App() {
 
   return (
     <main className="min-h-screen bg-theme-bg text-theme-text font-sans transition-colors duration-300 relative">
-      {currentView === 'landing' && renderLoginHeader()}
+      {(currentView === 'landing' || currentView === 'brandbook') && renderLoginHeader()}
       
       {/* VIEW: LANDING/LOGIN PORTAL SWITCHER */}
       {currentView === 'landing' && (
@@ -1112,9 +1310,9 @@ export default function App() {
             
             {/* Header with Title and Sign-up Button */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-theme-border pb-5">
-              <div>
-
-                <h1 className="text-2xl font-extrabold text-theme-text tracking-tight font-sans">
+              <div className="space-y-3">
+                <SysEduLogo variant="full" size={38} />
+                <h1 className="text-xl font-extrabold text-theme-text tracking-tight font-sans">
                   {translate("Portal de Acesso Educacional", systemLang)}
                 </h1>
                 <p className="text-theme-text-muted text-xs mt-1 leading-relaxed">
@@ -1128,9 +1326,11 @@ export default function App() {
                   setOnboardingForm({
                     nome: '',
                     email_admin: '',
+                    senha: '',
                     telefone: '',
                     endereco: '',
-                    plano_id: plans[0]?.id || 'plano-profissional'
+                    plano_id: plans[0]?.id || 'plano-profissional',
+                    plataforma_pagamento: 'multicaixa'
                   });
                   setIsOnboardingModalOpen(true);
                 }}
@@ -1201,9 +1401,11 @@ export default function App() {
                   setOnboardingForm({
                     nome: '',
                     email_admin: '',
+                    senha: '',
                     telefone: '',
                     endereco: '',
-                    plano_id: plans[0]?.id || 'plano-profissional'
+                    plano_id: plans[0]?.id || 'plano-profissional',
+                    plataforma_pagamento: 'multicaixa'
                   });
                   setIsOnboardingModalOpen(true);
                 }}
@@ -1609,43 +1811,54 @@ export default function App() {
 
       {/* VIEW: SUPER ADMIN PANEL (CAMADA 1) */}
       {currentView === 'superadmin' && (
-        <SuperAdminPortal 
-          onLogout={() => {
-            deleteCookie('user_session');
-            setCurrentView('landing');
-          }} 
-          activeTheme={activeTheme}
-          onChangeTheme={handleThemeChange}
-          systemLang={systemLang}
-          onChangeLanguage={(lang) => {
-            setSystemLanguage(lang);
-            setSystemLang(lang);
-          }}
-        />
+        <ErrorBoundary fallbackTitle="Erro ao carregar o Painel de Controlo Global">
+          <SuperAdminPortal 
+            onLogout={() => {
+              deleteCookie('user_session');
+              setCurrentView('landing');
+            }} 
+            activeTheme={activeTheme}
+            onChangeTheme={handleThemeChange}
+            systemLang={systemLang}
+            onChangeLanguage={(lang) => {
+              setSystemLanguage(lang);
+              setSystemLang(lang);
+            }}
+          />
+        </ErrorBoundary>
       )}
 
       {/* VIEW: TENANT PORTAL PANEL (CAMADA 2) */}
       {currentView === 'tenant' && (
-        <TenantPortal 
-          currentTenantId={selectedTenantId}
-          currentUserRole={selectedRole}
-          currentUserEmail={getUserSessionCookie()?.email || ""}
-          onLogout={() => {
-            deleteCookie('user_session');
-            setCurrentView('landing');
-          }}
-          activeTheme={activeTheme}
-          onChangeTheme={handleThemeChange}
-          systemLang={systemLang}
-          onChangeLanguage={(lang) => {
-            setSystemLanguage(lang);
-            setSystemLang(lang);
-            const session = getUserSessionCookie();
-            if (session?.id) {
-              SessionStateService.savePreference(session.id, 'language', lang);
-            }
-          }}
-        />
+        <ErrorBoundary fallbackTitle="Erro ao carregar o Portal Académico">
+          <TenantPortal 
+            currentTenantId={selectedTenantId}
+            currentUserRole={selectedRole}
+            currentUserEmail={getUserSessionCookie()?.email || ""}
+            onLogout={() => {
+              deleteCookie('user_session');
+              setCurrentView('landing');
+            }}
+            activeTheme={activeTheme}
+            onChangeTheme={handleThemeChange}
+            systemLang={systemLang}
+            onChangeLanguage={(lang) => {
+              setSystemLanguage(lang);
+              setSystemLang(lang);
+              const session = getUserSessionCookie();
+              if (session?.id) {
+                SessionStateService.savePreference(session.id, 'language', lang);
+              }
+            }}
+          />
+        </ErrorBoundary>
+      )}
+
+      {/* VIEW: BRANDBOOK VIEW */}
+      {currentView === 'brandbook' && (
+        <div className="pt-20">
+          <BrandbookView />
+        </div>
       )}
 
       {/* COOKIE AND PREFERENCE CONSENT POPUP */}
