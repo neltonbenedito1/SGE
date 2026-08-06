@@ -61,7 +61,8 @@ import {
   Settings,
   Sliders,
   Globe,
-  Palette
+  Palette,
+  EyeOff
 } from 'lucide-react';
 
 import {
@@ -307,6 +308,9 @@ export default function SuperAdminPortal({
   const [editingPlan, setEditingPlan] = useState<Plano | null>(null);
 
   // Form Inputs
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
   const [tenantForm, setTenantForm] = useState(() => getSavedFormDraft('draft_tenant_form', {
     nome: '',
     email_admin: '',
@@ -316,9 +320,67 @@ export default function SuperAdminPortal({
     status: 'ativo' as 'ativo' | 'suspenso' | 'cancelado',
     data_vencimento: '',
     senha_temporaria: '',
+    senha: '',
+    confirmar_senha: '',
     idioma_padrao: 'pt',
     ai_translation_enabled: true
   }));
+
+  // Função auxiliar para validação e métricas de complexidade de senha
+  const getPasswordComplexity = useCallback((password: string, confirmPassword?: string) => {
+    const pwd = password || '';
+    const minLength = pwd.length >= 8;
+    const hasUpper = /[A-Z]/.test(pwd);
+    const hasLower = /[a-z]/.test(pwd);
+    const hasNumber = /[0-9]/.test(pwd);
+    const hasSpecial = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(pwd);
+    const matchConfirm = confirmPassword !== undefined ? (pwd.length > 0 && pwd === confirmPassword) : true;
+
+    let score = 0;
+    if (minLength) score += 20;
+    if (hasUpper) score += 20;
+    if (hasLower) score += 20;
+    if (hasNumber) score += 20;
+    if (hasSpecial) score += 20;
+
+    let label = 'Muito Fraca';
+    let barColor = 'bg-rose-500';
+    let badgeColor = 'bg-rose-100 text-rose-700 border-rose-200';
+
+    if (score >= 100) {
+      label = 'Excelente';
+      barColor = 'bg-emerald-500';
+      badgeColor = 'bg-emerald-100 text-emerald-700 border-emerald-200';
+    } else if (score >= 80) {
+      label = 'Forte';
+      barColor = 'bg-teal-500';
+      badgeColor = 'bg-teal-100 text-teal-700 border-teal-200';
+    } else if (score >= 60) {
+      label = 'Média';
+      barColor = 'bg-amber-500';
+      badgeColor = 'bg-amber-100 text-amber-700 border-amber-200';
+    } else if (score >= 40) {
+      label = 'Fraca';
+      barColor = 'bg-orange-500';
+      badgeColor = 'bg-orange-100 text-orange-700 border-orange-200';
+    }
+
+    const isFullyValid = minLength && hasUpper && hasLower && hasNumber && hasSpecial && matchConfirm;
+
+    return {
+      minLength,
+      hasUpper,
+      hasLower,
+      hasNumber,
+      hasSpecial,
+      matchConfirm,
+      score,
+      label,
+      barColor,
+      badgeColor,
+      isFullyValid
+    };
+  }, []);
 
   useEffect(() => {
     saveSettingIfAllowed('draft_tenant_form', JSON.stringify(tenantForm), 'formData', 24);
@@ -966,6 +1028,18 @@ export default function SuperAdminPortal({
       return;
     }
 
+    if (!editingTenant) {
+      if (tenantForm.senha !== tenantForm.confirmar_senha) {
+        showSystemNotification("Erro: A senha e a confirmação de senha não coincidem.", "erro");
+        return;
+      }
+      const pwdComplexity = getPasswordComplexity(tenantForm.senha || '', tenantForm.confirmar_senha);
+      if (!pwdComplexity.isFullyValid) {
+        showSystemNotification("Erro: A senha informada não atende a todos os critérios de complexidade exigidos.", "erro");
+        return;
+      }
+    }
+
     setIsSaving(true);
     try {
       if (editingTenant) {
@@ -1028,7 +1102,7 @@ export default function SuperAdminPortal({
           ai_translation_enabled: tenantForm.ai_translation_enabled !== false
         };
 
-        const tempPassword = tenantForm.senha_temporaria || "Mudar@123";
+        const tempPassword = tenantForm.senha || tenantForm.senha_temporaria || "Mudar@123";
         const adminEmailClean = (tenantForm.email_admin || '').trim().toLowerCase();
         const tenantAdminUser = {
           id: "user-admin-" + generatedId,
@@ -1245,22 +1319,42 @@ export default function SuperAdminPortal({
     setTestStatus('success');
   }
 
-  // Soft Delete Tenant
+  // Excluir Conta (Hard Delete no Firebase e Firestore)
   async function handleSoftDeleteTenant(id: string, name: string) {
     showConfirm(
-      "Excluir Instituição",
-      `Tem certeza que deseja desativar/excluir a instituição "${name}"? Os dados serão marcados para soft-delete.`,
+      "Excluir Conta do Firebase",
+      `Tem certeza que deseja excluir permanentemente a conta da instituição "${name}" e todos os seus usuários do Firebase?`,
       async () => {
         try {
-          const tenantRef = doc(db, 'tenants', id);
-          await updateDoc(tenantRef, {
-            deleted_at: new Date().toISOString(),
-            status: 'cancelado'
-          });
-          await auditLog("Excluir Conta (Soft Delete)", "Tenant", id, `Marcado tenant ${name} como removido (soft-delete)`);
+          // 1. Apagar documento do tenant da coleção 'tenants' no Firestore
+          await deleteDoc(doc(db, 'tenants', id));
+
+          // 2. Apagar utilizadores associados na coleção 'users' do Firestore
+          try {
+            const usersQ = query(collection(db, 'users'), where('tenant_id', '==', id));
+            const usersSnap = await getDocs(usersQ);
+            await Promise.all(usersSnap.docs.map(uDoc => deleteDoc(uDoc.ref)));
+
+            const usersQ2 = query(collection(db, 'users'), where('tenantId', '==', id));
+            const usersSnap2 = await getDocs(usersQ2);
+            await Promise.all(usersSnap2.docs.map(uDoc => deleteDoc(uDoc.ref)));
+          } catch (uErr) {
+            console.warn("Aviso ao remover utilizadores associados da conta:", uErr);
+          }
+
+          // 3. Remover do banco local temporário se existir
+          try {
+            if (typeof localDb !== 'undefined' && localDb.deleteTenant) {
+              localDb.deleteTenant(id);
+            }
+          } catch (e) {}
+
+          await auditLog("Excluir Conta (Firebase)", "Tenant", id, `Excluída conta da instituição ${name} e seus usuários associados do Firebase`);
+          showSystemNotification(`Conta "${name}" excluída com sucesso do Firebase!`, 'cadastro');
           loadData();
-        } catch (err) {
-          console.error("Error deleting tenant:", err);
+        } catch (err: any) {
+          console.error("Erro ao excluir conta do Firebase:", err);
+          showSystemNotification(`Erro ao excluir conta do Firebase: ${err.message || err}`, 'erro');
         }
       },
       true
@@ -1507,22 +1601,35 @@ export default function SuperAdminPortal({
       );
     } else if (action === 'delete') {
       showConfirm(
-        "Excluir Escolas Selecionadas",
-        `Tem certeza de que deseja excluir (soft-delete) as ${selectedTenantIds.length} instituições selecionadas?`,
+        "Excluir Contas Selecionadas do Firebase",
+        `Tem certeza de que deseja excluir permanentemente do Firebase as ${selectedTenantIds.length} instituições selecionadas e todos os seus usuários?`,
         async () => {
           try {
             await Promise.all(selectedTenantIds.map(async (id) => {
-              const tenantRef = doc(db, 'tenants', id);
-              await updateDoc(tenantRef, {
-                deleted_at: new Date().toISOString(),
-                status: 'cancelado'
-              });
-              await auditLog("Excluir Conta (Lote)", "Tenant", id, `Marcado como removido (soft-delete) via ação em lote`);
+              // Apagar documento do tenant
+              await deleteDoc(doc(db, 'tenants', id));
+              
+              // Apagar usuários vinculados
+              try {
+                const usersQ = query(collection(db, 'users'), where('tenant_id', '==', id));
+                const usersSnap = await getDocs(usersQ);
+                await Promise.all(usersSnap.docs.map(uDoc => deleteDoc(uDoc.ref)));
+
+                const usersQ2 = query(collection(db, 'users'), where('tenantId', '==', id));
+                const usersSnap2 = await getDocs(usersQ2);
+                await Promise.all(usersSnap2.docs.map(uDoc => deleteDoc(uDoc.ref)));
+              } catch (uErr) {
+                console.warn("Aviso ao remover utilizadores em lote:", uErr);
+              }
+
+              await auditLog("Excluir Conta (Lote Firebase)", "Tenant", id, `Excluída conta e usuários associados do Firebase via ação em lote`);
             }));
+            showSystemNotification(`${selectedTenantIds.length} conta(s) excluída(s) com sucesso do Firebase!`, 'cadastro');
             loadData();
             setSelectedTenantIds([]);
-          } catch (err) {
-            console.error("Error deleting tenants in batch:", err);
+          } catch (err: any) {
+            console.error("Erro ao excluir contas em lote do Firebase:", err);
+            showSystemNotification(`Erro ao excluir contas em lote: ${err.message || err}`, 'erro');
           }
         },
         true
@@ -2457,7 +2564,7 @@ export default function SuperAdminPortal({
                       <select 
                         value={planFilter}
                         onChange={(e) => setPlanFilter(e.target.value)}
-                        className="bg-transparent border-none text-slate-700 focus:outline-none"
+                        className="bg-transparent border-none text-slate-700 focus:outline-none cursor-pointer"
                       >
                         <option value="todos">Planos: Todos</option>
                         {plans.map(p => (
@@ -2465,6 +2572,34 @@ export default function SuperAdminPortal({
                         ))}
                       </select>
                     </div>
+
+                    {/* Botão Adicionar Conta */}
+                    <button
+                      id="btn_adicionar_conta"
+                      type="button"
+                      onClick={() => {
+                        setEditingTenant(null);
+                        setTenantForm({
+                          nome: '',
+                          email_admin: '',
+                          telefone: '',
+                          endereco: '',
+                          plano_id: plans[0]?.id || 'plano-basico',
+                          status: 'ativo',
+                          data_vencimento: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                          senha_temporaria: '',
+                          senha: '',
+                          confirmar_senha: '',
+                          idioma_padrao: 'pt',
+                          ai_translation_enabled: true
+                        });
+                        setIsTenantModalOpen(true);
+                      }}
+                      className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 py-2.5 rounded-xl text-sm shadow-sm flex items-center gap-2 transition-all cursor-pointer shrink-0 active:scale-[0.98]"
+                    >
+                      <Plus className="w-4.5 h-4.5" />
+                      <span>Adicionar conta</span>
+                    </button>
                   </div>
                 </div>
 
@@ -4092,123 +4227,263 @@ export default function SuperAdminPortal({
         </div>
       )}
 
-      {/* MODAL: CREATE/EDIT TENANT */}
+      {/* SLIDE-OVER DRAWER (DIREITA PARA ESQUERDA): CREATE/EDIT TENANT */}
       {isTenantModalOpen && (
-        <div 
-          onClick={(e) => {
-            if (e.target === e.currentTarget) {
+        <div className="fixed inset-0 z-[100] overflow-hidden">
+          {/* Backdrop overlay */}
+          <div 
+            className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs transition-opacity duration-300 animate-in fade-in"
+            onClick={() => {
               if (window.confirm("Deseja realmente fechar? Quaisquer dados preenchidos e alterações não salvas serão perdidos.")) {
                 setIsTenantModalOpen(false);
                 setEditingTenant(null);
               }
-            }
-          }}
-          className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs flex items-center justify-center p-4 z-[100] overflow-y-auto pointer-events-auto"
-        >
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl border border-slate-100 pointer-events-auto">
-            <h3 className="text-lg font-bold text-slate-950 font-sans mb-4">
-              {editingTenant ? 'Editar Cadastro de Instituição' : 'Cadastrar Nova Instituição Cliente'}
-            </h3>
-            <form onSubmit={handleTenantSubmit} className="space-y-4">
+            }}
+          />
+
+          {/* Sliding Panel */}
+          <div className="fixed inset-y-0 right-0 max-w-xl w-full bg-white dark:bg-slate-900 shadow-2xl z-[101] flex flex-col transform transition-transform duration-300 ease-out animate-in slide-in-from-right">
+            {/* Header */}
+            <div className="px-6 py-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/80 dark:bg-slate-800/80 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 rounded-xl">
+                  <Building2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900 dark:text-white font-sans leading-tight">
+                    {editingTenant ? 'Editar Cadastro de Instituição' : 'Adicionar Conta / Nova Instituição'}
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {editingTenant ? 'Atualize os dados e limites da instituição' : 'Preencha os dados e crie as credenciais com senha forte'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm("Deseja realmente fechar? Quaisquer dados preenchidos e alterações não salvas serão perdidos.")) {
+                    setIsTenantModalOpen(false);
+                    setEditingTenant(null);
+                  }
+                }}
+                className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Form Content - Scrollable Body */}
+            <form onSubmit={handleTenantSubmit} className="flex-1 overflow-y-auto p-6 space-y-5">
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Nome da Escola / Instituição</label>
+                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider mb-1">
+                  Nome da Escola / Instituição *
+                </label>
                 <input 
                   type="text"
                   required
                   value={tenantForm.nome}
                   onChange={(e) => setTenantForm({ ...tenantForm, nome: e.target.value })}
-                  placeholder="Ex: Escola Secundária Central de Moçambique"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="Ex: Escola Secundária Central"
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-850 dark:text-slate-100"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Email Administrativo</label>
+                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider mb-1">
+                    Email Administrativo *
+                  </label>
                   <input 
                     type="email"
                     required
                     value={tenantForm.email_admin}
                     onChange={(e) => setTenantForm({ ...tenantForm, email_admin: e.target.value })}
                     placeholder="Ex: admin@escola.edu"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-850 dark:text-slate-100"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Telefone de Contato</label>
+                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider mb-1">
+                    Telefone de Contato *
+                  </label>
                   <input 
                     type="text"
                     required
                     value={tenantForm.telefone}
                     onChange={(e) => setTenantForm({ ...tenantForm, telefone: e.target.value })}
                     placeholder="Ex: +258 84 123 4567"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-850 dark:text-slate-100"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Endereço Físico</label>
+                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider mb-1">
+                  Endereço Físico *
+                </label>
                 <input 
                   type="text"
                   required
                   value={tenantForm.endereco}
                   onChange={(e) => setTenantForm({ ...tenantForm, endereco: e.target.value })}
                   placeholder="Rua, Cidade, Província"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-850 dark:text-slate-100"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Plano Inicial</label>
+                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider mb-1">
+                    Plano Inicial *
+                  </label>
                   <select 
                     value={tenantForm.plano_id}
                     onChange={(e) => setTenantForm({ ...tenantForm, plano_id: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-700"
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 dark:text-slate-100 cursor-pointer"
                   >
                     {plans.map(p => (
-                      <option key={p.id} value={p.id}>{p.nome} - R$ {p.preco}/mês</option>
+                      <option key={p.id} value={p.id}>{p.nome} - MT {p.preco}/mês</option>
                     ))}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Data de Vencimento</label>
+                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider mb-1">
+                    Data de Vencimento *
+                  </label>
                   <input 
                     type="date"
                     required
                     value={tenantForm.data_vencimento}
                     onChange={(e) => setTenantForm({ ...tenantForm, data_vencimento: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-700"
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 dark:text-slate-100 cursor-pointer"
                   />
                 </div>
               </div>
 
-              {!editingTenant && (
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
-                    Senha Temporária (A ser alterada no primeiro login)
-                  </label>
-                  <input 
-                    type="text"
-                    value={tenantForm.senha_temporaria || ''}
-                    onChange={(e) => setTenantForm({ ...tenantForm, senha_temporaria: e.target.value })}
-                    placeholder="Mudar@123 (Deixe em branco para o padrão)"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                  <span className="text-[10px] text-slate-400 mt-1 block">
-                    O cliente será obrigado a redefinir esta senha ao realizar o primeiro login no sistema.
-                  </span>
-                </div>
-              )}
+              {/* CAMPOS SENHA E CONFIRMAR SENHA COM COMPLEXIDADE (NOVO CADASTRO) */}
+              {!editingTenant && (() => {
+                const metrics = getPasswordComplexity(tenantForm.senha || '', tenantForm.confirmar_senha);
+                return (
+                  <div className="bg-slate-50 dark:bg-slate-800/80 p-4 rounded-xl border border-slate-200 dark:border-slate-700/80 space-y-3.5">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-wider">
+                        🔑 Definição de Senha de Acesso
+                      </label>
+                      <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${metrics.badgeColor}`}>
+                        {metrics.label} ({metrics.score}%)
+                      </span>
+                    </div>
+
+                    {/* Barra de Força da Senha */}
+                    <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full overflow-hidden">
+                      <div 
+                        className={`h-full transition-all duration-300 ${metrics.barColor}`} 
+                        style={{ width: `${metrics.score}%` }} 
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {/* Campo Senha */}
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
+                          Senha *
+                        </label>
+                        <div className="relative">
+                          <input 
+                            type={showPassword ? "text" : "password"}
+                            required={!editingTenant}
+                            value={tenantForm.senha || ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setTenantForm({ 
+                                ...tenantForm, 
+                                senha: val, 
+                                senha_temporaria: val 
+                              });
+                            }}
+                            placeholder="Digite uma senha forte"
+                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 dark:text-slate-100"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowPassword(!showPassword)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                          >
+                            {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Campo Confirmar Senha */}
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
+                          Confirmar Senha *
+                        </label>
+                        <div className="relative">
+                          <input 
+                            type={showConfirmPassword ? "text" : "password"}
+                            required={!editingTenant}
+                            value={tenantForm.confirmar_senha || ''}
+                            onChange={(e) => setTenantForm({ ...tenantForm, confirmar_senha: e.target.value })}
+                            placeholder="Repita a senha digitada"
+                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 dark:text-slate-100"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                          >
+                            {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Checklist em Tempo Real dos Requisitos de Complexidade */}
+                    <div className="pt-2 border-t border-slate-200 dark:border-slate-700 grid grid-cols-2 gap-2 text-[11px]">
+                      <div className={`flex items-center gap-1.5 ${metrics.minLength ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : 'text-slate-400'}`}>
+                        {metrics.minLength ? <Check className="w-3.5 h-3.5 shrink-0 text-emerald-500" /> : <span className="w-3.5 text-center">•</span>}
+                        <span>Mínimo 8 caracteres</span>
+                      </div>
+
+                      <div className={`flex items-center gap-1.5 ${metrics.hasUpper ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : 'text-slate-400'}`}>
+                        {metrics.hasUpper ? <Check className="w-3.5 h-3.5 shrink-0 text-emerald-500" /> : <span className="w-3.5 text-center">•</span>}
+                        <span>Letra maiúscula (A-Z)</span>
+                      </div>
+
+                      <div className={`flex items-center gap-1.5 ${metrics.hasLower ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : 'text-slate-400'}`}>
+                        {metrics.hasLower ? <Check className="w-3.5 h-3.5 shrink-0 text-emerald-500" /> : <span className="w-3.5 text-center">•</span>}
+                        <span>Letra minúscula (a-z)</span>
+                      </div>
+
+                      <div className={`flex items-center gap-1.5 ${metrics.hasNumber ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : 'text-slate-400'}`}>
+                        {metrics.hasNumber ? <Check className="w-3.5 h-3.5 shrink-0 text-emerald-500" /> : <span className="w-3.5 text-center">•</span>}
+                        <span>Pelo menos 1 número</span>
+                      </div>
+
+                      <div className={`flex items-center gap-1.5 ${metrics.hasSpecial ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : 'text-slate-400'}`}>
+                        {metrics.hasSpecial ? <Check className="w-3.5 h-3.5 shrink-0 text-emerald-500" /> : <span className="w-3.5 text-center">•</span>}
+                        <span>Símbolo especial (!@#$)</span>
+                      </div>
+
+                      <div className={`flex items-center gap-1.5 ${metrics.matchConfirm ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : 'text-rose-500 font-semibold'}`}>
+                        {metrics.matchConfirm ? <Check className="w-3.5 h-3.5 shrink-0 text-emerald-500" /> : <span className="w-3.5 text-center">•</span>}
+                        <span>Senhas coincidem</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {editingTenant && (
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Status da Subscrição</label>
+                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider mb-1">
+                    Status da Subscrição *
+                  </label>
                   <select 
                     value={tenantForm.status}
                     onChange={(e) => setTenantForm({ ...tenantForm, status: e.target.value as any })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-700"
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 dark:text-slate-100 cursor-pointer"
                   >
                     <option value="ativo">Ativo (Permitido Acesso)</option>
                     <option value="suspenso">Suspenso (Bloquear Acesso)</option>
@@ -4217,15 +4492,19 @@ export default function SuperAdminPortal({
                 </div>
               )}
 
-              <div className="border-t border-slate-100 pt-4 space-y-4">
-                <h4 className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Configurações de Idioma & Tradução</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="border-t border-slate-200 dark:border-slate-800 pt-4 space-y-4">
+                <h4 className="text-xs font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">
+                  Configurações de Idioma & Tradução
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Idioma Padrão da Instituição</label>
+                    <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider mb-1">
+                      Idioma Padrão
+                    </label>
                     <select
                       value={tenantForm.idioma_padrao}
                       onChange={(e) => setTenantForm({ ...tenantForm, idioma_padrao: e.target.value })}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-700 animate-fadeIn"
+                      className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 dark:text-slate-100 cursor-pointer"
                     >
                       {LANGUAGES.map(lang => (
                         <option key={lang.code} value={lang.code}>{lang.flag} {lang.name}</option>
@@ -4240,25 +4519,26 @@ export default function SuperAdminPortal({
                       onChange={(e) => setTenantForm({ ...tenantForm, ai_translation_enabled: e.target.checked })}
                       className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer"
                     />
-                    <label htmlFor="ai_translation_enabled" className="text-xs font-semibold text-slate-600 cursor-pointer">
-                      Ativar Tradutor por Inteligência Artificial
+                    <label htmlFor="ai_translation_enabled" className="text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer">
+                      Ativar Tradutor por IA
                     </label>
                   </div>
                 </div>
               </div>
 
-              <div className="flex gap-2 justify-end pt-4 border-t border-slate-100">
+              {/* Fixed Footer Actions */}
+              <div className="flex gap-3 pt-6 border-t border-slate-200 dark:border-slate-800 mt-6">
                 <button 
                   type="button"
                   onClick={() => setIsTenantModalOpen(false)}
-                  className="bg-slate-100 text-slate-700 font-medium px-4 py-2 rounded-lg text-sm"
+                  className="flex-1 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold py-3 rounded-xl text-sm transition-colors cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button 
                   id="btn_criar_conta_cliente"
                   type="submit"
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-medium px-4 py-2 rounded-lg text-sm transition-all shadow-md active:scale-[0.98]"
+                  className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl text-sm shadow-md transition-all cursor-pointer active:scale-[0.98]"
                 >
                   {editingTenant ? 'Salvar Mudanças' : 'Criar Conta Cliente'}
                 </button>

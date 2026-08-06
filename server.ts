@@ -3,11 +3,101 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import nodemailer from "nodemailer";
+import Stripe from "stripe";
 
 const app = express();
 const PORT = 3000;
 
-// Parse JSON body
+// Lazy Initialization of Stripe SDK
+let stripeClient: Stripe | null = null;
+function getStripe(): Stripe {
+  if (!stripeClient) {
+    const key = process.env.STRIPE_SECRET_KEY || "sk_test_51U078S8T9we2UIJzE8sMyQVEiyiPaZe0dwA6kHpBrLWnJaxaNMddDXIQ41SNZxKg1wFPQH1T4CRmy2xZVgSAp13U002eHBCd8O";
+    stripeClient = new Stripe(key, {
+      apiVersion: "2023-10-16" as any,
+    });
+  }
+  return stripeClient;
+}
+
+// Memory cache for event idempotency
+const processedStripeEvents = new Set<string>();
+
+// 1. STRIPE WEBHOOK ENDPOINT (Must handle raw body for signature verification)
+app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  const sig = req.headers["stripe-signature"] as string;
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || "whsec_test_secret_key_stripe_webhook_51U078S8";
+
+  let event: Stripe.Event;
+
+  try {
+    const stripe = getStripe();
+    if (sig && webhookSecret) {
+      event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
+    } else {
+      // Test mode or direct payload fallback
+      const bodyString = req.body instanceof Buffer ? req.body.toString("utf8") : JSON.stringify(req.body);
+      event = JSON.parse(bodyString);
+    }
+  } catch (err: any) {
+    console.error(`[Stripe Webhook Error] Signature verification failed: ${err.message}`);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  // Idempotency Check
+  if (processedStripeEvents.has(event.id)) {
+    console.log(`[Stripe Webhook] Event ${event.id} already processed. Skipping.`);
+    return res.json({ received: true, idempotent: true });
+  }
+
+  processedStripeEvents.add(event.id);
+  console.log(`[Stripe Webhook] Processing Event: ${event.type} (ID: ${event.id})`);
+
+  try {
+    switch (event.type) {
+      case "checkout.session.completed": {
+        const session = event.data.object as Stripe.Checkout.Session;
+        console.log(`[Stripe Webhook] Checkout session completed: ${session.id} for Customer: ${session.customer}`);
+        // Session contains client_reference_id (userId/tenantId), customer, subscription, metadata
+        break;
+      }
+      case "invoice.paid": {
+        const invoice = event.data.object as Stripe.Invoice;
+        console.log(`[Stripe Webhook] Invoice paid: ${invoice.id} - Customer: ${invoice.customer}, Amount: ${invoice.amount_paid}`);
+        break;
+      }
+      case "invoice.payment_failed": {
+        const invoice = event.data.object as Stripe.Invoice;
+        console.log(`[Stripe Webhook] Invoice payment failed: ${invoice.id} - Customer: ${invoice.customer}. Subscription marked as past_due.`);
+        break;
+      }
+      case "customer.subscription.updated": {
+        const subscription = event.data.object as Stripe.Subscription;
+        console.log(`[Stripe Webhook] Subscription updated: ${subscription.id} - Status: ${subscription.status}`);
+        break;
+      }
+      case "customer.subscription.deleted": {
+        const subscription = event.data.object as Stripe.Subscription;
+        console.log(`[Stripe Webhook] Subscription canceled/deleted: ${subscription.id}`);
+        break;
+      }
+      case "charge.refunded": {
+        const charge = event.data.object as Stripe.Charge;
+        console.log(`[Stripe Webhook] Charge refunded: ${charge.id} - Amount: ${charge.amount_refunded}`);
+        break;
+      }
+      default:
+        console.log(`[Stripe Webhook] Unhandled event type: ${event.type}`);
+    }
+
+    return res.json({ received: true, status: "processed", type: event.type, eventId: event.id });
+  } catch (err: any) {
+    console.error(`[Stripe Webhook Error] Failed handling event ${event.type}:`, err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Standard JSON Body Parser for all other endpoints
 app.use(express.json());
 
 // Initialize Gemini SDK client on the server side
@@ -270,6 +360,225 @@ app.post("/api/payments/webhook", async (req, res) => {
   } catch (error: any) {
     console.error("Webhook processing failure:", error);
     return res.status(500).json({ error: error.message });
+  }
+});
+
+// ==========================================
+// REAL STRIPE SAAS GATEWAY API ENDPOINTS
+// ==========================================
+
+// 1. CREATE STRIPE CHECKOUT SESSION
+app.post("/api/stripe/create-checkout-session", async (req, res) => {
+  try {
+    const { 
+      userId, 
+      userEmail, 
+      userName, 
+      planId, 
+      schoolId, 
+      stripePriceId, 
+      mode = "subscription", 
+      successUrl, 
+      cancelUrl, 
+      idempotencyKey 
+    } = req.body;
+
+    const stripe = getStripe();
+    const origin = req.headers.origin || process.env.APP_URL || "http://localhost:3000";
+
+    // Lookup or create customer
+    let customerId: string | undefined;
+    if (userEmail) {
+      const existingCustomers = await stripe.customers.list({ email: userEmail, limit: 1 });
+      if (existingCustomers.data.length > 0) {
+        customerId = existingCustomers.data[0].id;
+      } else {
+        const customer = await stripe.customers.create({
+          email: userEmail,
+          name: userName || userEmail,
+          metadata: { userId: userId || "", schoolId: schoolId || "" }
+        });
+        customerId = customer.id;
+      }
+    }
+
+    // Determine pricing items
+    let lineItems: Stripe.Checkout.SessionCreateParams.LineItem[];
+
+    if (stripePriceId && stripePriceId.startsWith("price_")) {
+      lineItems = [{ price: stripePriceId, quantity: 1 }];
+    } else {
+      // Custom dynamic price definition if Price ID is not predefined in Stripe Dashboard
+      const unitAmount = planId === "plano-pro" ? 49900 : planId === "plano-enterprise" ? 89900 : 29900;
+      const planName = planId === "plano-pro" ? "Plano Profissional" : planId === "plano-enterprise" ? "Plano Empresarial" : "Plano Básico";
+
+      lineItems = [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: `SysEdu - ${planName}`,
+              description: `Assinatura de gestão escolar para ${userName || userEmail || 'Escola'}`,
+            },
+            unit_amount: unitAmount,
+            recurring: mode === "subscription" ? { interval: "month" } : undefined,
+          },
+          quantity: 1,
+        },
+      ];
+    }
+
+    const sessionOptions: Stripe.Checkout.SessionCreateParams = {
+      mode: mode as Stripe.Checkout.SessionCreateParams.Mode,
+      payment_method_types: ["card"],
+      line_items: lineItems,
+      customer: customerId,
+      customer_creation: customerId ? undefined : "always",
+      client_reference_id: userId || schoolId || "guest",
+      allow_promotion_codes: true,
+      metadata: {
+        userId: userId || "",
+        planId: planId || "plano-basico",
+        schoolId: schoolId || ""
+      },
+      success_url: successUrl || `${origin}/?stripe_checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: cancelUrl || `${origin}/?stripe_checkout=cancelled`,
+    };
+
+    const session = await stripe.checkout.sessions.create(sessionOptions, {
+      idempotencyKey: idempotencyKey || `cs_${userId || 'anon'}_${planId}_${Date.now()}`
+    });
+
+    console.log(`[Stripe API] Created Checkout Session ${session.id} for ${userEmail}`);
+    return res.json({
+      success: true,
+      sessionId: session.id,
+      url: session.url,
+      customerId: customerId || session.customer
+    });
+  } catch (error: any) {
+    console.error("Stripe Create Checkout Session Error:", error);
+    return res.status(500).json({ success: false, error: error.message || "Failed to create Stripe checkout session" });
+  }
+});
+
+// 2. CREATE STRIPE BILLING PORTAL SESSION
+app.post("/api/stripe/create-portal-session", async (req, res) => {
+  try {
+    const { customerId, returnUrl } = req.body;
+
+    if (!customerId) {
+      return res.status(400).json({ success: false, error: "customerId é obrigatório" });
+    }
+
+    const stripe = getStripe();
+    const origin = req.headers.origin || process.env.APP_URL || "http://localhost:3000";
+
+    const portalSession = await stripe.billingPortal.sessions.create({
+      customer: customerId,
+      return_url: returnUrl || origin,
+    });
+
+    console.log(`[Stripe Portal] Portal session created for ${customerId}`);
+    return res.json({ success: true, url: portalSession.url });
+  } catch (error: any) {
+    console.error("Stripe Billing Portal Error:", error);
+    return res.status(500).json({ success: false, error: error.message || "Falha ao abrir portal de cobrança Stripe" });
+  }
+});
+
+// 3. CANCEL STRIPE SUBSCRIPTION
+app.post("/api/stripe/cancel-subscription", async (req, res) => {
+  try {
+    const { subscriptionId, immediately = false } = req.body;
+
+    if (!subscriptionId) {
+      return res.status(400).json({ success: false, error: "subscriptionId é obrigatório" });
+    }
+
+    const stripe = getStripe();
+
+    let subscription: Stripe.Subscription;
+    if (immediately) {
+      subscription = await stripe.subscriptions.cancel(subscriptionId);
+    } else {
+      subscription = await stripe.subscriptions.update(subscriptionId, {
+        cancel_at_period_end: true,
+      });
+    }
+
+    console.log(`[Stripe API] Cancelled subscription ${subscriptionId} (Status: ${subscription.status})`);
+    return res.json({ success: true, status: subscription.status, cancelAtPeriodEnd: subscription.cancel_at_period_end });
+  } catch (error: any) {
+    console.error("Stripe Cancel Subscription Error:", error);
+    return res.status(500).json({ success: false, error: error.message || "Falha ao cancelar assinatura" });
+  }
+});
+
+// 4. REFUND STRIPE CHARGE / PAYMENT INTENT
+app.post("/api/stripe/refund", async (req, res) => {
+  try {
+    const { paymentIntentId, amount } = req.body;
+
+    if (!paymentIntentId) {
+      return res.status(400).json({ success: false, error: "paymentIntentId é obrigatório" });
+    }
+
+    const stripe = getStripe();
+    const refund = await stripe.refunds.create({
+      payment_intent: paymentIntentId,
+      amount: amount ? Math.round(amount * 100) : undefined,
+    });
+
+    console.log(`[Stripe API] Refunded PaymentIntent ${paymentIntentId} (Refund ID: ${refund.id})`);
+    return res.json({ success: true, refundId: refund.id, status: refund.status });
+  } catch (error: any) {
+    console.error("Stripe Refund Error:", error);
+    return res.status(500).json({ success: false, error: error.message || "Falha ao processar reembolso" });
+  }
+});
+
+// 5. SYNC STRIPE PRODUCTS AND PLANS
+app.post("/api/stripe/sync-plans", async (req, res) => {
+  try {
+    const stripe = getStripe();
+
+    const standardPlans = [
+      { id: "plano-basico", name: "Plano Básico", amount: 29900, currency: "usd" },
+      { id: "plano-pro", name: "Plano Profissional", amount: 49900, currency: "usd" },
+      { id: "plano-enterprise", name: "Plano Empresarial", amount: 89900, currency: "usd" }
+    ];
+
+    const synced = [];
+
+    for (const plan of standardPlans) {
+      // Create product or fetch
+      const product = await stripe.products.create({
+        name: `SysEdu - ${plan.name}`,
+        metadata: { planId: plan.id }
+      });
+
+      const price = await stripe.prices.create({
+        product: product.id,
+        unit_amount: plan.amount,
+        currency: plan.currency,
+        recurring: { interval: "month" },
+        metadata: { planId: plan.id }
+      });
+
+      synced.push({
+        planId: plan.id,
+        stripeProductId: product.id,
+        stripePriceId: price.id,
+        amount: plan.amount / 100,
+        currency: plan.currency
+      });
+    }
+
+    return res.json({ success: true, syncedPlans: synced });
+  } catch (error: any) {
+    console.error("Stripe Sync Plans Error:", error);
+    return res.status(500).json({ success: false, error: error.message });
   }
 });
 

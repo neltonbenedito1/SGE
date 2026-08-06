@@ -25,6 +25,8 @@ import TenantPortal from './components/TenantPortal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { SysEduLogo } from './components/SysEduLogo';
 import BrandbookView from './components/BrandbookView';
+import { StripeCheckoutStatus } from './components/StripeCheckoutStatus';
+import { StripePricingCards } from './components/StripePricingCards';
 import { 
   LANGUAGES, 
   getSystemLanguage, 
@@ -1301,6 +1303,7 @@ const clientSideCache: Record<string, any> = {
 
   return (
     <main className="min-h-screen bg-theme-bg text-theme-text font-sans transition-colors duration-300 relative">
+      <StripeCheckoutStatus />
       {(currentView === 'landing' || currentView === 'brandbook') && renderLoginHeader()}
       
       {/* VIEW: LANDING/LOGIN PORTAL SWITCHER */}
