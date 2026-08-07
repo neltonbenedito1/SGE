@@ -234,6 +234,7 @@ export interface Classe {
 export interface Sala {
   id: string;
   tenant_id: string;
+  escola_id?: string;
   nome: string;
   capacidade: number;
   tipo: string;

@@ -382,6 +382,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [detectedOS, setDetectedOS] = useState('Desktop');
   const [isMobileMoreOpen, setIsMobileMoreOpen] = useState(false);
 
+  // Critical Escola Deletion state
+  const [criticalDeleteEscola, setCriticalDeleteEscola] = useState<{ id: string; name: string } | null>(null);
+  const [deleteEscolaConfirmText, setDeleteEscolaConfirmText] = useState('');
+
   useEffect(() => {
     const handleResize = () => setWindowWidth(window.innerWidth);
     window.addEventListener('resize', handleResize);
@@ -1818,7 +1822,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 nome: target.nome || '',
                 capacidade: target.capacidade || 30,
                 tipo: target.tipo || 'Normal',
-                descricao: target.descricao || ''
+                descricao: target.descricao || '',
+                escola_id: target.escola_id || ''
               });
               setModalType('sala');
               setIsModalOpen(true);
@@ -2445,7 +2450,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           disabled: !isCreationAllowed,
           onClick: () => {
             setEditingItem(null);
-            setSalaForm({ nome: '', capacidade: 30, tipo: 'Normal', descricao: '' });
+            setSalaForm({ nome: '', capacidade: 30, tipo: 'Normal', descricao: '', escola_id: '' });
             setModalType('sala');
             setIsModalOpen(true);
           }
@@ -2854,7 +2859,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     senha_temporaria: ''
   }));
   const [classeEscolarForm, setClasseEscolarForm] = useState(() => getSavedFormDraft('draft_classe_escolar', { nome: '', nivel: 'Primário' as 'Primário' | 'Secundário' | 'Médio' | 'Pré-escolar', descricao: '', escola_id: '' }));
-  const [salaForm, setSalaForm] = useState(() => getSavedFormDraft('draft_sala', { nome: '', capacidade: 30, tipo: 'Normal', descricao: '' }));
+  const [salaForm, setSalaForm] = useState(() => getSavedFormDraft('draft_sala', { nome: '', capacidade: 30, tipo: 'Normal', descricao: '', escola_id: '' }));
   const [feriasForm, setFeriasForm] = useState(() => getSavedFormDraft('draft_ferias', { descricao: '', turma_id: 'todas', data_inicio: new Date().toISOString().split('T')[0], data_fim: new Date().toISOString().split('T')[0] }));
   const [horarioForm, setHorarioForm] = useState(() => getSavedFormDraft('draft_horario', { turma_id: '', disciplina_id: '', disciplina_nome: '', docente_id: '', hora_inicio: '08:00', hora_fim: '09:30', sala: '', data: new Date().toISOString().split('T')[0], dia_semana: 'Segunda-feira', justificativa: '', escola_id: '' }));
   const [feriadoForm, setFeriadoForm] = useState(() => getSavedFormDraft('draft_feriado', { nome: '', data: new Date().toISOString().split('T')[0], pais: 'Moçambique', tipo: 'Nacional', descricao: '' }));
@@ -3450,6 +3455,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           if (!registro) errors.push(`Linha ${rNum}: O campo "Numero Registro" é obrigatório.`);
           if (!escolaNome) errors.push(`Linha ${rNum}: O campo "Escola" é obrigatório.`);
 
+          const cleanDocEmail = String(email || '').trim().toLowerCase();
+          const cleanDocReg = String(registro || '').trim().toLowerCase();
+          if (cleanDocEmail && (tenantUsers.some(u => u.email?.trim().toLowerCase() === cleanDocEmail) || validRows.some(v => v.email.toLowerCase() === cleanDocEmail))) {
+            errors.push(`Linha ${rNum}: O e-mail "${email}" já está cadastrado no sistema.`);
+          }
+          if (cleanDocReg && (teachers.some(t => t.numero_registro?.trim().toLowerCase() === cleanDocReg) || validRows.some(v => v.numero_registro.toLowerCase() === cleanDocReg))) {
+            errors.push(`Linha ${rNum}: O número de registro "${registro}" já está cadastrado no sistema.`);
+          }
+
           const esc = schools.find(s => s.nome.toLowerCase() === String(escolaNome).toLowerCase());
           if (escolaNome && !esc) {
             errors.push(`Linha ${rNum}: A escola "${escolaNome}" não foi encontrada no sistema.`);
@@ -3677,6 +3691,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               const escObj = schools.find(s => s.id === escola_id);
               errors.push(`Linha ${rNum}: A escola "${escObj?.nome || escolaNome || 'Escola Selecionada'}" não possui nenhuma classe/disciplina associada no sistema. A importação do estudante "${nome}" foi bloqueada.`);
             }
+          }
+
+          const cleanStudMat = String(matricula || '').trim().toLowerCase();
+          const cleanStudEmail = String(email || '').trim().toLowerCase();
+
+          if (cleanStudMat && (students.some(s => s.numero_matricula?.trim().toLowerCase() === cleanStudMat) || validRows.some(v => v.numero_matricula.toLowerCase() === cleanStudMat))) {
+            errors.push(`Linha ${rNum}: O número de matrícula "${matricula}" já existe no sistema.`);
+          }
+          if (cleanStudEmail && (tenantUsers.some(u => u.email?.trim().toLowerCase() === cleanStudEmail) || validRows.some(v => v.email && v.email.toLowerCase() === cleanStudEmail))) {
+            errors.push(`Linha ${rNum}: O e-mail "${email}" já existe no sistema.`);
           }
 
           validRows.push({
@@ -5390,6 +5414,19 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       const qParams = { tenant_id: currentTenantId };
       
       if (modalType === 'provincia') {
+        const cleanProvName = (provinciaForm.nome || '').trim().toLowerCase();
+        if (!cleanProvName) {
+          showSystemNotification("Erro: O nome da província é obrigatório.", "erro");
+          setIsSaving(false);
+          return;
+        }
+        const dupProv = rawProvinces.find(p => p.id !== editingItem?.id && p.nome?.trim().toLowerCase() === cleanProvName);
+        if (dupProv) {
+          showSystemNotification(`Erro: Já existe uma província cadastrada com o nome "${provinciaForm.nome}".`, "erro");
+          setIsSaving(false);
+          return;
+        }
+
         if (editingItem) {
           await updateDoc(doc(db, 'provincias', editingItem.id), provinciaForm);
           await addDoc(collection(db, 'notificacoes'), {
@@ -5416,6 +5453,19 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       } 
       
       else if (modalType === 'escola') {
+        const cleanEscName = (escolaForm.nome || '').trim().toLowerCase();
+        if (!cleanEscName) {
+          showSystemNotification("Erro: O nome da escola é obrigatório.", "erro");
+          setIsSaving(false);
+          return;
+        }
+        const dupEscola = schools.find(s => s.id !== editingItem?.id && s.nome?.trim().toLowerCase() === cleanEscName);
+        if (dupEscola) {
+          showSystemNotification(`Erro: Já existe uma escola cadastrada com o nome "${escolaForm.nome}".`, "erro");
+          setIsSaving(false);
+          return;
+        }
+
         const cleanedEscolaForm = Object.fromEntries(
           Object.entries(escolaForm).filter(([_, v]) => v !== undefined)
         );
@@ -5446,6 +5496,26 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       } 
       
       else if (modalType === 'teacher') {
+        const teacherEmail = (teacherForm.email || '').trim().toLowerCase();
+        const teacherReg = (teacherForm.numero_registro || '').trim().toLowerCase();
+
+        if (teacherEmail) {
+          const dupUserEmail = tenantUsers.find(u => u.id !== editingItem?.user_id && u.email?.trim().toLowerCase() === teacherEmail);
+          if (dupUserEmail) {
+            showSystemNotification(`Erro: Já existe um utilizador cadastrado com o e-mail "${teacherEmail}".`, "erro");
+            setIsSaving(false);
+            return;
+          }
+        }
+
+        if (teacherReg) {
+          const dupRegTeacher = teachers.find(t => t.id !== editingItem?.id && t.numero_registro?.trim().toLowerCase() === teacherReg);
+          if (dupRegTeacher) {
+            showSystemNotification(`Erro: Já existe um docente cadastrado com o número de registro "${teacherForm.numero_registro}".`, "erro");
+            setIsSaving(false);
+            return;
+          }
+        }
         if (editingItem) {
           // Edit teacher
           const teacherDoc = doc(db, 'docentes', editingItem.id);
@@ -5511,6 +5581,28 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       } 
       
       else if (modalType === 'student') {
+        const studentMat = (studentForm.numero_matricula || '').trim().toLowerCase();
+        if (!studentMat) {
+          showSystemNotification("Erro: O número de matrícula é obrigatório.", "erro");
+          setIsSaving(false);
+          return;
+        }
+
+        const dupStudentMat = students.find(s => s.id !== editingItem?.id && s.numero_matricula?.trim().toLowerCase() === studentMat);
+        if (dupStudentMat) {
+          showSystemNotification(`Erro: Já existe um estudante com o número de matrícula "${studentForm.numero_matricula}" nesta instituição.`, "erro");
+          setIsSaving(false);
+          return;
+        }
+
+        const studentEmail = (studentForm.email || `${studentMat}@escola.edu`).trim().toLowerCase();
+        const dupUserEmail = tenantUsers.find(u => u.id !== editingItem?.user_id && u.email?.trim().toLowerCase() === studentEmail);
+        if (studentEmail && dupUserEmail) {
+          showSystemNotification(`Erro: Já existe um utilizador no sistema com o e-mail "${studentEmail}".`, "erro");
+          setIsSaving(false);
+          return;
+        }
+
         // Validate if selected class is taught at the school
         const selectedTurma = turmas.find(t => t.id === studentForm.turma_id);
         if (selectedTurma) {
@@ -5667,6 +5759,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           nome: finalTurmaName
         };
 
+        const dupTurma = turmas.find(t => 
+          t.id !== editingItem?.id && 
+          t.escola_id === updatedTurmaForm.escola_id && 
+          t.nome?.trim().toLowerCase() === finalTurmaName.toLowerCase()
+        );
+        if (dupTurma) {
+          showSystemNotification(`Erro: Já existe uma turma cadastrada com o nome "${finalTurmaName}" nesta escola.`, "erro");
+          setIsSaving(false);
+          return;
+        }
+
         if (editingItem) {
           await updateDoc(doc(db, 'turmas', editingItem.id), updatedTurmaForm);
           await addDoc(collection(db, 'notificacoes'), {
@@ -5744,6 +5847,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           docente_id: primaryDocenteId,
           escola_id: targetSchoolId
         };
+
+        const dupClass = classes.find(c => 
+          c.id !== editingItem?.id && 
+          c.escola_id === targetSchoolId && 
+          (c.nome?.trim().toLowerCase() === finalDisciplineName.toLowerCase() || (c.codigo && generatedCode && c.codigo.toUpperCase() === generatedCode.toUpperCase()))
+        );
+        if (dupClass) {
+          showSystemNotification(`Erro: Já existe uma disciplina cadastrada com o mesmo nome ou código ("${finalDisciplineName}") nesta escola.`, "erro");
+          setIsSaving(false);
+          return;
+        }
 
         if (editingItem) {
           await updateDoc(doc(db, 'classes', editingItem.id), disciplinePayload);
@@ -5891,6 +6005,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           return;
         }
 
+        const dupFeriado = rawFeriados.find(f => 
+          f.id !== editingItem?.id && 
+          f.data === feriadoForm.data && 
+          f.nome?.trim().toLowerCase() === feriadoForm.nome.trim().toLowerCase()
+        );
+        if (dupFeriado) {
+          showSystemNotification(`Erro: Já existe um feriado cadastrado para esta data (${feriadoForm.data}) com o mesmo nome.`, "erro");
+          setIsSaving(false);
+          return;
+        }
+
         const payload = {
           nome: feriadoForm.nome,
           data: feriadoForm.data,
@@ -5913,6 +6038,23 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       } 
       
       else if (modalType === 'classe_escolar') {
+        const cleanCEName = (classeEscolarForm.nome || '').trim().toLowerCase();
+        if (!cleanCEName) {
+          showSystemNotification("Erro: O nome da classe acadêmica é obrigatório.", "erro");
+          setIsSaving(false);
+          return;
+        }
+        const dupCE = classesEscolares.find(ce => 
+          ce.id !== editingItem?.id && 
+          ce.escola_id === classeEscolarForm.escola_id && 
+          ce.nome?.trim().toLowerCase() === cleanCEName
+        );
+        if (dupCE) {
+          showSystemNotification(`Erro: Já existe uma classe acadêmica com o nome "${classeEscolarForm.nome}" nesta escola.`, "erro");
+          setIsSaving(false);
+          return;
+        }
+
         if (editingItem) {
           await updateDoc(doc(db, 'classes_escolares', editingItem.id), classeEscolarForm);
           await addDoc(collection(db, 'notificacoes'), {
@@ -5940,6 +6082,22 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       }
 
       else if (modalType === 'sala') {
+        const cleanSalaName = (salaForm.nome || '').trim().toLowerCase();
+        if (!cleanSalaName) {
+          showSystemNotification("Erro: O nome da sala é obrigatório.", "erro");
+          setIsSaving(false);
+          return;
+        }
+        const dupSala = rawSalas.find(s => 
+          s.id !== editingItem?.id && 
+          s.escola_id === salaForm.escola_id && 
+          s.nome?.trim().toLowerCase() === cleanSalaName
+        );
+        if (dupSala) {
+          showSystemNotification(`Erro: Já existe uma sala cadastrada com o nome "${salaForm.nome}" nesta escola.`, "erro");
+          setIsSaving(false);
+          return;
+        }
         if (editingItem) {
           await updateDoc(doc(db, 'salas', editingItem.id), salaForm);
           await addDoc(collection(db, 'notificacoes'), {
@@ -6177,6 +6335,18 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       
       else if (modalType === 'user') {
         const cleanedUserEmail = (userForm.email || '').trim().toLowerCase();
+        if (!cleanedUserEmail) {
+          showSystemNotification("Erro: O e-mail do utilizador é obrigatório.", "erro");
+          setIsSaving(false);
+          return;
+        }
+        const dupUserEmail = tenantUsers.find(u => u.id !== editingItem?.id && u.email?.trim().toLowerCase() === cleanedUserEmail);
+        if (dupUserEmail) {
+          showSystemNotification(`Erro: Já existe um utilizador cadastrado com o e-mail "${cleanedUserEmail}".`, "erro");
+          setIsSaving(false);
+          return;
+        }
+
         const userPwd = userForm.senha_temporaria || '12345678';
         if (editingItem) {
           await updateDoc(doc(db, 'users', editingItem.id), {
@@ -6229,60 +6399,57 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     }
   }
 
-  // Soft Delete School (with associated students & teachers unlinking and admin notifications)
+  // Soft Delete School (Critical Action Modal with associated unlinking)
   async function handleSoftDeleteEscola(id: string, name: string) {
-    showConfirm(
-      "Confirmar Exclusão de Escola",
-      `Tem certeza que deseja excluir permanentemente a escola "${name}"? Alunos e docentes a ela vinculados serão desassociados (ficarão sem escola) e o administrador será notificado.`,
-      async () => {
-        setIsSaving(true);
-        try {
-          // 1. Find associated students and teachers from current raw list states
-          const associatedStudents = rawStudents.filter(s => s.escola_id === id);
-          const associatedTeachers = rawTeachers.filter(t => t.escola_id === id);
+    setCriticalDeleteEscola({ id, name });
+    setDeleteEscolaConfirmText('');
+  }
 
-          // 2. Unassociate students in Firestore
-          for (const s of associatedStudents) {
-            await updateDoc(doc(db, 'estudantes', s.id), {
-              escola_id: ''
-            });
-          }
+  async function executeCriticalEscolaDeletion() {
+    if (!criticalDeleteEscola) return;
+    const { id, name } = criticalDeleteEscola;
 
-          // 3. Unassociate teachers in Firestore
-          for (const t of associatedTeachers) {
-            await updateDoc(doc(db, 'docentes', t.id), {
-              escola_id: ''
-            });
-          }
+    setIsSaving(true);
+    try {
+      // 1. Find associated students and teachers from current raw list states
+      const associatedStudents = rawStudents.filter(s => s.escola_id === id);
+      const associatedTeachers = rawTeachers.filter(t => t.escola_id === id);
 
-          // 4. Delete the school
-          await deleteDoc(doc(db, 'escolas', id));
+      // 2. Unassociate students in Firestore
+      for (const s of associatedStudents) {
+        await updateDoc(doc(db, 'estudantes', s.id), { escola_id: '' });
+      }
 
-          // 5. Create notifications in Firestore for administrator
-          const notificationMessage = `A escola "${name}" foi excluída com sucesso. ${associatedStudents.length} alunos e ${associatedTeachers.length} docentes foram desvinculados e encontram-se sem escola.`;
-          await addDoc(collection(db, 'notificacoes'), {
-            destinatario_id: 'admin',
-            tenant_id: currentTenantId,
-            titulo: '🗑️ Escola Excluída & Vínculos Desfeitos',
-            mensagem: notificationMessage,
-            tipo: 'alerta',
-            lido: false,
-            created_at: new Date().toISOString()
-          });
+      // 3. Unassociate teachers in Firestore
+      for (const t of associatedTeachers) {
+        await updateDoc(doc(db, 'docentes', t.id), { escola_id: '' });
+      }
 
-          // 6. Show toast alert
-          showSystemNotification(`Escola "${name}" excluída e ${associatedStudents.length + associatedTeachers.length} vínculos desfeitos!`, 'sucesso');
-          
-          await loadTenantContext();
-        } catch (err: any) {
-          console.error("Error deleting school and unlinking:", err);
-          showSystemNotification(`Erro ao excluir escola: ${err.message || err}`, 'erro');
-        } finally {
-          setIsSaving(false);
-        }
-      },
-      true
-    );
+      // 4. Delete the school document
+      await deleteDoc(doc(db, 'escolas', id));
+
+      // 5. Create notification for admin
+      const notificationMessage = `A escola "${name}" foi excluída permanentemente. ${associatedStudents.length} alunos e ${associatedTeachers.length} docentes foram desvinculados.`;
+      await addDoc(collection(db, 'notificacoes'), {
+        destinatario_id: 'admin',
+        tenant_id: currentTenantId,
+        titulo: '🗑️ Escola Excluída (Ação Crítica)',
+        mensagem: notificationMessage,
+        tipo: 'alerta',
+        lido: false,
+        created_at: new Date().toISOString()
+      });
+
+      showSystemNotification(`Escola "${name}" excluída e ${associatedStudents.length + associatedTeachers.length} vínculos desfeitos com sucesso!`, 'sucesso');
+      setCriticalDeleteEscola(null);
+      setDeleteEscolaConfirmText('');
+      await loadTenantContext();
+    } catch (err: any) {
+      console.error("Error deleting school:", err);
+      showSystemNotification(`Erro ao excluir escola: ${err.message || err}`, 'erro');
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   // Publish Pauta (Grades)
@@ -8050,7 +8217,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       <button 
                         onClick={() => {
                           setEditingItem(null);
-                          setSalaForm({ nome: '', capacidade: 30, tipo: 'Normal', descricao: '' });
+                          setSalaForm({ nome: '', capacidade: 30, tipo: 'Normal', descricao: '', escola_id: '' });
                           setModalType('sala');
                           setIsModalOpen(true);
                         }}
@@ -8087,7 +8254,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                   nome: s.nome, 
                                   capacidade: s.capacidade || 30, 
                                   tipo: s.tipo || 'Normal', 
-                                  descricao: s.descricao || '' 
+                                  descricao: s.descricao || '',
+                                  escola_id: s.escola_id || ''
                                 });
                                 setModalType('sala');
                                 setIsModalOpen(true);
@@ -18013,6 +18181,103 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             >
               Fechar Guia
             </button>
+          </div>
+        </div>
+      )}
+      {/* MODAL: CRITICAL ESCOLA DELETION CONFIRMATION */}
+      {criticalDeleteEscola && (
+        <div 
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !isSaving) {
+              setCriticalDeleteEscola(null);
+              setDeleteEscolaConfirmText('');
+            }
+          }}
+          className="fixed inset-0 bg-slate-950/70 backdrop-blur-md flex items-center justify-center p-4 z-[110] overflow-y-auto pointer-events-auto animate-in fade-in duration-200"
+        >
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-rose-500/30 relative pointer-events-auto animate-in zoom-in-95 duration-200 text-slate-900 dark:text-slate-100">
+            <button 
+              onClick={() => {
+                if (!isSaving) {
+                  setCriticalDeleteEscola(null);
+                  setDeleteEscolaConfirmText('');
+                }
+              }}
+              className="absolute top-5 right-5 p-2 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-500 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <span className="bg-rose-500/10 text-rose-600 dark:text-rose-400 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider font-mono">
+                  🚨 Ação Crítica & Irreversível
+                </span>
+                <h3 className="text-lg font-black text-slate-900 dark:text-white font-sans mt-0.5">
+                  Excluir Escola Parceira
+                </h3>
+              </div>
+            </div>
+
+            <div className="bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 rounded-2xl p-4 text-xs space-y-2 mb-6">
+              <p className="font-bold text-rose-800 dark:text-rose-300">
+                Atenção: Confirmação de exclusão crítica de escola!
+              </p>
+              <p className="text-rose-700 dark:text-rose-400 leading-relaxed">
+                Você está prestes a excluir permanentemente a escola <strong className="underline">{criticalDeleteEscola.name}</strong>.
+                Todos os alunos e docentes vinculados a esta unidade serão desassociados no sistema e ficarão sem escola vinculada.
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider mb-2">
+                  Para confirmar, digite o nome exato da escola ("<span className="text-rose-500 font-mono">{criticalDeleteEscola.name}</span>") ou a palavra <span className="font-mono text-rose-500 font-extrabold">EXCLUIR</span>:
+                </label>
+                <input 
+                  type="text"
+                  value={deleteEscolaConfirmText}
+                  onChange={(e) => setDeleteEscolaConfirmText(e.target.value)}
+                  placeholder={`Digite "${criticalDeleteEscola.name}" ou EXCLUIR`}
+                  autoFocus
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl p-3 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-rose-500 font-medium"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  disabled={isSaving}
+                  onClick={() => {
+                    setCriticalDeleteEscola(null);
+                    setDeleteEscolaConfirmText('');
+                  }}
+                  className="w-1/3 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold py-3 rounded-xl text-xs transition-colors cursor-pointer text-center"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={
+                    isSaving || 
+                    (deleteEscolaConfirmText.trim().toLowerCase() !== criticalDeleteEscola.name.trim().toLowerCase() && 
+                     deleteEscolaConfirmText.trim().toUpperCase() !== 'EXCLUIR')
+                  }
+                  onClick={executeCriticalEscolaDeletion}
+                  className={`w-2/3 py-3 rounded-xl text-xs font-bold transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer ${
+                    (deleteEscolaConfirmText.trim().toLowerCase() === criticalDeleteEscola.name.trim().toLowerCase() || 
+                     deleteEscolaConfirmText.trim().toUpperCase() === 'EXCLUIR') && !isSaving
+                      ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-600/20'
+                      : 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed opacity-60'
+                  }`}
+                >
+                  {isSaving ? 'Excluindo Escola...' : 'Excluir Escola e Desvincular'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

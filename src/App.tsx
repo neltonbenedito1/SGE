@@ -107,6 +107,23 @@ export default function App() {
   const [cmdSearchQuery, setCmdSearchQuery] = useState('');
   const [activeItemIndex, setActiveItemIndex] = useState(0);
 
+  // Listen for tenant deletion event to revoke session immediately
+  useEffect(() => {
+    const handleTenantDeleted = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      const deletedTenantId = customEvent.detail?.tenantId;
+      const deletedTenantName = customEvent.detail?.tenantName || 'Instituição';
+      const session = getUserSessionCookie();
+      if (session && session.tenant_id === deletedTenantId && session.tipo !== 'super_admin') {
+        deleteCookie('user_session');
+        setCurrentView('landing');
+        showNotification(`Acesso Revogado: A conta da instituição "${deletedTenantName}" foi eliminada do sistema. O seu acesso foi revogado.`, 'erro');
+      }
+    };
+    window.addEventListener('sge-tenant-deleted', handleTenantDeleted);
+    return () => window.removeEventListener('sge-tenant-deleted', handleTenantDeleted);
+  }, []);
+
   // Get filtered command list
   const getCommandItems = () => {
     const items: Array<{
@@ -466,8 +483,8 @@ export default function App() {
         }
       });
 
-      if (!matchedTenant) {
-        setLoginError('Sua instituição de ensino não foi encontrada ou foi removida.');
+      if (!matchedTenant || (matchedTenant as Tenant).status === 'cancelado' || (matchedTenant as any).deleted_at) {
+        setLoginError('⚠️ Acesso Revogado: Esta conta de instituição foi eliminada do sistema e o seu acesso foi revogado pelo Administrador Geral.');
         setLoginLoading(false);
         return;
       }
@@ -665,22 +682,30 @@ const clientSideCache: Record<string, any> = {
         if (session.tipo === 'super_admin') {
           setCurrentView('superadmin');
         } else {
-          setSelectedTenantId(session.tenant_id);
-          setSelectedRole(session.tipo as any);
-          setCurrentView('tenant');
+          // Verify if session's tenant still exists and is active
+          const activeTenant = tenantsList.find(t => t.id === session.tenant_id);
+          if (tenantsList.length > 0 && (!activeTenant || activeTenant.status === 'cancelado')) {
+            deleteCookie('user_session');
+            setCurrentView('landing');
+            showNotification("Acesso Revogado: A conta da sua instituição foi excluída do sistema. O seu acesso foi revogado.", "erro");
+          } else {
+            setSelectedTenantId(session.tenant_id);
+            setSelectedRole(session.tipo as any);
+            setCurrentView('tenant');
 
-          // Load permanent hybrid preferences from Firestore if user has a session ID
-          if (session.id) {
-            SessionStateService.loadUserPreferences(session.id).then((prefs) => {
-              if (prefs.language) {
-                setSystemLanguage(prefs.language);
-                setSystemLang(prefs.language);
-              }
-              if (prefs.theme) {
-                setActiveTheme(prefs.theme);
-                document.documentElement.className = prefs.theme;
-              }
-            }).catch(e => console.warn("Failed to load user preferences on init:", e));
+            // Load permanent hybrid preferences from Firestore if user has a session ID
+            if (session.id) {
+              SessionStateService.loadUserPreferences(session.id).then((prefs) => {
+                if (prefs.language) {
+                  setSystemLanguage(prefs.language);
+                  setSystemLang(prefs.language);
+                }
+                if (prefs.theme) {
+                  setActiveTheme(prefs.theme);
+                  document.documentElement.className = prefs.theme;
+                }
+              }).catch(e => console.warn("Failed to load user preferences on init:", e));
+            }
           }
         }
       }

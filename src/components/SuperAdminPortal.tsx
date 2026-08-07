@@ -93,6 +93,21 @@ interface SuperAdminPortalProps {
   onChangeLanguage?: (lang: string) => void;
 }
 
+interface TenantFormState {
+  nome: string;
+  email_admin: string;
+  telefone: string;
+  endereco: string;
+  plano_id: string;
+  status: 'ativo' | 'suspenso' | 'cancelado';
+  data_vencimento: string;
+  senha_temporaria?: string;
+  senha?: string;
+  confirmar_senha?: string;
+  idioma_padrao: string;
+  ai_translation_enabled: boolean;
+}
+
 export default function SuperAdminPortal({ 
   onLogout, 
   activeTheme, 
@@ -225,6 +240,10 @@ export default function SuperAdminPortal({
     }, 6000);
   }, []);
 
+  // Critical Tenant Deletion state
+  const [criticalDeleteTenant, setCriticalDeleteTenant] = useState<{ id: string; name: string } | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+
   // Administrator Password Reset with 2FA state
   const [isPasswordResetModalOpen, setIsPasswordResetModalOpen] = useState(false);
   const [selectedTenantForPasswordReset, setSelectedTenantForPasswordReset] = useState<Tenant | null>(null);
@@ -315,7 +334,7 @@ export default function SuperAdminPortal({
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  const [tenantForm, setTenantForm] = useState(() => getSavedFormDraft('draft_tenant_form', {
+  const [tenantForm, setTenantForm] = useState<TenantFormState>(() => getSavedFormDraft('draft_tenant_form', {
     nome: '',
     email_admin: '',
     telefone: '',
@@ -1044,6 +1063,31 @@ export default function SuperAdminPortal({
       return;
     }
 
+    // Duplicate record checks
+    const cleanEmail = (tenantForm.email_admin || '').trim().toLowerCase();
+    const cleanName = (tenantForm.nome || '').trim().toLowerCase();
+
+    if (!cleanName) {
+      showSystemNotification("Erro: O nome da instituição é obrigatório.", "erro");
+      return;
+    }
+
+    const dupEmailTenant = tenants.find(t => 
+      t.id !== editingTenant?.id && t.email_admin?.trim().toLowerCase() === cleanEmail
+    );
+    if (dupEmailTenant) {
+      showSystemNotification(`Erro: O e-mail "${cleanEmail}" já está registado na instituição "${dupEmailTenant.nome}".`, "erro");
+      return;
+    }
+
+    const dupNameTenant = tenants.find(t => 
+      t.id !== editingTenant?.id && t.nome?.trim().toLowerCase() === cleanName
+    );
+    if (dupNameTenant) {
+      showSystemNotification(`Erro: Já existe uma instituição registada com o nome "${tenantForm.nome}".`, "erro");
+      return;
+    }
+
     if (!editingTenant) {
       if (tenantForm.senha !== tenantForm.confirmar_senha) {
         showSystemNotification("Erro: A senha e a confirmação de senha não coincidem.", "erro");
@@ -1101,7 +1145,13 @@ export default function SuperAdminPortal({
       } else {
         // Create Tenant
         const generatedId = "tenant-" + Math.random().toString(36).substr(2, 9);
-        const slug = generateSlug(tenantForm.nome);
+        let baseSlug = generateSlug(tenantForm.nome);
+        let slug = baseSlug;
+        let counter = 1;
+        while (tenants.some(t => t.slug === slug)) {
+          slug = `${baseSlug}-${counter}`;
+          counter++;
+        }
         const newTenant: Tenant = {
           id: generatedId,
           nome: tenantForm.nome,
@@ -1335,46 +1385,58 @@ export default function SuperAdminPortal({
     setTestStatus('success');
   }
 
-  // Excluir Conta (Hard Delete no Firebase e Firestore)
+  // Excluir Conta (Ação Crítica com Validação e Revogação de Acesso)
   async function handleSoftDeleteTenant(id: string, name: string) {
-    showConfirm(
-      "Excluir Conta do Firebase",
-      `Tem certeza que deseja excluir permanentemente a conta da instituição "${name}" e todos os seus usuários do Firebase?`,
-      async () => {
-        try {
-          // 1. Apagar documento do tenant da coleção 'tenants' no Firestore
-          await deleteDoc(doc(db, 'tenants', id));
+    setCriticalDeleteTenant({ id, name });
+    setDeleteConfirmText('');
+  }
 
-          // 2. Apagar utilizadores associados na coleção 'users' do Firestore
-          try {
-            const usersQ = query(collection(db, 'users'), where('tenant_id', '==', id));
-            const usersSnap = await getDocs(usersQ);
-            await Promise.all(usersSnap.docs.map(uDoc => deleteDoc(uDoc.ref)));
+  async function executeCriticalTenantDeletion() {
+    if (!criticalDeleteTenant) return;
+    const { id, name } = criticalDeleteTenant;
 
-            const usersQ2 = query(collection(db, 'users'), where('tenantId', '==', id));
-            const usersSnap2 = await getDocs(usersQ2);
-            await Promise.all(usersSnap2.docs.map(uDoc => deleteDoc(uDoc.ref)));
-          } catch (uErr) {
-            console.warn("Aviso ao remover utilizadores associados da conta:", uErr);
-          }
+    setIsSaving(true);
+    try {
+      // 1. Apagar documento do tenant da coleção 'tenants' no Firestore
+      await deleteDoc(doc(db, 'tenants', id));
 
-          // 3. Remover do banco local temporário se existir
-          try {
-            if (typeof localDb !== 'undefined' && localDb.deleteTenant) {
-              localDb.deleteTenant(id);
-            }
-          } catch (e) {}
+      // 2. Apagar utilizadores associados na coleção 'users' do Firestore e revogar acessos
+      try {
+        const usersQ = query(collection(db, 'users'), where('tenant_id', '==', id));
+        const usersSnap = await getDocs(usersQ);
+        await Promise.all(usersSnap.docs.map(uDoc => deleteDoc(uDoc.ref)));
 
-          await auditLog("Excluir Conta (Firebase)", "Tenant", id, `Excluída conta da instituição ${name} e seus usuários associados do Firebase`);
-          showSystemNotification(`Conta "${name}" excluída com sucesso do Firebase!`, 'cadastro');
-          loadData();
-        } catch (err: any) {
-          console.error("Erro ao excluir conta do Firebase:", err);
-          showSystemNotification(`Erro ao excluir conta do Firebase: ${err.message || err}`, 'erro');
+        const usersQ2 = query(collection(db, 'users'), where('tenantId', '==', id));
+        const usersSnap2 = await getDocs(usersQ2);
+        await Promise.all(usersSnap2.docs.map(uDoc => deleteDoc(uDoc.ref)));
+      } catch (uErr) {
+        console.warn("Aviso ao remover utilizadores associados da conta:", uErr);
+      }
+
+      // 3. Remover do banco local temporário se existir
+      try {
+        if (typeof localDb !== 'undefined' && localDb.deleteTenant) {
+          localDb.deleteTenant(id);
         }
-      },
-      true
-    );
+      } catch (e) {}
+
+      await auditLog("Excluir Conta (Ação Crítica)", "Tenant", id, `Excluída conta da instituição ${name} e revogado acesso de todos os seus usuários.`);
+      showSystemNotification(`Conta "${name}" excluída com sucesso e acessos revogados!`, 'cadastro');
+
+      // 4. Notificar a aplicação global para deslogar sessões ativas desta instituição
+      try {
+        window.dispatchEvent(new CustomEvent('sge-tenant-deleted', { detail: { tenantId: id, tenantName: name } }));
+      } catch (e) {}
+
+      setCriticalDeleteTenant(null);
+      setDeleteConfirmText('');
+      loadData();
+    } catch (err: any) {
+      console.error("Erro ao excluir conta:", err);
+      showSystemNotification(`Erro ao excluir conta: ${err.message || err}`, 'erro');
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   // Suspend/Reactivate Account
@@ -1917,7 +1979,7 @@ export default function SuperAdminPortal({
     return <div className="border-t border-slate-800/60 my-4 mx-3" />;
   };
 
-  const isAnyModalOpen = !!(isSmtpModalOpen || isPasswordResetModalOpen || isSendNotifModalOpen || isTenantModalOpen || isPlanModalOpen || isPaymentModalOpen || isOtpModalOpen);
+  const isAnyModalOpen = !!(isSmtpModalOpen || isPasswordResetModalOpen || isSendNotifModalOpen || isTenantModalOpen || isPlanModalOpen || isPaymentModalOpen || isOtpModalOpen || criticalDeleteTenant);
 
   return (
     <div id="super_admin_portal" className="min-h-screen bg-slate-100 flex flex-col md:flex-row font-sans relative">
@@ -2165,7 +2227,7 @@ export default function SuperAdminPortal({
       </aside>
 
       {/* MAIN CONTENT AREA */}
-      <div className={`flex-1 p-6 md:p-8 overflow-y-auto max-w-6xl mx-auto space-y-8 ${isAnyModalOpen ? 'pointer-events-none select-none opacity-50' : ''}`}>
+      <div className={`flex-1 p-6 md:p-8 overflow-y-auto w-full space-y-8 ${isAnyModalOpen ? 'pointer-events-none select-none opacity-50' : ''}`}>
         {/* Top Header section */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-5">
           <div>
@@ -5425,6 +5487,104 @@ export default function SuperAdminPortal({
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: CRITICAL TENANT DELETION CONFIRMATION */}
+      {criticalDeleteTenant && (
+        <div 
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !isSaving) {
+              setCriticalDeleteTenant(null);
+              setDeleteConfirmText('');
+            }
+          }}
+          className="fixed inset-0 bg-slate-950/70 backdrop-blur-md flex items-center justify-center p-4 z-[110] overflow-y-auto pointer-events-auto animate-in fade-in duration-200"
+        >
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-rose-500/30 relative pointer-events-auto animate-in zoom-in-95 duration-200 text-slate-900 dark:text-slate-100">
+            <button 
+              onClick={() => {
+                if (!isSaving) {
+                  setCriticalDeleteTenant(null);
+                  setDeleteConfirmText('');
+                }
+              }}
+              className="absolute top-5 right-5 p-2 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-500 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <span className="bg-rose-500/10 text-rose-600 dark:text-rose-400 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider font-mono">
+                  🚨 Ação Crítica & Irreversível
+                </span>
+                <h3 className="text-lg font-black text-slate-900 dark:text-white font-sans mt-0.5">
+                  Excluir Escola / Instituição
+                </h3>
+              </div>
+            </div>
+
+            <div className="bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 rounded-2xl p-4 text-xs space-y-2 mb-6">
+              <p className="font-bold text-rose-800 dark:text-rose-300">
+                Atenção: Esta é uma operação crítica de eliminação no sistema!
+              </p>
+              <p className="text-rose-700 dark:text-rose-400 leading-relaxed">
+                Você está prestes a excluir permanentemente a instituição <strong className="underline">{criticalDeleteTenant.name}</strong>.
+                Todos os dados vinculados serão destruídos e o acesso de todos os utilizadores desta escola será <strong>REVOGADO IMEDIATAMENTE</strong>.
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider mb-2">
+                  Para confirmar, digite o nome exato da escola ("<span className="text-rose-500 font-mono">{criticalDeleteTenant.name}</span>") ou a palavra <span className="font-mono text-rose-500 font-extrabold">EXCLUIR</span>:
+                </label>
+                <input 
+                  type="text"
+                  value={deleteConfirmText}
+                  onChange={(e) => setDeleteConfirmText(e.target.value)}
+                  placeholder={`Digite "${criticalDeleteTenant.name}" ou EXCLUIR`}
+                  autoFocus
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl p-3 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-rose-500 font-medium"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  disabled={isSaving}
+                  onClick={() => {
+                    setCriticalDeleteTenant(null);
+                    setDeleteConfirmText('');
+                  }}
+                  className="w-1/3 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold py-3 rounded-xl text-xs transition-colors cursor-pointer text-center"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={
+                    isSaving || 
+                    (deleteConfirmText.trim().toLowerCase() !== criticalDeleteTenant.name.trim().toLowerCase() && 
+                     deleteConfirmText.trim().toUpperCase() !== 'EXCLUIR')
+                  }
+                  onClick={executeCriticalTenantDeletion}
+                  className={`w-2/3 py-3 rounded-xl text-xs font-bold transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer ${
+                    (deleteConfirmText.trim().toLowerCase() === criticalDeleteTenant.name.trim().toLowerCase() || 
+                     deleteConfirmText.trim().toUpperCase() === 'EXCLUIR') && !isSaving
+                      ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-600/20'
+                      : 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed opacity-60'
+                  }`}
+                >
+                  {isSaving ? 'Excluindo e Revogando...' : 'Excluir Definitivamente e Revogar Acesso'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
