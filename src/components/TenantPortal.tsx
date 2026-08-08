@@ -43,6 +43,9 @@ import {
   Feriado,
   ActividadePendente
 } from '../types';
+import { ValidarPresencaModal } from './ValidarPresencaModal';
+import { StudentQrDisplay } from './StudentQrDisplay';
+import { generateStudentQrPayload, generateQrDataUrl } from '../utils/qrCodeHelper';
 import { 
   BookOpen, 
   Users, 
@@ -2882,6 +2885,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [assiduidadeSearchQuery, setAssiduidadeSearchQuery] = useState('');
   const [assiduidadeActiveListTab, setAssiduidadeActiveListTab] = useState<'faltosos' | 'estudantes' | 'docentes'>('faltosos');
   const [validateIdInput, setValidateIdInput] = useState('');
+  const [isValidarPresencaModalOpen, setIsValidarPresencaModalOpen] = useState(false);
   const [selectedSimulatorUser, setSelectedSimulatorUser] = useState('');
   const [scannerScanning, setScannerScanning] = useState(false);
   const [scanFlashActive, setScanFlashActive] = useState(false);
@@ -4418,11 +4422,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     const isAdminOrSuper = currentUserRole === 'admin' || loggedInUser?.tipo === 'admin';
 
     return (
-      <>
+      <div className="flex items-center justify-end gap-1.5 flex-wrap">
         {hasPermission('estudantes', 'editar') && (
           <button
             onClick={() => {
-              setActiveActionRowId(null);
               setEditingItem(s);
               setStudentForm({
                 nome: usr?.nome || '',
@@ -4442,47 +4445,81 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               setModalType('student');
               setIsModalOpen(true);
             }}
-            className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
+            className="p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+            title="Editar Estudante"
           >
             <Edit3 className="w-3.5 h-3.5 text-slate-400" />
-            Editar Estudante
+            <span className="hidden xl:inline text-[11px]">Editar</span>
+          </button>
+        )}
+
+        <button
+          onClick={() => {
+            setSelectedProcessStudent(s);
+            setDossierForm({
+              documento_identificacao: s.documento_identificacao || '',
+              nome_pai: s.nome_pai || '',
+              nome_mae: s.nome_mae || '',
+              morada: s.morada || ''
+            });
+            setIsProcessPanelOpen(true);
+          }}
+          className="p-1.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+          title="Dossier / Processo"
+        >
+          <FolderOpen className="w-3.5 h-3.5 text-indigo-400" />
+          <span className="hidden xl:inline text-[11px]">Processo</span>
+        </button>
+
+        <button
+          onClick={() => {
+            setCrachaStudent(s);
+          }}
+          className="p-1.5 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+          title="Gerar Crachá"
+        >
+          <IdCard className="w-3.5 h-3.5 text-emerald-400" />
+          <span className="hidden xl:inline text-[11px]">Crachá</span>
+        </button>
+
+        {hasPermission('estudantes', 'editar') && !isDeactivated && (
+          <button
+            onClick={() => {
+              setStudentToTransfer(s);
+              const studentTurma = turmas.find(t => t.id === s.turma_id);
+              const studentClasseId = studentTurma?.classe_escolar_id || '';
+              setTransferProvId(schools.find(e => e.id === s.escola_id)?.provincia_id || '');
+              setTransferEscolaId(s.escola_id);
+              setTransferClasseEscolarId(studentClasseId);
+              setTransferTurmaId(s.turma_id);
+              setIsTransferModalOpen(true);
+            }}
+            className="p-1.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+            title="Transferir Aluno"
+          >
+            <ArrowLeftRight className="w-3.5 h-3.5 text-slate-400" />
+            <span className="hidden xl:inline text-[11px]">Transferir</span>
           </button>
         )}
 
         {hasPermission('estudantes', 'editar') && !isDeactivated && (
           <button
             onClick={() => {
-              setActiveActionRowId(null);
               setStudentToDeactivate(s);
               setDeactivateReason('');
               setIsDeactivateModalOpen(true);
             }}
-            className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-2 cursor-pointer"
+            className="p-1.5 bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 hover:bg-amber-100 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+            title="Desactivar Aluno"
           >
             <UserMinus className="w-3.5 h-3.5 text-amber-400" />
-            Desactivar Aluno
-          </button>
-        )}
-
-        {hasPermission('estudantes', 'editar') && !isDeactivated && (
-          <button
-            onClick={() => {
-              setActiveActionRowId(null);
-              setStudentToDropout(s);
-              setDropoutReason('Abandono escolar / Desistência');
-              setIsDropoutModalOpen(true);
-            }}
-            className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-2 cursor-pointer"
-          >
-            <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
-            Aluno Desistiu
+            <span className="hidden xl:inline text-[11px]">Desactivar</span>
           </button>
         )}
 
         {hasPermission('estudantes', 'editar') && isDeactivated && isAdminOrSuper && (
           <button
             onClick={async () => {
-              setActiveActionRowId(null);
               try {
                 await updateDoc(doc(db, 'estudantes', s.id), {
                   ativo: true,
@@ -4497,14 +4534,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   `Aluno ${usr?.nome || 'Estudante'} reativado com sucesso.`
                 );
 
-                // Queue or send notification to parent and teachers (Rule 1.1)
                 await queueOrSendEmail(
                   usr?.email || 'geral@escola.ac.mz',
                   '📢 Reativação de Aluno no Portal Escolar',
                   `Estimado(a) encarregado(a),\n\nInformamos que a matrícula do(a) estudante "${usr?.nome || 'Estudante'}" foi reativada no nosso SGE.\n\nAtenciosamente,\nDireção da Escola`
                 );
                 
-                // Show 6-second popup notification (Rule 3)
                 const popup = document.createElement('div');
                 popup.className = 'fixed bottom-5 right-5 bg-emerald-600 text-white font-bold text-xs px-4 py-3 rounded-xl shadow-2xl border border-emerald-500 z-50 flex items-center gap-2 animate-bounce';
                 popup.innerHTML = `✅ Aluno reativado com sucesso!`;
@@ -4516,66 +4551,32 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 alert("Erro ao reativar: " + err.message);
               }
             }}
-            className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-2 cursor-pointer"
+            className="p-1.5 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+            title="Reactivar Aluno"
           >
             <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
-            Reactivar Aluno
+            <span className="hidden xl:inline text-[11px]">Reactivar</span>
           </button>
         )}
 
         {hasPermission('estudantes', 'editar') && !isDeactivated && (
           <button
             onClick={() => {
-              setActiveActionRowId(null);
-              setStudentToTransfer(s);
-              const studentTurma = turmas.find(t => t.id === s.turma_id);
-              const studentClasseId = studentTurma?.classe_escolar_id || '';
-              setTransferProvId(schools.find(e => e.id === s.escola_id)?.provincia_id || '');
-              setTransferEscolaId(s.escola_id);
-              setTransferClasseEscolarId(studentClasseId);
-              setTransferTurmaId(s.turma_id);
-              setIsTransferModalOpen(true);
+              setStudentToDropout(s);
+              setDropoutReason('Abandono escolar / Desistência');
+              setIsDropoutModalOpen(true);
             }}
-            className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
+            className="p-1.5 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 hover:bg-rose-100 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+            title="Aluno Desistiu"
           >
-            <ArrowLeftRight className="w-3.5 h-3.5 text-slate-400" />
-            Transferir Aluno
+            <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+            <span className="hidden xl:inline text-[11px]">Desistiu</span>
           </button>
         )}
-
-        <button
-          onClick={() => {
-            setActiveActionRowId(null);
-            setSelectedProcessStudent(s);
-            setDossierForm({
-              documento_identificacao: s.documento_identificacao || '',
-              nome_pai: s.nome_pai || '',
-              nome_mae: s.nome_mae || '',
-              morada: s.morada || ''
-            });
-            setIsProcessPanelOpen(true);
-          }}
-          className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-indigo-600 dark:text-indigo-400 flex items-center gap-2 cursor-pointer"
-        >
-          <FolderOpen className="w-3.5 h-3.5 text-indigo-400" />
-          Dossier / Processo
-        </button>
-
-        <button
-          onClick={() => {
-            setActiveActionRowId(null);
-            setCrachaStudent(s);
-          }}
-          className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-2 cursor-pointer"
-        >
-          <IdCard className="w-3.5 h-3.5 text-emerald-400" />
-          Gerar Crachá
-        </button>
 
         {hasPermission('estudantes', 'excluir') && (
           <button
             onClick={() => {
-              setActiveActionRowId(null);
               showConfirm(
                 "Excluir Estudante",
                 `Tem certeza que deseja excluir o estudante "${usr?.nome || 'Estudante'}"? Esta ação é irreversível.`,
@@ -4586,13 +4587,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 true
               );
             }}
-            className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-2 cursor-pointer"
+            className="p-1.5 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 hover:bg-rose-100 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+            title="Excluir Estudante"
           >
             <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-            Excluir Estudante
+            <span className="hidden xl:inline text-[11px]">Excluir</span>
           </button>
         )}
-      </>
+      </div>
     );
   }
 
@@ -8882,69 +8884,48 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               <td className="px-6 py-4">{t.especialidade}</td>
                               <td className="px-6 py-4 font-mono text-xs">{t.numero_registro}</td>
                               <td className="px-6 py-4 text-xs text-indigo-600 font-semibold">{esc?.nome || 'Global'}</td>
-                              <td className={`px-6 py-4 text-right sticky right-0 bg-white dark:bg-slate-900 ${activeActionRowId === t.id ? 'z-40' : 'z-10'}`}>
-                                <div className="inline-block text-left">
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setActiveActionRowId(activeActionRowId === t.id ? null : t.id);
-                                    }}
-                                    className="p-1.5 hover:bg-slate-100 rounded-full text-slate-500 hover:text-slate-700 transition-colors focus:outline-none cursor-pointer"
-                                    title="Opções"
-                                  >
-                                    <MoreVertical className="w-5 h-5" />
-                                  </button>
-
-                                  {activeActionRowId === t.id && (
-                                    <>
-                                      <div 
-                                        className="fixed inset-0 z-30 bg-transparent" 
-                                        onClick={() => setActiveActionRowId(null)} 
-                                      />
-                                      <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xl z-40 py-1.5 text-left animate-in fade-in slide-in-from-top-1 duration-150">
-                                        {hasPermission('docentes', 'editar') && (
-                                          <button
-                                            onClick={() => {
-                                              setActiveActionRowId(null);
-                                              setEditingItem(t);
-                                              setTeacherForm({
-                                                nome: usr?.nome || '',
-                                                email: usr?.email || '',
-                                                especialidade: t.especialidade,
-                                                numero_registro: t.numero_registro,
-                                                escola_id: t.escola_id
-                                              });
-                                              setModalType('teacher');
-                                              setIsModalOpen(true);
-                                            }}
-                                            className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
-                                          >
-                                            <Edit3 className="w-3.5 h-3.5 text-slate-400" />
-                                            Editar Docente
-                                          </button>
-                                        )}
-                                        {hasPermission('docentes', 'excluir') && (
-                                          <button
-                                            onClick={() => {
-                                              setActiveActionRowId(null);
-                                              showConfirm(
-                                                "Excluir Docente",
-                                                `Tem certeza que deseja excluir o docente "${usr?.nome || 'Professor'}"? Esta ação é irreversível.`,
-                                                async () => {
-                                                  await deleteDoc(doc(db, 'docentes', t.id));
-                                                  loadTenantContext();
-                                                },
-                                                true
-                                              );
-                                            }}
-                                            className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-2 cursor-pointer"
-                                          >
-                                            <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                                            Excluir Docente
-                                          </button>
-                                        )}
-                                      </div>
-                                    </>
+                              <td className="px-6 py-4 text-right">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  {hasPermission('docentes', 'editar') && (
+                                    <button
+                                      onClick={() => {
+                                        setEditingItem(t);
+                                        setTeacherForm({
+                                          nome: usr?.nome || '',
+                                          email: usr?.email || '',
+                                          especialidade: t.especialidade,
+                                          numero_registro: t.numero_registro,
+                                          escola_id: t.escola_id
+                                        });
+                                        setModalType('teacher');
+                                        setIsModalOpen(true);
+                                      }}
+                                      className="p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                                      title="Editar Docente"
+                                    >
+                                      <Edit3 className="w-3.5 h-3.5" />
+                                      <span className="hidden xl:inline text-[11px]">Editar</span>
+                                    </button>
+                                  )}
+                                  {hasPermission('docentes', 'excluir') && (
+                                    <button
+                                      onClick={() => {
+                                        showConfirm(
+                                          "Excluir Docente",
+                                          `Tem certeza que deseja excluir o docente "${usr?.nome || 'Professor'}"? Esta ação é irreversível.`,
+                                          async () => {
+                                            await deleteDoc(doc(db, 'docentes', t.id));
+                                            loadTenantContext();
+                                          },
+                                          true
+                                        );
+                                      }}
+                                      className="p-1.5 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/40 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                                      title="Excluir Docente"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                      <span className="hidden xl:inline text-[11px]">Excluir</span>
+                                    </button>
                                   )}
                                 </div>
                               </td>
@@ -9005,70 +8986,47 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               </button>
                             )}
 
-                            {/* 3 Dots action */}
-                            <div className={`relative ${activeActionRowId === t.id ? 'z-40' : 'z-0'}`}>
+                            {/* Direct Action Buttons */}
+                            {hasPermission('docentes', 'editar') && (
                               <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setActiveActionRowId(activeActionRowId === t.id ? null : t.id);
+                                onClick={() => {
+                                  setEditingItem(t);
+                                  setTeacherForm({
+                                    nome: usr?.nome || '',
+                                    email: usr?.email || '',
+                                    especialidade: t.especialidade,
+                                    numero_registro: t.numero_registro,
+                                    escola_id: t.escola_id
+                                  });
+                                  setModalType('teacher');
+                                  setIsModalOpen(true);
                                 }}
-                                className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors focus:outline-none cursor-pointer"
+                                className="p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                                title="Editar Docente"
                               >
-                                <MoreVertical className="w-5 h-5" />
+                                <Edit3 className="w-4 h-4" />
                               </button>
+                            )}
 
-                              {activeActionRowId === t.id && (
-                                <>
-                                  <div 
-                                    className="fixed inset-0 z-30 bg-transparent" 
-                                    onClick={() => setActiveActionRowId(null)} 
-                                  />
-                                  <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xl z-40 py-1.5 text-left animate-in fade-in slide-in-from-top-1 duration-150">
-                                    {hasPermission('docentes', 'editar') && (
-                                      <button
-                                        onClick={() => {
-                                          setActiveActionRowId(null);
-                                          setEditingItem(t);
-                                          setTeacherForm({
-                                            nome: usr?.nome || '',
-                                            email: usr?.email || '',
-                                            especialidade: t.especialidade,
-                                            numero_registro: t.numero_registro,
-                                            escola_id: t.escola_id
-                                          });
-                                          setModalType('teacher');
-                                          setIsModalOpen(true);
-                                        }}
-                                        className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
-                                      >
-                                        <Edit3 className="w-3.5 h-3.5 text-slate-400" />
-                                        Editar Docente
-                                      </button>
-                                    )}
-                                    {hasPermission('docentes', 'excluir') && (
-                                      <button
-                                        onClick={() => {
-                                          setActiveActionRowId(null);
-                                          showConfirm(
-                                            "Excluir Docente",
-                                            `Tem certeza que deseja excluir o docente "${usr?.nome || 'Professor'}"? Esta ação é irreversível.`,
-                                            async () => {
-                                              await deleteDoc(doc(db, 'docentes', t.id));
-                                              loadTenantContext();
-                                            },
-                                            true
-                                          );
-                                        }}
-                                        className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-2 cursor-pointer"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                                        Excluir Docente
-                                      </button>
-                                    )}
-                                  </div>
-                                </>
-                              )}
-                            </div>
+                            {hasPermission('docentes', 'excluir') && (
+                              <button
+                                onClick={() => {
+                                  showConfirm(
+                                    "Excluir Docente",
+                                    `Tem certeza que deseja excluir o docente "${usr?.nome || 'Professor'}"? Esta ação é irreversível.`,
+                                    async () => {
+                                      await deleteDoc(doc(db, 'docentes', t.id));
+                                      loadTenantContext();
+                                    },
+                                    true
+                                  );
+                                }}
+                                className="p-1.5 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 rounded-lg hover:bg-rose-100 dark:hover:bg-rose-900/40 text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                                title="Excluir Docente"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
@@ -9281,31 +9239,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               <td className="px-6 py-4 text-xs">{s.genero}</td>
                               <td className="px-6 py-4 text-xs text-slate-500">{esc?.nome}</td>
                               <td className="px-6 py-4 text-xs font-bold text-indigo-700">{tur?.nome || 'Sem Turma'}</td>
-                              <td className={`px-6 py-4 text-right sticky right-0 bg-white dark:bg-slate-900 ${activeActionRowId === s.id ? 'z-40' : 'z-10'}`}>
-                                <div className="inline-block text-left">
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setActiveActionRowId(activeActionRowId === s.id ? null : s.id);
-                                    }}
-                                    className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors focus:outline-none cursor-pointer"
-                                    title="Opções"
-                                  >
-                                    <MoreVertical className="w-5 h-5" />
-                                  </button>
-
-                                  {activeActionRowId === s.id && (
-                                    <>
-                                      <div 
-                                        className="fixed inset-0 z-[9999] bg-transparent" 
-                                        onClick={() => setActiveActionRowId(null)} 
-                                      />
-                                      <div className="absolute bottom-0 right-0 w-48 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xl z-[99999] py-1.5 text-left animate-in fade-in zoom-in-95 origin-bottom-right duration-150">
-                                        {renderStudentActions(s, usr)}
-                                      </div>
-                                    </>
-                                  )}
-                                </div>
+                              <td className="px-6 py-4 text-right">
+                                {renderStudentActions(s, usr)}
                               </td>
                             </tr>
                           );
@@ -9361,61 +9296,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-1.5 flex-shrink-0">
-                            {/* View/Details Button */}
-                            {hasPermission('estudantes', 'editar') && (
-                              <button
-                                onClick={() => {
-                                  setEditingItem(s);
-                                  setStudentForm({
-                                    nome: usr?.nome || '',
-                                    email: usr?.email || '',
-                                    escola_id: s.escola_id || '',
-                                    turma_id: s.turma_id || '',
-                                    numero_matricula: s.numero_matricula || '',
-                                    data_nascimento: s.data_nascimento || '',
-                                    genero: s.genero || 'Masculino',
-                                    pai_id: s.pai_id || '',
-                                    faturado: !!s.faturado,
-                                    periodo_facturacao: s.periodo_facturacao || 'Mensal',
-                                    foto_url: s.foto_url || '',
-                                    usuario_sistema: s.usuario_sistema || false,
-                                    senha_temporaria: s.senha_temporaria || ''
-                                  });
-                                  setModalType('student');
-                                  setIsModalOpen(true);
-                                }}
-                                className="p-1.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 rounded-lg hover:bg-indigo-100 dark:hover:bg-indigo-900/40 text-xs font-semibold flex items-center gap-1 cursor-pointer"
-                                title="Visualizar Estudante"
-                              >
-                                <Eye className="w-4 h-4" />
-                              </button>
-                            )}
-
-                            {/* 3 Dots Action */}
-                            <div className={`relative ${activeActionRowId === s.id ? 'z-40' : 'z-0'}`}>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setActiveActionRowId(activeActionRowId === s.id ? null : s.id);
-                                }}
-                                className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors focus:outline-none cursor-pointer"
-                              >
-                                <MoreVertical className="w-5 h-5" />
-                              </button>
-
-                               {activeActionRowId === s.id && (
-                                 <>
-                                   <div 
-                                     className="fixed inset-0 z-[9999] bg-transparent" 
-                                     onClick={() => setActiveActionRowId(null)} 
-                                   />
-                                   <div className="absolute bottom-0 right-0 w-48 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xl z-[99999] py-1.5 text-left animate-in fade-in zoom-in-95 origin-bottom-right duration-150">
-                                     {renderStudentActions(s, usr)}
-                                   </div>
-                                 </>
-                               )}
-                            </div>
+                          <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end max-w-[50%]">
+                            {renderStudentActions(s, usr)}
                           </div>
                         </div>
                       );
@@ -12207,6 +12089,31 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   const period = getPeriodForTime(now);
                   const checkInTimeStr = now.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
 
+                  // Verify person has an agenda for today
+                  const todayDayName = getDiaSemanaFromDate(dateStr);
+                  const hasAgendaToday = (() => {
+                    if (tipo === 'estudante') {
+                      const studentTurmaId = item?.turma_id || '';
+                      if (!studentTurmaId) return false;
+                      return rawClasses.some(c => {
+                        if (c.turma_id !== studentTurmaId) return false;
+                        const classDay = (c.dia_semana || (c.data ? getDiaSemanaFromDate(c.data) : '')).toLowerCase();
+                        return classDay.includes(todayDayName.toLowerCase()) || todayDayName.toLowerCase().includes(classDay);
+                      });
+                    } else {
+                      return rawClasses.some(c => {
+                        if (c.docente_id !== item?.id) return false;
+                        const classDay = (c.dia_semana || (c.data ? getDiaSemanaFromDate(c.data) : '')).toLowerCase();
+                        return classDay.includes(todayDayName.toLowerCase()) || todayDayName.toLowerCase().includes(classDay);
+                      });
+                    }
+                  })();
+
+                  if (!hasAgendaToday && !overrideStatus) {
+                    showSystemNotification(`❌ Presença não validada: O ${tipo === 'estudante' ? 'estudante' : 'funcionário'} ${item?.nome || 'pesquisado'} não possui agenda para hoje (${todayDayName}).`, 'erro');
+                    return;
+                  }
+
                   // Find school and check for tolerances
                   const escola_id = item?.escola_id || '';
                   const school = rawSchools.find(s => s.id === escola_id);
@@ -12458,126 +12365,30 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       </div>
                     </div>
 
-                    {/* TWO COLUMN INTERACTIVE VALIDATION SECTION */}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                      
-                      {/* WEB VERSION: MANUALLY CHECK-IN BY ID */}
-                      <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-4">
-                        <div className="flex items-center gap-3 pb-3 border-b border-slate-150">
-                          <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
-                            <IdCard className="w-5 h-5" />
+                    {/* INTERACTIVE VALIDATION SECTION */}
+                    <div className="w-full">
+                      {/* VALIDAR PRESENÇA BOTÃO E POPUP CARD */}
+                      <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4 relative overflow-hidden flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+                        <div className="flex items-center gap-4 z-10">
+                          <div className="p-3 bg-indigo-600/30 text-indigo-400 rounded-2xl border border-indigo-500/30 shrink-0">
+                            <QrCode className="w-7 h-7" />
                           </div>
                           <div>
-                            <h3 className="font-bold text-slate-800 text-sm">Painel de Validação Web (Por ID)</h3>
-                            <p className="text-[11px] text-slate-400">Digite a Matrícula do Aluno ou Registro do Professor para validar a entrada.</p>
+                            <h3 className="font-bold text-white text-base">Validação de Assiduidade em Tempo Real</h3>
+                            <p className="text-xs text-slate-300 mt-0.5">Escaneie o crachá físico via QR ou digite o código de estudante/docente.</p>
                           </div>
                         </div>
 
-                        <form onSubmit={handleIdCheckIn} className="space-y-4 pt-2">
-                          <div>
-                            <label className="block text-[11px] font-bold text-slate-500 mb-1">Código de Matrícula ou Registro</label>
-                            <div className="flex gap-2">
-                              <input
-                                type="text"
-                                value={validateIdInput}
-                                disabled={!canValidatePresence}
-                                onChange={(e) => setValidateIdInput(e.target.value)}
-                                placeholder={canValidatePresence ? "Ex: MAT-3021 ou DOC-129" : "Sem permissão para validar"}
-                                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs text-slate-700 focus:outline-hidden focus:border-indigo-500 transition-colors font-mono disabled:opacity-50 disabled:cursor-not-allowed"
-                              />
-                              <button
-                                type="submit"
-                                disabled={!canValidatePresence}
-                                className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer text-white px-5 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 shadow-sm"
-                              >
-                                <Fingerprint className="w-4 h-4" />
-                                Validar ID
-                              </button>
-                            </div>
-                          </div>
-                        </form>
-
-                        {/* ID Check-In Hint details */}
-                        <div className="bg-indigo-50/40 border border-indigo-100 p-3.5 rounded-xl text-xs text-indigo-700/85 leading-relaxed space-y-1">
-                          <p className="font-bold flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" /> Dica de Operação:</p>
-                          <p>O sistema buscará a agenda das turmas em vigor de acordo com a data selecionada ({activeDayOfWeek}). Alunos sem disciplinas programadas para hoje serão sinalizados com aviso, mas ainda sim registráveis.</p>
-                        </div>
-                      </div>
-
-                      {/* MOBILE SCAN SIMULATOR CARD */}
-                      <div className="bg-slate-900 text-white p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4 relative overflow-hidden flex flex-col justify-between">
-                        
-                        {/* Interactive scan successful flash glow */}
-                        {scanFlashActive && (
-                          <div className="absolute inset-0 bg-emerald-500/25 z-40 pointer-events-none transition-all duration-300" />
-                        )}
-
-                        <div className="flex items-center gap-3 pb-3 border-b border-slate-800 z-10">
-                          <div className="p-2 bg-slate-800 text-indigo-400 rounded-lg">
-                            <QrCode className="w-5 h-5 animate-pulse" />
-                          </div>
-                          <div>
-                            <h3 className="font-bold text-white text-sm">Simulador de Mobile QR Reader</h3>
-                            <p className="text-[11px] text-slate-400">Emula o app móvel lendo os crachás físicos via câmera.</p>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center z-10 pt-2">
-                          {/* Visual mockup of a scanning frame */}
-                          <div className="relative aspect-video rounded-xl border border-slate-700/80 bg-slate-950 flex flex-col items-center justify-center p-4 overflow-hidden group">
-                            
-                            {/* Scanning laser line */}
-                            {scannerScanning && (
-                              <div className="absolute inset-x-0 top-0 h-0.5 bg-emerald-400 shadow-[0_0_10px_#10b981] animate-bounce z-10" />
-                            )}
-
-                            <div className="border-2 border-indigo-500/40 w-24 h-24 rounded-lg flex flex-col items-center justify-center relative p-1">
-                              {/* Camera bracket frame icons */}
-                              <div className="absolute top-0 left-0 w-3 h-3 border-t-2 border-l-2 border-indigo-400" />
-                              <div className="absolute top-0 right-0 w-3 h-3 border-t-2 border-r-2 border-indigo-400" />
-                              <div className="absolute bottom-0 left-0 w-3 h-3 border-b-2 border-l-2 border-indigo-400" />
-                              <div className="absolute bottom-0 right-0 w-3 h-3 border-b-2 border-r-2 border-indigo-400" />
-                              <Camera className={`w-8 h-8 text-slate-600 transition-colors ${scannerScanning ? 'text-indigo-400' : ''}`} />
-                            </div>
-
-                            <span className="text-[9px] font-mono mt-3 text-slate-500 tracking-wider">
-                              {scannerScanning ? "PROCESSANDO LEITURA..." : "CAMERA MOCK PRONTA"}
-                            </span>
-                          </div>
-
-                          <div className="space-y-3">
-                            <div>
-                              <label className="block text-[10px] font-bold text-slate-400 mb-1">Escolher Aluno/Professor Ausente</label>
-                              <select
-                                value={selectedSimulatorUser}
-                                disabled={!canValidatePresence}
-                                onChange={(e) => setSelectedSimulatorUser(e.target.value)}
-                                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-hidden disabled:opacity-50 disabled:cursor-not-allowed"
-                              >
-                                <option value="">{canValidatePresence ? "-- Selecionar um Faltoso --" : "Sem permissão de validação"}</option>
-                                {combinedAbsentees.map((item) => (
-                                  <option key={item.id} value={item.registro_id}>
-                                    {item.nome} ({item.tipo === 'estudante' ? 'Estudante' : 'Docente'})
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={handleSimulateScan}
-                              disabled={!selectedSimulatorUser || scannerScanning || !canValidatePresence}
-                              className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer text-white py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1"
-                            >
-                              {scannerScanning ? "Analisando Código..." : "Simular Scan do Crachá"}
-                            </button>
-
-                            {lastScannedResult && (
-                              <div className="bg-emerald-950/40 border border-emerald-900/60 p-2.5 rounded-lg text-[11px] text-emerald-400 font-mono text-center">
-                                {lastScannedResult}
-                              </div>
-                            )}
-                          </div>
+                        <div className="z-10 flex-1 max-w-md">
+                          <button
+                            type="button"
+                            onClick={() => setIsValidarPresencaModalOpen(true)}
+                            disabled={!canValidatePresence}
+                            className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer text-slate-950 font-black py-3.5 px-6 rounded-2xl text-sm transition-all flex items-center justify-center gap-2.5 shadow-lg shadow-emerald-500/20 active:scale-[0.99]"
+                          >
+                            <QrCode className="w-5 h-5" />
+                            Validar Presença (Ler QR / Digitar Código)
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -12933,10 +12744,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                               </>
                                             ) : (
                                               <button
-                                                onClick={() => registerCheckIn('estudante', student)}
-                                                className="bg-emerald-600 hover:bg-emerald-700 cursor-pointer text-white px-2.5 py-1 rounded text-[11px] font-bold transition-colors"
+                                                onClick={() => registerCheckIn('estudante', student, 'falta')}
+                                                className="bg-rose-600 hover:bg-rose-700 cursor-pointer text-white px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors shadow-2xs"
                                               >
-                                                Marcar Presença
+                                                Cadastrar Falta
                                               </button>
                                             )}
                                           </div>
@@ -13064,10 +12875,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                               </>
                                             ) : (
                                               <button
-                                                onClick={() => registerCheckIn('docente', teacher)}
-                                                className="bg-emerald-600 hover:bg-emerald-700 cursor-pointer text-white px-2.5 py-1 rounded text-[11px] font-bold transition-colors"
+                                                onClick={() => registerCheckIn('docente', teacher, 'falta')}
+                                                className="bg-rose-600 hover:bg-rose-700 cursor-pointer text-white px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors shadow-2xs"
                                               >
-                                                Marcar Presença
+                                                Cadastrar Falta
                                               </button>
                                             )}
                                           </div>
@@ -13082,6 +12893,23 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           {renderPagination(pageAssiduidade, scheduledTeachers.length, itemsPerPage, setPageAssiduidade)}
                         </div>
                       )}
+
+                      {/* POPUP MODAL VALIDAR PRESENÇA */}
+                      <ValidarPresencaModal
+                        isOpen={isValidarPresencaModalOpen}
+                        onClose={() => setIsValidarPresencaModalOpen(false)}
+                        currentTenantId={currentTenantId || ''}
+                        activeEscolaId={assiduidadeEscolaFilter !== 'todos' ? assiduidadeEscolaFilter : (schools[0]?.id || '')}
+                        students={rawStudents}
+                        teachers={rawTeachers}
+                        users={tenantUsers}
+                        classes={rawClasses}
+                        turmas={rawTurmas}
+                        schools={rawSchools}
+                        onValidatePerson={async (person: any, tipo: 'estudante' | 'docente') => {
+                          await registerCheckIn(tipo, person);
+                        }}
+                      />
                     </div>
                   </div>
                 );
@@ -13835,15 +13663,61 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     />
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Url do Logotipo Institucional</label>
-                    <input 
-                      type="text"
-                      value={config.logo_url || ''}
-                      onChange={(e) => setConfig({ ...config, logo_url: e.target.value })}
-                      placeholder="https://..."
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
-                    />
+                  <div className="col-span-1 md:col-span-2">
+                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">Logotipo Oficial da Instituição</label>
+                    <div className="flex flex-col sm:flex-row items-center gap-4 bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-200 dark:border-slate-700">
+                      <div className="w-16 h-16 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 flex items-center justify-center p-2 shrink-0 shadow-xs overflow-hidden">
+                        {config.logo_url ? (
+                          <img src={config.logo_url} alt="Logo Instituição" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                        ) : (
+                          <Building className="w-8 h-8 text-slate-400" />
+                        )}
+                      </div>
+                      <div className="flex-1 space-y-2 w-full">
+                        <div className="flex flex-wrap gap-2">
+                          <label className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer transition-colors inline-flex items-center gap-1.5 shadow-sm">
+                            <Upload className="w-4 h-4" /> Selecionar Foto / Imagem do Logo
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  if (file.size > 2 * 1024 * 1024) {
+                                    showSystemNotification("Erro: O logotipo deve ter no máximo 2MB", "erro");
+                                    return;
+                                  }
+                                  const reader = new FileReader();
+                                  reader.onloadend = () => {
+                                    const base64 = reader.result as string;
+                                    setConfig(prev => ({ ...prev, logo_url: base64 }));
+                                    showSystemNotification("Logotipo carregado com sucesso! Clique em Salvar Configurações para aplicar.", "sucesso");
+                                  };
+                                  reader.readAsDataURL(file);
+                                }
+                              }}
+                            />
+                          </label>
+                          {config.logo_url && (
+                            <button
+                              type="button"
+                              onClick={() => setConfig(prev => ({ ...prev, logo_url: '' }))}
+                              className="bg-rose-100 hover:bg-rose-200 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 font-bold px-3.5 py-2 rounded-xl text-xs transition-colors"
+                            >
+                              Remover Logotipo
+                            </button>
+                          )}
+                        </div>
+                        <input 
+                          type="text"
+                          value={config.logo_url || ''}
+                          onChange={(e) => setConfig({ ...config, logo_url: e.target.value })}
+                          placeholder="Ou cole o endereço do logotipo (https://...)"
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-700 dark:text-slate-200 font-mono"
+                        />
+                      </div>
+                    </div>
                   </div>
 
                   <div>
@@ -14600,49 +14474,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       </div>
                     </div>
 
-                    {/* Dynamic QR Code Vector representation of Student matricula */}
-                    <div className="mt-5 flex flex-col items-center">
-                      <div className="bg-white p-2 rounded-lg border border-slate-150 shadow-xs">
-                        <svg className="w-14 h-14" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-                          <rect width="100" height="100" rx="6" fill="white" />
-                          <rect x="10" y="10" width="25" height="25" rx="2" fill="#1e1b4b" />
-                          <rect x="15" y="15" width="15" height="15" rx="1" fill="white" />
-                          <rect x="18" y="18" width="9" height="9" fill="#1e1b4b" />
-
-                          <rect x="65" y="10" width="25" height="25" rx="2" fill="#1e1b4b" />
-                          <rect x="70" y="15" width="15" height="15" rx="1" fill="white" />
-                          <rect x="73" y="18" width="9" height="9" fill="#1e1b4b" />
-
-                          <rect x="10" y="65" width="25" height="25" rx="2" fill="#1e1b4b" />
-                          <rect x="15" y="70" width="15" height="15" rx="1" fill="white" />
-                          <rect x="18" y="73" width="9" height="9" fill="#1e1b4b" />
-
-                          <rect x="42" y="10" width="6" height="6" fill="#1e1b4b" />
-                          <rect x="52" y="10" width="6" height="6" fill="#1e1b4b" />
-                          <rect x="42" y="20" width="6" height="6" fill="#1e1b4b" />
-                          <rect x="48" y="26" width="10" height="6" fill="#1e1b4b" />
-                          
-                          <rect x="10" y="42" width="6" height="6" fill="#1e1b4b" />
-                          <rect x="20" y="42" width="6" height="6" fill="#1e1b4b" />
-                          <rect x="26" y="48" width="6" height="10" fill="#1e1b4b" />
-
-                          <rect x="42" y="42" width="16" height="16" fill="#1e1b4b" />
-                          <rect x="46" y="46" width="8" height="8" fill="white" />
-                          
-                          <rect x="65" y="42" width="6" height="6" fill="#1e1b4b" />
-                          <rect x="75" y="42" width="10" height="6" fill="#1e1b4b" />
-                          <rect x="65" y="52" width="6" height="6" fill="#1e1b4b" />
-
-                          <rect x="42" y="65" width="6" height="10" fill="#1e1b4b" />
-                          <rect x="52" y="70" width="6" height="15" fill="#1e1b4b" />
-                          <rect x="42" y="80" width="10" height="6" fill="#1e1b4b" />
-
-                          <rect x="65" y="65" width="10" height="6" fill="#1e1b4b" />
-                          <rect x="65" y="75" width="6" height="10" fill="#1e1b4b" />
-                          <rect x="75" y="75" width="15" height="15" fill="#1e1b4b" />
-                        </svg>
-                      </div>
-                      <span className="text-[7px] text-slate-400 dark:text-slate-500 font-mono mt-1 uppercase tracking-widest font-bold">STUDENT ID: {s.id}</span>
+                    {/* Dynamic Real QR Code for Student */}
+                    <div className="mt-4 flex flex-col items-center">
+                      <StudentQrDisplay
+                        tenantId={currentTenantId || ''}
+                        escolaId={s.escola_id || ''}
+                        studentId={s.id}
+                        matricula={s.numero_matricula || s.id}
+                        userId={s.user_id}
+                      />
+                      <span className="text-[7px] text-slate-400 dark:text-slate-500 font-mono mt-1.5 uppercase tracking-widest font-bold">STUDENT ID: {s.id}</span>
                     </div>
                   </>
                 );

@@ -40,152 +40,10 @@ interface BibliotecaModuleProps {
   tenantId: string;
 }
 
-// Mock initial data to give the user a rich, populated experience immediately
-const INITIAL_LIVROS: Livro[] = [
-  {
-    id: 'livro-1',
-    tenant_id: 'default',
-    titulo: 'Dom Casmurro',
-    autor: 'Machado de Assis',
-    editora: 'Editora Nacional',
-    numero_paginas: 256,
-    capa_url: '',
-    categoria: 'Clássicos',
-    sinopse: 'A famosa história de Bento Santiago, o Bentinho, e sua dúvida cruel que atravessa gerações: Capitu traiu ou não traiu com Escobar? Uma obra prima do realismo brasileiro recheada de ironias e metáforas sobre a sociedade carioca do século XIX.',
-    idioma: 'Português',
-    isbn: '978-8501000001',
-    tags: ['Realismo', 'Clássico', 'Brasil', 'Romance'],
-    destaque: true,
-    criado_por: 'user-admin',
-    escola_origem: 'escola-1',
-    criado_em: new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString(),
-    atualizado_em: new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString()
-  },
-  {
-    id: 'livro-2',
-    tenant_id: 'default',
-    titulo: 'O Cortiço',
-    autor: 'Aluísio Azevedo',
-    editora: 'Moderna',
-    numero_paginas: 180,
-    capa_url: '',
-    categoria: 'Clássicos',
-    sinopse: 'O Cortiço retrata a vida dos moradores de uma habitação coletiva no Rio de Janeiro. Sob a lente do naturalismo, o comportamento humano é moldado pelo meio ambiente, pela raça e pelo momento histórico.',
-    idioma: 'Português',
-    isbn: '978-8501000002',
-    tags: ['Naturalismo', 'Social', 'Século XIX'],
-    destaque: false,
-    criado_por: 'user-admin',
-    escola_origem: 'escola-2',
-    criado_em: new Date(Date.now() - 25 * 24 * 3600 * 1000).toISOString(),
-    atualizado_em: new Date(Date.now() - 25 * 24 * 3600 * 1000).toISOString()
-  },
-  {
-    id: 'livro-3',
-    tenant_id: 'default',
-    titulo: 'Os Lusíadas',
-    autor: 'Luís de Camões',
-    editora: 'Porto Editora',
-    numero_paginas: 340,
-    capa_url: '',
-    categoria: 'Poesia',
-    sinopse: 'A grande epopeia portuguesa que narra a viagem de Vasco da Gama às Índias e canta as glórias e conquistas históricas do povo português. Escrita em dez cantos e versos decassílabos de métrica perfeita.',
-    idioma: 'Português',
-    isbn: '978-9720000003',
-    tags: ['Epopeia', 'Histórico', 'Portugal', 'Renascimento'],
-    destaque: true,
-    criado_por: 'user-admin',
-    escola_origem: 'escola-1',
-    criado_em: new Date(Date.now() - 15 * 24 * 3600 * 1000).toISOString(),
-    atualizado_em: new Date(Date.now() - 15 * 24 * 3600 * 1000).toISOString()
-  },
-  {
-    id: 'livro-4',
-    tenant_id: 'default',
-    titulo: 'Física Geral - 10ª Classe',
-    autor: 'Dr. Nelton Benedito',
-    editora: 'Plural Editores',
-    numero_paginas: 192,
-    capa_url: '',
-    categoria: 'Didático',
-    disciplina_associada: 'Física',
-    sinopse: 'Manual escolar complementar focado na mecânica clássica, termodinâmica e ótica geométrica aplicadas ao plano curricular oficial. Contém exercícios práticos resolvidos e sugestões de laboratório.',
-    idioma: 'Português',
-    isbn: '978-9890000004',
-    tags: ['Didático', 'Física', '10ª Classe', 'Ensino Médio'],
-    destaque: true,
-    criado_por: 'user-admin',
-    escola_origem: 'escola-1',
-    criado_em: new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString(),
-    atualizado_em: new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString()
-  }
-];
-
-const INITIAL_EDICOES: Edicao[] = [
-  {
-    id: 'edicao-1-1',
-    livro_id: 'livro-1',
-    numero_edicao: 1,
-    pdf_url: 'dom_casmurro_v1.pdf',
-    tamanho_ficheiro: 4.8,
-    notas_da_edicao: 'Edição comentada de bolso, ideal para estudantes pré-vestibulandos.',
-    adicionado_por: 'user-admin',
-    adicionado_em: new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString(),
-    ativa: true
-  },
-  {
-    id: 'edicao-1-2',
-    livro_id: 'livro-1',
-    numero_edicao: 2,
-    pdf_url: 'dom_casmurro_critica.pdf',
-    tamanho_ficheiro: 8.2,
-    notas_da_edicao: 'Edição crítica com notas de rodapé ampliadas e contexto histórico do Rio de Janeiro do século XIX.',
-    adicionado_por: 'user-admin',
-    adicionado_em: new Date(Date.now() - 10 * 24 * 3600 * 1000).toISOString(),
-    ativa: true
-  },
-  {
-    id: 'edicao-2-1',
-    livro_id: 'livro-2',
-    numero_edicao: 1,
-    pdf_url: 'o_cortico_completo.pdf',
-    tamanho_ficheiro: 3.5,
-    notas_da_edicao: 'Texto integral conforme o novo acordo ortográfico.',
-    adicionado_por: 'user-admin',
-    adicionado_em: new Date(Date.now() - 25 * 24 * 3600 * 1000).toISOString(),
-    ativa: true
-  },
-  {
-    id: 'edicao-3-1',
-    livro_id: 'livro-3',
-    numero_edicao: 1,
-    pdf_url: 'os_lusiadas_canto_a_canto.pdf',
-    tamanho_ficheiro: 5.1,
-    notas_da_edicao: 'Edição escolar comentada canto a canto, facilitando a compreensão dos termos arcaicos.',
-    adicionado_por: 'user-admin',
-    adicionado_em: new Date(Date.now() - 15 * 24 * 3600 * 1000).toISOString(),
-    ativa: true
-  }
-];
-
-const INITIAL_AVALIACOES: Avaliacao[] = [
-  {
-    id: 'av-1',
-    utilizador_id: 'user-1',
-    livro_id: 'livro-1',
-    nota: 5,
-    comentario: 'Uma obra-prima absoluta! A forma como Machado manipula a perspectiva do narrador é fantástica.',
-    criado_em: new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString()
-  },
-  {
-    id: 'av-2',
-    utilizador_id: 'user-2',
-    livro_id: 'livro-1',
-    nota: 4,
-    comentario: 'Muito bom, mas a linguagem rebuscada exige muita atenção dos alunos mais jovens.',
-    criado_em: new Date(Date.now() - 2 * 24 * 3600 * 1000).toISOString()
-  }
-];
+// Initial arrays start empty so only real user registered books are shown
+const INITIAL_LIVROS: Livro[] = [];
+const INITIAL_EDICOES: Edicao[] = [];
+const INITIAL_AVALIACOES: Avaliacao[] = [];
 
 const INITIAL_PERMISSOES: PermissaoBiblioteca[] = [
   {
@@ -229,12 +87,28 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
   // Main State
   const [livros, setLivros] = useState<Livro[]>(() => {
     const saved = localStorage.getItem(`lib_livros_${tenantId}`);
-    return saved ? JSON.parse(saved) : INITIAL_LIVROS;
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        return parsed.filter((l: any) => !l.id.startsWith('livro-'));
+      } catch (e) {
+        return [];
+      }
+    }
+    return INITIAL_LIVROS;
   });
 
   const [edicoes, setEdicoes] = useState<Edicao[]>(() => {
     const saved = localStorage.getItem(`lib_edicoes_${tenantId}`);
-    return saved ? JSON.parse(saved) : INITIAL_EDICOES;
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        return parsed.filter((e: any) => !e.livro_id.startsWith('livro-'));
+      } catch (err) {
+        return [];
+      }
+    }
+    return INITIAL_EDICOES;
   });
 
   const [avaliacoes, setAvaliacoes] = useState<Avaliacao[]>(() => {
@@ -780,7 +654,13 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
       link.click();
       document.body.removeChild(link);
     } else {
-      alert(`Simulando download seguro do arquivo PDF: ${ed.pdf_url}\n(Tamanho: ${ed.tamanho_ficheiro} MB)`);
+      window.dispatchEvent(new CustomEvent('sge-global-alert', {
+        detail: {
+          title: 'Download Seguro de PDF',
+          message: `Simulando download seguro do arquivo PDF: ${ed.pdf_url}\n(Tamanho: ${ed.tamanho_ficheiro} MB)`,
+          type: 'info'
+        }
+      }));
     }
   };
 

@@ -232,19 +232,23 @@ export function SuperAdminFinancePanel({
       setIsBankModalOpen(false);
       loadFinanceConfigs();
     } catch (err: any) {
-      alert("Erro ao salvar conta: " + err.message);
+      window.dispatchEvent(new CustomEvent('sge-global-alert', {
+        detail: { title: 'Erro em Finanças', message: 'Erro ao salvar conta: ' + err.message, type: 'error' }
+      }));
     }
   };
 
   // Delete Bank Account
   const handleDeleteBankAccount = async (id: string, name: string) => {
-    if (!confirm(`Excluir conta bancária do ${name}?`)) return;
+    if (!window.confirm(`Excluir conta bancária do ${name}?`)) return;
     try {
       await deleteDoc(doc(db, "super_admin_bank_accounts", id));
       await onAddLog("Excluir Conta Bancária", "SuperAdminBankAccount", id, `Conta do ${name} excluída.`);
       loadFinanceConfigs();
     } catch (err: any) {
-      alert("Erro ao excluir conta: " + err.message);
+      window.dispatchEvent(new CustomEvent('sge-global-alert', {
+        detail: { title: 'Erro ao Excluir Conta', message: 'Erro ao excluir conta: ' + err.message, type: 'error' }
+      }));
     }
   };
 
@@ -272,19 +276,23 @@ export function SuperAdminFinancePanel({
       setIsGatewayModalOpen(false);
       loadFinanceConfigs();
     } catch (err: any) {
-      alert("Erro ao configurar gateway: " + err.message);
+      window.dispatchEvent(new CustomEvent('sge-global-alert', {
+        detail: { title: 'Erro em Gateway', message: 'Erro ao configurar gateway: ' + err.message, type: 'error' }
+      }));
     }
   };
 
   // Delete Gateway config
   const handleDeleteGateway = async (id: string, name: string) => {
-    if (!confirm(`Excluir chaves do gateway ${name}?`)) return;
+    if (!window.confirm(`Excluir chaves do gateway ${name}?`)) return;
     try {
       await deleteDoc(doc(db, "super_admin_gateways", id));
       await onAddLog("Excluir Gateway", "SuperAdminGateway", id, `Credenciais do gateway ${name} removidas.`);
       loadFinanceConfigs();
     } catch (err: any) {
-      alert("Erro ao remover gateway: " + err.message);
+      window.dispatchEvent(new CustomEvent('sge-global-alert', {
+        detail: { title: 'Erro em Gateway', message: 'Erro ao remover gateway: ' + err.message, type: 'error' }
+      }));
     }
   };
 
@@ -679,61 +687,42 @@ export function SuperAdminFinancePanel({
                         {p.status}
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-right relative">
-                      <div className="inline-block text-left">
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
                         <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setActiveActionRowId(activeActionRowId === p.id ? null : p.id);
-                          }}
-                          className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 cursor-pointer"
+                          onClick={() => onUpdatePaymentStatus(p.id, "Pago")}
+                          className="p-1.5 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 hover:bg-emerald-100 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                          title="Marcar como Pago"
                         >
-                          <MoreVertical className="w-5 h-5" />
+                          <CheckCircle className="w-3.5 h-3.5" />
+                          <span className="hidden xl:inline text-[11px]">Pago</span>
                         </button>
-                        {activeActionRowId === p.id && (
-                          <>
-                            <div className="fixed inset-0 z-30 bg-transparent" onClick={() => setActiveActionRowId(null)} />
-                            <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xl z-40 py-1.5 text-left text-xs font-bold text-slate-700 dark:text-slate-200">
-                              <button
-                                onClick={() => {
-                                  setActiveActionRowId(null);
-                                  onUpdatePaymentStatus(p.id, "Pago");
-                                }}
-                                className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-emerald-600 flex items-center gap-2 cursor-pointer"
-                              >
-                                <CheckCircle className="w-3.5 h-3.5" /> Marcar como Pago
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setActiveActionRowId(null);
-                                  onUpdatePaymentStatus(p.id, "Pendente");
-                                }}
-                                className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-amber-600 flex items-center gap-2 cursor-pointer"
-                              >
-                                <Clock className="w-3.5 h-3.5" /> Marcar como Pendente
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setActiveActionRowId(null);
-                                  onUpdatePaymentStatus(p.id, "Atrasado");
-                                }}
-                                className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-rose-600 flex items-center gap-2 cursor-pointer"
-                              >
-                                <AlertTriangle className="w-3.5 h-3.5" /> Marcar como Atrasado
-                              </button>
-                              <div className="border-t border-slate-100 dark:border-slate-800 my-1" />
-                              <button
-                                onClick={() => {
-                                  setActiveActionRowId(null);
-                                  onDeletePayment(p.id);
-                                }}
-                                className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-rose-600 flex items-center gap-2 cursor-pointer"
-                              >
-                                <Trash2 className="w-3.5 h-3.5 text-rose-400" /> Excluir Registro
-                              </button>
-                            </div>
-                          </>
-                        )}
+
+                        <button
+                          onClick={() => onUpdatePaymentStatus(p.id, "Pendente")}
+                          className="p-1.5 bg-amber-50 dark:bg-amber-950/40 text-amber-600 hover:bg-amber-100 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                          title="Marcar como Pendente"
+                        >
+                          <Clock className="w-3.5 h-3.5" />
+                          <span className="hidden xl:inline text-[11px]">Pendente</span>
+                        </button>
+
+                        <button
+                          onClick={() => onUpdatePaymentStatus(p.id, "Atrasado")}
+                          className="p-1.5 bg-rose-50 dark:bg-rose-950/40 text-rose-600 hover:bg-rose-100 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                          title="Marcar como Atrasado"
+                        >
+                          <AlertTriangle className="w-3.5 h-3.5" />
+                          <span className="hidden xl:inline text-[11px]">Atrasado</span>
+                        </button>
+
+                        <button
+                          onClick={() => onDeletePayment(p.id)}
+                          className="p-1.5 bg-slate-100 dark:bg-slate-800 text-rose-600 hover:bg-rose-50 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                          title="Excluir Registro"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                        </button>
                       </div>
                     </td>
                   </tr>

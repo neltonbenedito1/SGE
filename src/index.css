@@ -16,6 +16,11 @@
 }
 
 @layer base {
+  /* Global Reset: ensure text elements have transparent background by default across all views */
+  p, span, h1, h2, h3, h4, h5, h6, label, p, b, strong, i, em {
+    background-color: transparent;
+  }
+
   html, body {
     zoom: 0.8;
     -webkit-text-size-adjust: 100%;
@@ -199,7 +204,7 @@
     .hover\:bg-slate-800:hover, .hover\:bg-slate-800, .bg-slate-800 {
       background-color: #1F2937 !important; /* Item Hover */
     }
-    .bg-indigo-600, .text-indigo-600 {
+    .bg-indigo-600 {
       background-color: var(--btn-primary) !important; /* Item Ativo */
       color: #FFFFFF !important;
     }
@@ -360,23 +365,23 @@
   }
 
   /* Badges */
-  .bg-emerald-100, .text-emerald-800 {
+  .bg-emerald-100 {
     background-color: #16A34A !important;
     color: #FFFFFF !important;
   }
-  .bg-red-100, .text-red-800 {
+  .bg-red-100 {
     background-color: #DC2626 !important;
     color: #FFFFFF !important;
   }
-  .bg-amber-100, .text-amber-800 {
+  .bg-amber-100 {
     background-color: #D97706 !important;
     color: #FFFFFF !important;
   }
-  .bg-indigo-100, .text-indigo-800 {
+  .bg-indigo-100 {
     background-color: #2563EB !important;
     color: #FFFFFF !important;
   }
-  .bg-slate-100, .text-slate-800 {
+  .bg-slate-100 {
     background-color: #4B5563 !important;
     color: #FFFFFF !important;
   }
@@ -417,7 +422,7 @@
     .hover\:bg-slate-800:hover, .hover\:bg-slate-800, .bg-slate-800 {
       background-color: #E5E7EB !important; /* Light Hover */
     }
-    .bg-indigo-600, .text-indigo-600 {
+    .bg-indigo-600 {
       background-color: var(--btn-primary) !important;
       color: #FFFFFF !important;
     }
@@ -650,3 +655,13 @@
   box-shadow: 0 1px 2px 0 rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15);
   background-color: #f9fafb !important;
 }
+
+/* User Selected Dark Mode Color Overrides */
+div#root:nth-of-type(1) > main:nth-of-type(1) > div#tenant_client_portal:nth-of-type(1) > main#main_content_area:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > button:nth-of-type(1) {
+  color: #f5f5f8;
+}
+
+div#root:nth-of-type(1) > main:nth-of-type(1) > div#tenant_client_portal:nth-of-type(1) > main#main_content_area:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(4) > div:nth-of-type(3) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(2) > div:nth-of-type(1) > span:nth-of-type(1) {
+  color: #ffffff;
+}
+

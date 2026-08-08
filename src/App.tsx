@@ -62,7 +62,8 @@ import {
   Server,
   Mail,
   FolderOpen,
-  DollarSign
+  DollarSign,
+  AlertTriangle
 } from 'lucide-react';
 import {
   saveUserSessionCookie,
@@ -95,12 +96,91 @@ export default function App() {
   // Non-blocking Toast notification system
   const [appNotification, setAppNotification] = useState<{ message: string; type: 'sucesso' | 'erro' | 'info' } | null>(null);
 
+  // Global JavaScript Warning / Alert Interceptor Modal State
+  const [jsPopup, setJsPopup] = useState<{ title: string; message: string; type: 'warning' | 'error' | 'info' } | null>(null);
+
   const showNotification = (message: string, type: 'sucesso' | 'erro' | 'info' = 'info') => {
     setAppNotification({ message, type });
     setTimeout(() => {
       setAppNotification(null);
     }, 4500);
   };
+
+  useEffect(() => {
+    // Intercept standard window.alert to convert to custom popup modal
+    const originalAlert = window.alert;
+    window.alert = (msg?: any) => {
+      const messageStr = typeof msg === 'object' ? JSON.stringify(msg, null, 2) : String(msg ?? '');
+      setJsPopup({
+        title: 'Aviso do Sistema (JavaScript)',
+        message: messageStr,
+        type: 'warning'
+      });
+    };
+
+    // Custom event listener for explicit JS warning popups
+    const handleGlobalJsAlert = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail) {
+        setJsPopup({
+          title: customEvent.detail.title || 'Aviso de JavaScript',
+          message: customEvent.detail.message || '',
+          type: customEvent.detail.type || 'warning'
+        });
+      }
+    };
+    window.addEventListener('sge-global-alert', handleGlobalJsAlert);
+
+    // Intercept unhandled runtime JS errors
+    const handleUncaughtError = (event: ErrorEvent) => {
+      const msg = event.message || '';
+      if (
+        msg &&
+        !msg.includes('ResizeObserver') &&
+        !msg.includes('Script error') &&
+        !msg.toLowerCase().includes('websocket') &&
+        !msg.toLowerCase().includes('ws://') &&
+        !msg.toLowerCase().includes('wss://')
+      ) {
+        console.warn('Intercepted unhandled JS Error:', msg);
+        setJsPopup({
+          title: '⚠️ Aviso de Execução JavaScript',
+          message: msg,
+          type: 'error'
+        });
+      }
+    };
+
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason?.message || event.reason;
+      if (reason && typeof reason === 'string') {
+        const reasonStr = String(reason);
+        if (
+          !reasonStr.includes('canceled') &&
+          !reasonStr.toLowerCase().includes('websocket') &&
+          !reasonStr.toLowerCase().includes('ws://') &&
+          !reasonStr.toLowerCase().includes('wss://')
+        ) {
+          console.warn('Intercepted unhandled Promise Rejection:', reasonStr);
+          setJsPopup({
+            title: '⚠️ Aviso de Operação Assíncrona (JS)',
+            message: reasonStr,
+            type: 'error'
+          });
+        }
+      }
+    };
+
+    window.addEventListener('error', handleUncaughtError);
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
+
+    return () => {
+      window.alert = originalAlert;
+      window.removeEventListener('sge-global-alert', handleGlobalJsAlert);
+      window.removeEventListener('error', handleUncaughtError);
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+    };
+  }, []);
 
   // Command Menu states
   const [isCmdMenuOpen, setIsCmdMenuOpen] = useState(false);
@@ -591,11 +671,11 @@ export default function App() {
     if (!firstLoginResetUser) return;
 
     if (newFirstPassword.length < 6) {
-      alert("A nova senha deve conter no mínimo 6 caracteres.");
+      showNotification("A nova senha deve conter no mínimo 6 caracteres.", "erro");
       return;
     }
     if (newFirstPassword !== confirmFirstPassword) {
-      alert("A confirmação de senha não coincide.");
+      showNotification("A confirmação de senha não coincide.", "erro");
       return;
     }
 
@@ -606,7 +686,7 @@ export default function App() {
         requer_alteracao_senha: false
       });
 
-      alert("Senha redefinida com sucesso! Acesso liberado.");
+      showNotification("Senha redefinida com sucesso! Acesso liberado.", "sucesso");
 
       // Set context, save cookies and proceed
       saveUserSessionCookie({
@@ -630,7 +710,7 @@ export default function App() {
       setCurrentView('tenant');
     } catch (err) {
       console.error("Error resetting temporary password:", err);
-      alert("Ocorreu um erro ao atualizar sua senha. Por favor, tente novamente.");
+      showNotification("Ocorreu um erro ao atualizar sua senha. Por favor, tente novamente.", "erro");
     }
   }
 
@@ -794,7 +874,7 @@ const clientSideCache: Record<string, any> = {
       const senha = onboardingForm.senha;
 
       if (senha.length < 6) {
-        alert("A senha de acesso deve ter no mínimo 6 caracteres.");
+        showNotification("A senha de acesso deve ter no mínimo 6 caracteres.", "erro");
         return;
       }
 
@@ -810,7 +890,7 @@ const clientSideCache: Record<string, any> = {
           const existingUsersQuery = await getDocs(query(collection(db, 'users'), where('email', '==', email_admin)));
           
           if (!existingTenantsQuery.empty || !existingUsersQuery.empty) {
-            alert("Este endereço de e-mail já está associado a uma conta ou instituição cadastrada no sistema. Por favor, aceda à página de login para entrar com as suas credenciais ou utilize outro endereço de e-mail.");
+            showNotification("Este endereço de e-mail já está associado a uma conta ou instituição cadastrada no sistema. Por favor, aceda à página de login para entrar com as suas credenciais ou utilize outro endereço de e-mail.", "erro");
             return;
           }
           
@@ -818,7 +898,7 @@ const clientSideCache: Record<string, any> = {
           userAuthId = "usr-auth-" + Math.random().toString(36).substring(2, 10);
         } else {
           console.error("Erro de autenticação no Firebase Auth:", authError);
-          alert(`Erro de autenticação: ${authError.message || 'Falha ao registrar no Firebase Auth'}`);
+          showNotification(`Erro de autenticação: ${authError.message || 'Falha ao registrar no Firebase Auth'}`, "erro");
           return;
         }
       }
@@ -903,7 +983,7 @@ const clientSideCache: Record<string, any> = {
       setPaymentStep('');
     } catch (err) {
       console.error("Error onboarding institution:", err);
-      alert("Ocorreu um erro ao configurar sua escola. Por favor, tente novamente.");
+      showNotification("Ocorreu um erro ao configurar sua escola. Por favor, tente novamente.", "erro");
     }
   }
 
@@ -978,7 +1058,7 @@ const clientSideCache: Record<string, any> = {
       setPaymentSuccess(true);
     } catch (err) {
       console.error("Erro ao processar pagamento:", err);
-      alert("Ocorreu um erro ao comunicar com a plataforma de pagamentos. Tente novamente.");
+      showNotification("Ocorreu um erro ao comunicar com a plataforma de pagamentos. Tente novamente.", "erro");
     } finally {
       setPaymentLoading(false);
     }
@@ -1648,7 +1728,7 @@ const clientSideCache: Record<string, any> = {
                               type="button"
                               onClick={() => {
                                 navigator.clipboard.writeText("00020101021126580014br.gov.bcb.pix0136696492b1-5d0c-465c-a833-bdfb1270cde15204000053039865405299.005802BR5915Nelton%20SGE6009MAPUTO62070503SGE");
-                                alert("Código Pix copiado para a área de transferência!");
+                                showNotification("Código Pix copiado para a área de transferência!", "sucesso");
                               }}
                               className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
                             >
@@ -2027,6 +2107,46 @@ const clientSideCache: Record<string, any> = {
                 Aceitar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Global JavaScript Interceptor Modal Popup */}
+      {jsPopup && (
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-md flex items-center justify-center p-4 z-[9999] animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 relative">
+            <button
+              type="button"
+              onClick={() => setJsPopup(null)}
+              className="absolute top-4 right-4 p-1.5 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <div className="flex items-center gap-3 mb-3">
+              <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
+                jsPopup.type === 'error' ? 'bg-rose-500/10 text-rose-500 border border-rose-500/20' : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
+              }`}>
+                <AlertTriangle className="w-5 h-5 stroke-[2.5]" />
+              </div>
+              <div>
+                <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full ${
+                  jsPopup.type === 'error' ? 'bg-rose-100 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400' : 'bg-amber-100 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400'
+                }`}>
+                  Aviso de JavaScript
+                </span>
+                <h3 className="text-sm font-black font-sans mt-0.5">{jsPopup.title}</h3>
+              </div>
+            </div>
+            <div className="bg-slate-50 dark:bg-slate-950/60 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 text-xs font-medium text-slate-700 dark:text-slate-300 leading-relaxed max-h-60 overflow-y-auto whitespace-pre-wrap font-mono mb-4">
+              {jsPopup.message}
+            </div>
+            <button
+              type="button"
+              onClick={() => setJsPopup(null)}
+              className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer shadow-md shadow-indigo-600/20 text-center"
+            >
+              Compreendido
+            </button>
           </div>
         </div>
       )}
