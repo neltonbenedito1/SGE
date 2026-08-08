@@ -1602,10 +1602,10 @@ export default function SuperAdminPortal({
 
       if (!qSnap.empty) {
         const userDoc = qSnap.docs[0];
-        await updateDoc(doc(db, 'users', userDoc.id), {
+        await setDoc(doc(db, 'users', userDoc.id), {
           senha: newPassword,
           senha_temporaria: newPassword
-        });
+        }, { merge: true });
       } else {
         // If the user document doesn't exist yet, we can create it
         const newUserId = `user-admin-${selectedTenantForPasswordReset.id}`;

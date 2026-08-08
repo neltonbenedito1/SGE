@@ -158,20 +158,23 @@ export const ValidarPresencaModal: React.FC<ValidarPresencaModalProps> = ({
   // Helper to check agenda for today
   const evaluatePersonAgenda = (person: any, tipo: 'estudante' | 'docente') => {
     const todayName = getTodayDayName().toLowerCase();
+    const todayShort = todayName.split('-')[0].trim();
 
     if (tipo === 'estudante') {
       const turmaId = person?.turma_id || '';
-      if (!turmaId) return { hasAgenda: false, agendaClasses: [] };
+      if (!turmaId) return { hasAgenda: true, agendaClasses: [] };
 
       const matchedClasses = classes.filter(c => {
         if (c.turma_id !== turmaId) return false;
         const classDay = (c.dia_semana || c.data || '').toLowerCase();
-        return classDay.includes(todayName) || todayName.includes(classDay);
+        if (!classDay) return true;
+        return classDay.includes(todayShort) || todayShort.includes(classDay) || classDay.includes(todayName);
       });
 
+      const turmaClasses = classes.filter(c => c.turma_id === turmaId);
       return {
-        hasAgenda: matchedClasses.length > 0,
-        agendaClasses: matchedClasses
+        hasAgenda: true,
+        agendaClasses: matchedClasses.length > 0 ? matchedClasses : turmaClasses
       };
     } else {
       // docente / funcionario
@@ -179,11 +182,12 @@ export const ValidarPresencaModal: React.FC<ValidarPresencaModalProps> = ({
       const matchedClasses = classes.filter(c => {
         if (c.docente_id !== teacherId) return false;
         const classDay = (c.dia_semana || c.data || '').toLowerCase();
-        return classDay.includes(todayName) || todayName.includes(classDay);
+        if (!classDay) return true;
+        return classDay.includes(todayShort) || todayShort.includes(classDay) || classDay.includes(todayName);
       });
 
       return {
-        hasAgenda: matchedClasses.length > 0,
+        hasAgenda: true,
         agendaClasses: matchedClasses
       };
     }
@@ -268,11 +272,14 @@ export const ValidarPresencaModal: React.FC<ValidarPresencaModalProps> = ({
         return;
       }
 
-      const rawCode = (parsed.matricula || parsed.student_id || parsed.registro_id || parsed.code || '').toString().toLowerCase().trim();
+      const rawCode = (parsed.student_id || parsed.id || parsed.matricula || parsed.registro_id || parsed.user_id || parsed.code || '').toString().toLowerCase().trim();
       
       const matchedStudent = students.find(s => 
-        s.id.toLowerCase() === rawCode || 
-        (s.numero_matricula || '').toLowerCase() === rawCode ||
+        (s.id && s.id.toLowerCase() === rawCode) || 
+        (s.numero_matricula && s.numero_matricula.toLowerCase() === rawCode) ||
+        (s.user_id && s.user_id.toLowerCase() === rawCode) ||
+        (s.id && parsed.student_id && s.id === parsed.student_id) ||
+        (s.numero_matricula && parsed.matricula && s.numero_matricula.toLowerCase() === (parsed.matricula || '').toLowerCase()) ||
         (s.qr_code_data && s.qr_code_data.includes(rawCode))
       );
 
@@ -282,8 +289,8 @@ export const ValidarPresencaModal: React.FC<ValidarPresencaModalProps> = ({
       );
 
       if (matchedStudent) {
-        if (!matchedStudent.ativo) {
-          setScanResultMsg({ type: 'erro', msg: `❌ Estudante ${matchedStudent.nome || 'Inativo'} está desativado no sistema.` });
+        if (matchedStudent.ativo === false || matchedStudent.cracha_inutilizado === true) {
+          setScanResultMsg({ type: 'erro', msg: `❌ CRACHÁ INUTILIZADO: O estudante ${matchedStudent.nome || ''} encontra-se suspenso ou inativo no sistema.` });
           setIsProcessing(false);
           return;
         }
@@ -354,8 +361,8 @@ export const ValidarPresencaModal: React.FC<ValidarPresencaModalProps> = ({
     );
 
     if (studentMatch) {
-      if (!studentMatch.ativo) {
-        setScanResultMsg({ type: 'erro', msg: '❌ O estudante selecionado está inativo no sistema.' });
+      if (studentMatch.ativo === false || studentMatch.cracha_inutilizado === true) {
+        setScanResultMsg({ type: 'erro', msg: '❌ CRACHÁ INUTILIZADO: O estudante encontra-se suspenso ou inativo no sistema.' });
         setIsProcessing(false);
         return;
       }

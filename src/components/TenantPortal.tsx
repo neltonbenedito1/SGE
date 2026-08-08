@@ -117,6 +117,7 @@ import {
   ShieldCheck,
   Upload,
   IdCard,
+  Receipt,
   Fingerprint,
   QrCode,
   Camera,
@@ -876,6 +877,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   });
   const [faturaSearch, setFaturaSearch] = useState('');
   const [faturaStatusFilter, setFaturaStatusFilter] = useState<'todos' | 'Pago' | 'Pendente' | 'Atrasado'>('todos');
+  const [faturasTab, setFaturasTab] = useState<'faturas' | 'estudantes_facturados'>('faturas');
 
   const filteredStudents = useMemo(() => {
     let base = rawStudents;
@@ -2332,7 +2334,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             isDestructive: true,
             onClick: async () => {
               try {
-                await updateDoc(doc(db, 'users', target.id), { ativo: !target.ativo });
+                await setDoc(doc(db, 'users', target.id), { ativo: !target.ativo }, { merge: true });
                 showSystemNotification(`Usuário ${target.ativo ? 'desativado' : 'ativado'}.`, 'sucesso');
                 loadTenantContext();
               } catch (e) {}
@@ -4471,16 +4473,41 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           <span className="hidden xl:inline text-[11px]">Processo</span>
         </button>
 
-        <button
-          onClick={() => {
-            setCrachaStudent(s);
-          }}
-          className="p-1.5 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
-          title="Gerar Crachá"
-        >
-          <IdCard className="w-3.5 h-3.5 text-emerald-400" />
-          <span className="hidden xl:inline text-[11px]">Crachá</span>
-        </button>
+        {s.cracha_gerado ? (
+          <button
+            onClick={() => {
+              setCrachaStudent(s);
+            }}
+            className="p-1.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+            title="Ver Crachá"
+          >
+            <IdCard className="w-3.5 h-3.5 text-indigo-500" />
+          </button>
+        ) : (
+          <button
+            onClick={async () => {
+              try {
+                await setDoc(doc(db, 'estudantes', s.id), {
+                  cracha_gerado: true,
+                  cracha_gerado_em: new Date().toISOString(),
+                  cracha_inutilizado: s.ativo === false
+                }, { merge: true });
+                showSystemNotification(`Crachá do estudante ${usr?.nome || ''} gerado e gravado no banco de dados.`, 'sucesso');
+                s.cracha_gerado = true;
+                setCrachaStudent(s);
+                loadTenantContext();
+              } catch (err: any) {
+                console.error("Erro ao gravar crachá:", err);
+                setCrachaStudent(s);
+              }
+            }}
+            className="p-1.5 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+            title="Gerar Crachá"
+          >
+            <IdCard className="w-3.5 h-3.5 text-emerald-500" />
+            <span className="hidden xl:inline text-[11px]">Gerar Crachá</span>
+          </button>
+        )}
 
         {hasPermission('estudantes', 'editar') && !isDeactivated && (
           <button
@@ -5521,11 +5548,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         if (editingItem) {
           // Edit teacher
           const teacherDoc = doc(db, 'docentes', editingItem.id);
-          await updateDoc(teacherDoc, {
+          await setDoc(teacherDoc, {
             escola_id: teacherForm.escola_id,
             especialidade: teacherForm.especialidade,
             numero_registro: teacherForm.numero_registro
-          });
+          }, { merge: true });
+          if (editingItem.user_id) {
+            await setDoc(doc(db, 'users', editingItem.user_id), {
+              nome: teacherForm.nome,
+              email: teacherForm.email
+            }, { merge: true });
+          }
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
@@ -5624,7 +5657,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         }
 
         if (editingItem) {
-          await updateDoc(doc(db, 'estudantes', editingItem.id), {
+          await setDoc(doc(db, 'estudantes', editingItem.id), {
             escola_id: studentForm.escola_id || '',
             turma_id: studentForm.turma_id || '',
             numero_matricula: studentForm.numero_matricula || '',
@@ -5636,12 +5669,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             foto_url: studentForm.foto_url || '',
             usuario_sistema: !!studentForm.usuario_sistema,
             senha_temporaria: studentForm.usuario_sistema ? (studentForm.senha_temporaria || '') : '',
-          });
+          }, { merge: true });
           if (editingItem.user_id) {
-            await updateDoc(doc(db, 'users', editingItem.user_id), {
+            await setDoc(doc(db, 'users', editingItem.user_id), {
               nome: studentForm.nome,
               email: (studentForm.email || `${studentForm.numero_matricula.toLowerCase()}@escola.edu`).trim().toLowerCase()
-            });
+            }, { merge: true });
           }
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
@@ -6351,7 +6384,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
         const userPwd = userForm.senha_temporaria || '12345678';
         if (editingItem) {
-          await updateDoc(doc(db, 'users', editingItem.id), {
+          await setDoc(doc(db, 'users', editingItem.id), {
             email: cleanedUserEmail,
             nome: userForm.nome,
             tipo: userForm.tipo,
@@ -6360,7 +6393,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             foto_url: userForm.foto_url || '',
             senha: userPwd,
             senha_temporaria: userPwd
-          });
+          }, { merge: true });
           if (cleanedUserEmail) {
             await registerUserInFirebaseAuth(cleanedUserEmail, userPwd);
           }
@@ -9056,16 +9089,6 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       >
                         <DollarSign className="w-4 h-4" /> Facturação & Mensalidades
                       </button>
-                      <button
-                        onClick={() => setStudentSubTab('smtp')}
-                        className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${studentSubTab === 'smtp' ? 'bg-white shadow-sm text-indigo-600 font-extrabold' : 'text-slate-600 hover:text-slate-900'}`}
-                      >
-                        <Send className="w-4 h-4" /> Configuração de SMTP {(tenantSmtpConfig?.status === 'ativo' || globalSmtpConfig?.status === 'ativo') ? (
-                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                        ) : (
-                          <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-                        )}
-                      </button>
                     </div>
 
                     {studentSubTab === 'lista' && (
@@ -9342,409 +9365,347 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         </div>
                       </div>
 
-                      {/* Controls and Search */}
-                      <div className="flex flex-wrap items-center justify-between gap-4">
-                        <div className="flex flex-1 items-center gap-2 max-w-md bg-slate-50 dark:bg-slate-900 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800">
-                          <Search className="w-4 h-4 text-slate-400" />
-                          <input
-                            type="text"
-                            placeholder="Pesquisar por aluno, matrícula ou descrição..."
-                            value={faturaSearch}
-                            onChange={(e) => setFaturaSearch(e.target.value)}
-                            className="bg-transparent border-none text-xs w-full text-slate-800 dark:text-white focus:outline-none"
-                          />
-                        </div>
-
-                        <div className="flex items-center gap-3">
-                          <select
-                            value={faturaStatusFilter}
-                            onChange={(e: any) => setFaturaStatusFilter(e.target.value)}
-                            className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold px-3 py-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
-                          >
-                            <option value="todos">Todos os Estados</option>
-                            <option value="Pago">Pago</option>
-                            <option value="Pendente">Pendente</option>
-                            <option value="Atrasado">Em Atraso</option>
-                          </select>
-
-                          {hasPermission('estudantes', 'editar') && (
-                            <button
-                              onClick={() => {
-                                setFaturaForm({
-                                  estudante_id: students[0]?.id || '',
-                                  escola_id: students[0]?.escola_id || schools[0]?.id || '',
-                                  turma_id: students[0]?.turma_id || turmas[0]?.id || '',
-                                  descricao: 'Mensalidade Escolar',
-                                  valor: 3500,
-                                  data_vencimento: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-                                });
-                                setIsFaturaModalOpen(true);
-                              }}
-                              className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer transition-all"
-                            >
-                              <Plus className="w-4 h-4" /> Nova Factura
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Faturas List Table */}
-                      <div className="overflow-x-auto rounded-2xl border border-slate-100 dark:border-slate-800">
-                        <table className="w-full text-left text-xs">
-                          <thead className="bg-slate-50 dark:bg-slate-900 text-slate-500 uppercase font-black text-[10px]">
-                            <tr>
-                              <th className="px-6 py-3">Estudante</th>
-                              <th className="px-6 py-3">Descrição / Lançamento</th>
-                              <th className="px-6 py-3">Valor</th>
-                              <th className="px-6 py-3">Data de Vencimento</th>
-                              <th className="px-6 py-3">Estado</th>
-                              <th className="px-6 py-3 text-right sticky right-0 bg-slate-50 dark:bg-slate-900 z-10">Ações</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                            {studentFaturas
-                              .filter(f => {
-                                const stud = students.find(s => s.id === f.estudante_id);
-                                const usr = stud ? tenantUsers.find(u => u.id === stud.user_id) : null;
-                                const studentName = usr?.nome || '';
-                                const matchSearch = studentName.toLowerCase().includes(faturaSearch.toLowerCase()) || f.descricao.toLowerCase().includes(faturaSearch.toLowerCase()) || (stud?.numero_matricula || '').toLowerCase().includes(faturaSearch.toLowerCase());
-                                const matchStatus = faturaStatusFilter === 'todos' || f.status === faturaStatusFilter;
-                                return matchSearch && matchStatus;
-                              })
-                              .map(f => {
-                                const stud = students.find(s => s.id === f.estudante_id);
-                                const usr = stud ? tenantUsers.find(u => u.id === stud.user_id) : null;
-                                return (
-                                  <tr key={f.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/50">
-                                    <td className="px-6 py-4">
-                                      <p className="font-bold text-slate-900 dark:text-white">{usr?.nome || 'Estudante'}</p>
-                                      <p className="text-[10px] text-slate-500">MAT: {stud?.numero_matricula || 'N/A'}</p>
-                                    </td>
-                                    <td className="px-6 py-4 font-medium text-slate-700 dark:text-slate-300">{f.descricao}</td>
-                                    <td className="px-6 py-4 font-bold text-slate-900 dark:text-white">
-                                      {f.valor.toLocaleString('pt-MZ', { style: 'currency', currency: 'MZN' })}
-                                    </td>
-                                    <td className="px-6 py-4 text-slate-500">{new Date(f.data_vencimento).toLocaleDateString('pt-BR')}</td>
-                                    <td className="px-6 py-4">
-                                      <span className={`inline-flex items-center px-2 py-1 rounded-full text-[10px] font-black ${
-                                        f.status === 'Pago' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400' :
-                                        f.status === 'Pendente' ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/20 dark:text-amber-400' :
-                                        'bg-rose-50 text-rose-700 dark:bg-rose-950/20 dark:text-rose-400'
-                                      }`}>
-                                        {f.status}
-                                      </span>
-                                    </td>
-                                    <td className="px-6 py-4 text-right sticky right-0 bg-white dark:bg-slate-900 z-10">
-                                      <div className="flex gap-1.5 justify-end">
-                                        {f.status !== 'Pago' && hasPermission('estudantes', 'editar') && (
-                                          <>
-                                            <button
-                                              onClick={async () => {
-                                                try {
-                                                  // System notification for administrators
-                                                  await addDoc(collection(db, 'notificacoes'), {
-                                                    destinatario_id: 'todos',
-                                                    titulo: '⚠️ Alerta de Prazo de Mensalidade',
-                                                    mensagem: `A fatura "${f.descricao}" do estudante ${usr?.nome} está pendente no valor de ${f.valor.toLocaleString('pt-MZ', { style: 'currency', currency: 'MZN' })}.`,
-                                                    tipo: 'alerta',
-                                                    lido: false,
-                                                    created_at: new Date().toISOString()
-                                                  });
-
-                                                  // System notification for student if user ID is active
-                                                  if (stud?.user_id) {
-                                                    await addDoc(collection(db, 'notificacoes'), {
-                                                      destinatario_id: stud.user_id,
-                                                      titulo: '⏳ Vencimento de Mensalidade Escolar',
-                                                      mensagem: `A sua mensalidade "${f.descricao}" no valor de ${f.valor.toLocaleString('pt-MZ', { style: 'currency', currency: 'MZN' })} está próxima do vencimento (${new Date(f.data_vencimento).toLocaleDateString('pt-BR')}). Por favor regularize o pagamento.`,
-                                                      tipo: 'alerta',
-                                                      lido: false,
-                                                      created_at: new Date().toISOString()
-                                                    });
-                                                  }
-
-                                                  // Email notification to parent / student
-                                                  await queueOrSendEmail(
-                                                    usr?.email || 'geral@escola.ac.mz',
-                                                    '⏳ Lembrete de Pagamento de Mensalidade - SGE',
-                                                    `Prezado Encarregado / Estudante,\n\nRelembramos que a mensalidade escolar "${f.descricao}" do aluno ${usr?.nome || 'Estudante'} com vencimento em ${new Date(f.data_vencimento).toLocaleDateString('pt-BR')} no valor de ${f.valor.toLocaleString('pt-MZ', { style: 'currency', currency: 'MZN' })} está aguardando pagamento.\n\nPor favor, efetue o pagamento para regularizar a situação financeira.\n\nAtenciosamente,\nDireção Financeira`
-                                                  );
-
-                                                  // Show 6-second popup notification (Rule 3)
-                                                  const popup = document.createElement('div');
-                                                  popup.className = 'fixed bottom-5 right-5 bg-indigo-600 text-white font-bold text-xs px-4 py-3 rounded-xl shadow-2xl border border-indigo-500 z-50 flex items-center gap-2 animate-bounce';
-                                                  popup.innerHTML = `✅ Alertas de prazo enviados para administrador, estudante e encarregado!`;
-                                                  document.body.appendChild(popup);
-                                                  setTimeout(() => popup.remove(), 6000);
-
-                                                } catch (err: any) {
-                                                  alert("Erro ao enviar lembretes: " + err.message);
-                                                }
-                                              }}
-                                              className="bg-amber-600 hover:bg-amber-500 text-white font-extrabold text-[10px] px-2.5 py-1.5 rounded-lg flex items-center gap-1 cursor-pointer"
-                                              title="Enviar alertas de vencimento para estudante, encarregado e administrador"
-                                            >
-                                              <Bell className="w-3 h-3" /> Notificar Prazo
-                                            </button>
-
-                                            <button
-                                              onClick={async () => {
-                                                try {
-                                                  await updateDoc(doc(db, 'faturas_estudantes', f.id!), {
-                                                    status: 'Pago',
-                                                    pago_em: new Date().toISOString()
-                                                  });
-                                                  await tenantAuditLog(
-                                                    "Confirmar Pagamento",
-                                                    "FaturaEstudante",
-                                                    f.id!,
-                                                    `Pagamento confirmado para factura "${f.descricao}" no valor de MZN ${f.valor}.`
-                                                  );
-
-                                                  // Send email receipt notification (Rule 6.1)
-                                                  await queueOrSendEmail(
-                                                    usr?.email || 'geral@escola.ac.mz',
-                                                    '🧾 Recibo de Pagamento - SGE',
-                                                    `Estimado encarregado,\n\nConfirmamos com sucesso a receção do pagamento da factura "${f.descricao}" no valor de ${f.valor.toLocaleString('pt-MZ', { style: 'currency', currency: 'MZN' })} para o aluno ${usr?.nome}.\n\nObrigado pela sua colaboração.\nAtenciosamente,\nSecretaria Académica`
-                                                  );
-
-                                                  loadTenantContext();
-                                                } catch (err: any) {
-                                                  alert("Erro ao confirmar pagamento: " + err.message);
-                                                }
-                                              }}
-                                              className="bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[10px] px-2.5 py-1.5 rounded-lg flex items-center gap-1 cursor-pointer"
-                                            >
-                                              <Check className="w-3 h-3" /> Confirmar Pagamento
-                                            </button>
-                                          </>
-                                        )}
-                                      </div>
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* SUBTAB: CONFIGURAÇÃO DE SMTP */}
-                  {studentSubTab === 'smtp' && (
-                    <div className="space-y-6 animate-in fade-in duration-200 max-w-3xl text-slate-800">
-                      {/* Active Status Header */}
-                      <div className="p-5 rounded-2xl border flex items-center justify-between gap-4 bg-slate-50 dark:bg-slate-900 border-slate-100 dark:border-slate-800">
-                        <div className="flex items-center gap-3">
-                          <div className={`p-3 rounded-full ${
-                            (tenantSmtpConfig?.status === 'ativo' || globalSmtpConfig?.status === 'ativo') ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/20' : 'bg-rose-50 text-rose-600 dark:bg-rose-950/20'
-                          }`}>
-                            <Send className="w-6 h-6 animate-pulse" />
-                          </div>
-                          <div>
-                            <h4 className="font-bold text-slate-800 dark:text-white text-sm">Estado do Servidor de Email (SMTP)</h4>
-                            <p className="text-xs text-slate-500 mt-1">
-                              {(tenantSmtpConfig?.status === 'ativo') ? (
-                                <>Customizado da Escola Ativo: <span className="font-mono text-indigo-600 font-extrabold">{tenantSmtpConfig.host}:{tenantSmtpConfig.port}</span></>
-                              ) : (globalSmtpConfig?.status === 'ativo') ? (
-                                <>Fallback Global Ativo: <span className="font-mono text-indigo-600 font-extrabold">{globalSmtpConfig.host}:{globalSmtpConfig.port}</span></>
-                              ) : (
-                                <span className="text-rose-600 font-bold">⚠️ Atenção: Nenhum SMTP ativo. Os e-mails serão retidos em fila pendente.</span>
-                              )}
-                            </p>
-                          </div>
-                        </div>
-                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase ${
-                          (tenantSmtpConfig?.status === 'ativo' || globalSmtpConfig?.status === 'ativo') ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
-                        }`}>
-                          {(tenantSmtpConfig?.status === 'ativo' || globalSmtpConfig?.status === 'ativo') ? 'Serviço Ativo' : 'Offline'}
-                        </span>
-                      </div>
-
-                      {/* SMTP Custom Config Form */}
-                      <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-4">
-                        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                          <h4 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-2">
-                            <Settings className="w-4 h-4 text-indigo-600" /> Servidor SMTP Customizado da Escola
-                          </h4>
-                          <span className="text-[10px] text-slate-500 font-medium">Configure as credenciais exclusivas do seu domínio</span>
-                        </div>
-
-                        <form
-                          onSubmit={async (e) => {
-                            e.preventDefault();
-                            const formData = new FormData(e.currentTarget);
-                            const host = formData.get('host') as string;
-                            const port = Number(formData.get('port'));
-                            const username = formData.get('username') as string;
-                            const security = formData.get('security') as string;
-                            const status = formData.get('status') as string;
-
-                            const updatedConfig = {
-                              tenant_id: currentTenantId,
-                              host,
-                              port,
-                              username,
-                              password: '•-custom-password-••', // Secured end-to-end (Rule 3)
-                              security,
-                              status
-                            };
-
-                            try {
-                              if (tenantSmtpConfig?.id) {
-                                await updateDoc(doc(db, 'smtp_configs', tenantSmtpConfig.id), updatedConfig);
-                              } else {
-                                await addDoc(collection(db, 'smtp_configs'), updatedConfig);
-                              }
-                              await tenantAuditLog(
-                                "Atualizar SMTP",
-                                "SmtpConfig",
-                                currentTenantId,
-                                `Servidor SMTP atualizado para ${host}:${port}.`
-                              );
-
-                              // Trigger 6-second popup notification (Rule 3)
-                              const popup = document.createElement('div');
-                              popup.className = 'fixed bottom-5 right-5 bg-emerald-600 text-white font-bold text-xs px-4 py-3 rounded-xl shadow-2xl border border-emerald-500 z-50 flex items-center gap-2 animate-bounce';
-                              popup.innerHTML = `✅ SMTP configurado e salvo com sucesso!`;
-                              document.body.appendChild(popup);
-                              setTimeout(() => popup.remove(), 6000);
-
-                              loadTenantContext();
-                            } catch (err: any) {
-                              alert("Erro ao salvar configuração: " + err.message);
-                            }
-                          }}
-                          className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs"
+                      {/* Sub-tab Navigation for Facturação */}
+                      <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
+                        <button
+                          onClick={() => setFaturasTab('faturas')}
+                          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                            faturasTab === 'faturas'
+                              ? 'bg-indigo-600 text-white shadow-xs'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300'
+                          }`}
                         >
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-500 mb-1">Servidor Host (ex: smtp.gmail.com)</label>
-                            <input
-                              type="text"
-                              name="host"
-                              required
-                              defaultValue={tenantSmtpConfig?.host || ''}
-                              className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-500 mb-1">Porta SMTP (ex: 465 ou 587)</label>
-                            <input
-                              type="number"
-                              name="port"
-                              required
-                              defaultValue={tenantSmtpConfig?.port || 587}
-                              className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-500 mb-1">Utilizador / E-mail</label>
-                            <input
-                              type="email"
-                              name="username"
-                              required
-                              defaultValue={(tenantSmtpConfig as any)?.username || ''}
-                              className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-500 mb-1">Palavra-passe (Criptografia Ponto-a-Ponto)</label>
-                            <input
-                              type="password"
-                              name="password"
-                              placeholder="••••••••••••••••"
-                              className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-500 mb-1">Protocolo de Segurança</label>
-                            <select
-                              name="security"
-                              defaultValue={(tenantSmtpConfig as any)?.security || 'STARTTLS'}
-                              className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                            >
-                              <option value="PLAIN">Nenhum (PLAIN)</option>
-                              <option value="SSL/TLS">SSL / TLS</option>
-                              <option value="STARTTLS">STARTTLS</option>
-                            </select>
-                          </div>
-
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-500 mb-1">Estado de Ativação</label>
-                            <select
-                              name="status"
-                              defaultValue={tenantSmtpConfig?.status || 'inativo'}
-                              className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                            >
-                              <option value="ativo">Ativo (Usar este servidor)</option>
-                              <option value="inativo">Inativo (Usar servidor global fallback)</option>
-                            </select>
-                          </div>
-
-                          <div className="md:col-span-2 pt-2 text-right">
-                            <button
-                              type="submit"
-                              className="bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs px-5 py-2.5 rounded-xl cursor-pointer shadow-sm transition-all inline-flex items-center gap-1.5"
-                            >
-                              <Check className="w-4 h-4" /> Salvar Configurações
-                            </button>
-                          </div>
-                        </form>
+                          <Receipt className="w-3.5 h-3.5" />
+                          Facturas Emitidas
+                        </button>
+                        <button
+                          onClick={() => setFaturasTab('estudantes_facturados')}
+                          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                            faturasTab === 'estudantes_facturados'
+                              ? 'bg-indigo-600 text-white shadow-xs'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300'
+                          }`}
+                        >
+                          <GraduationCap className="w-3.5 h-3.5" />
+                          Estudantes Facturados ({students.filter(s => s.faturado || true).length})
+                        </button>
                       </div>
 
-                      {/* Pending email log queue display */}
-                      <div className="bg-slate-50 dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-4">
-                        <div className="flex items-center justify-between">
-                          <h4 className="font-bold text-slate-800 dark:text-white text-xs">Fila de Transmissão de E-mails ({pendingEmails.length} na fila)</h4>
-                          <span className="text-[10px] text-slate-500">Exibindo histórico de envio e status de entrega</span>
-                        </div>
+                      {faturasTab === 'faturas' && (
+                        <>
+                          {/* Controls and Search */}
+                          <div className="flex flex-wrap items-center justify-between gap-4">
+                            <div className="flex flex-1 items-center gap-2 max-w-md bg-slate-50 dark:bg-slate-900 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800">
+                              <Search className="w-4 h-4 text-slate-400" />
+                              <input
+                                type="text"
+                                placeholder="Pesquisar por aluno, matrícula ou descrição..."
+                                value={faturaSearch}
+                                onChange={(e) => setFaturaSearch(e.target.value)}
+                                className="bg-transparent border-none text-xs w-full text-slate-800 dark:text-white focus:outline-none"
+                              />
+                            </div>
 
-                        <div className="overflow-x-auto rounded-xl border border-slate-150 bg-white dark:bg-slate-950">
-                          <table className="w-full text-left text-[11px]">
-                            <thead className="bg-slate-50 dark:bg-slate-900 text-slate-500 uppercase font-black text-[9px]">
-                              <tr>
-                                <th className="px-4 py-2">Destinatário</th>
-                                <th className="px-4 py-2">Assunto</th>
-                                <th className="px-4 py-2">Criado em</th>
-                                <th className="px-4 py-2">Status</th>
-                                <th className="px-4 py-2">Servidor SMTP</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
-                              {pendingEmails.map(e => (
-                                <tr key={e.id}>
-                                  <td className="px-4 py-2 text-slate-900 dark:text-white">{e.to}</td>
-                                  <td className="px-4 py-2 text-slate-600 dark:text-slate-400">{e.subject}</td>
-                                  <td className="px-4 py-2 text-slate-500">{new Date(e.created_at).toLocaleString('pt-BR')}</td>
-                                  <td className="px-4 py-2">
-                                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-black ${
-                                      e.status === 'enviado' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20' : 'bg-amber-50 text-amber-700 dark:bg-amber-950/20'
-                                    }`}>
-                                      {e.status}
-                                    </span>
-                                  </td>
-                                  <td className="px-4 py-2 font-mono text-slate-500 uppercase">{e.smtp_provider || 'nenhum'}</td>
-                                </tr>
-                              ))}
-                              {pendingEmails.length === 0 && (
-                                <tr>
-                                  <td colSpan={5} className="text-center py-6 text-slate-400">Nenhum email na fila de transmissão.</td>
-                                </tr>
+                            <div className="flex items-center gap-3">
+                              <select
+                                value={faturaStatusFilter}
+                                onChange={(e: any) => setFaturaStatusFilter(e.target.value)}
+                                className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold px-3 py-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                              >
+                                <option value="todos">Todos os Estados</option>
+                                <option value="Pago">Pago</option>
+                                <option value="Pendente">Pendente</option>
+                                <option value="Atrasado">Em Atraso</option>
+                              </select>
+
+                              {hasPermission('estudantes', 'editar') && (
+                                <button
+                                  onClick={() => {
+                                    setFaturaForm({
+                                      estudante_id: students[0]?.id || '',
+                                      escola_id: students[0]?.escola_id || schools[0]?.id || '',
+                                      turma_id: students[0]?.turma_id || turmas[0]?.id || '',
+                                      descricao: 'Mensalidade Escolar',
+                                      valor: 3500,
+                                      data_vencimento: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+                                    });
+                                    setIsFaturaModalOpen(true);
+                                  }}
+                                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer transition-all"
+                                >
+                                  <Plus className="w-4 h-4" /> Nova Factura
+                                </button>
                               )}
-                            </tbody>
-                          </table>
+                            </div>
+                          </div>
+
+                          {/* Faturas List Table */}
+                          <div className="overflow-x-auto rounded-2xl border border-slate-100 dark:border-slate-800">
+                            <table className="w-full text-left text-xs">
+                              <thead className="bg-slate-50 dark:bg-slate-900 text-slate-500 uppercase font-black text-[10px]">
+                                <tr>
+                                  <th className="px-6 py-3">Estudante</th>
+                                  <th className="px-6 py-3">Descrição / Lançamento</th>
+                                  <th className="px-6 py-3">Valor</th>
+                                  <th className="px-6 py-3">Data de Vencimento</th>
+                                  <th className="px-6 py-3">Estado</th>
+                                  <th className="px-6 py-3 text-right sticky right-0 bg-slate-50 dark:bg-slate-900 z-10">Ações</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                {studentFaturas
+                                  .filter(f => {
+                                    const stud = students.find(s => s.id === f.estudante_id);
+                                    const usr = stud ? tenantUsers.find(u => u.id === stud.user_id) : null;
+                                    const studentName = usr?.nome || '';
+                                    const matchSearch = studentName.toLowerCase().includes(faturaSearch.toLowerCase()) || f.descricao.toLowerCase().includes(faturaSearch.toLowerCase()) || (stud?.numero_matricula || '').toLowerCase().includes(faturaSearch.toLowerCase());
+                                    const matchStatus = faturaStatusFilter === 'todos' || f.status === faturaStatusFilter;
+                                    return matchSearch && matchStatus;
+                                  })
+                                  .map(f => {
+                                    const stud = students.find(s => s.id === f.estudante_id);
+                                    const usr = stud ? tenantUsers.find(u => u.id === stud.user_id) : null;
+                                    return (
+                                      <tr key={f.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/50">
+                                        <td className="px-6 py-4">
+                                          <p className="font-bold text-slate-900 dark:text-white">{usr?.nome || 'Estudante'}</p>
+                                          <p className="text-[10px] text-slate-500">MAT: {stud?.numero_matricula || 'N/A'}</p>
+                                        </td>
+                                        <td className="px-6 py-4 font-medium text-slate-700 dark:text-slate-300">{f.descricao}</td>
+                                        <td className="px-6 py-4 font-bold text-slate-900 dark:text-white">
+                                          {f.valor.toLocaleString('pt-MZ', { style: 'currency', currency: 'MZN' })}
+                                        </td>
+                                        <td className="px-6 py-4 text-slate-500">{new Date(f.data_vencimento).toLocaleDateString('pt-BR')}</td>
+                                        <td className="px-6 py-4">
+                                          <span className={`inline-flex items-center px-2 py-1 rounded-full text-[10px] font-black ${
+                                            f.status === 'Pago' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400' :
+                                            f.status === 'Pendente' ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/20 dark:text-amber-400' :
+                                            'bg-rose-50 text-rose-700 dark:bg-rose-950/20 dark:text-rose-400'
+                                          }`}>
+                                            {f.status}
+                                          </span>
+                                        </td>
+                                        <td className="px-6 py-4 text-right sticky right-0 bg-white dark:bg-slate-900 z-10">
+                                          <div className="flex gap-1.5 justify-end">
+                                            {f.status !== 'Pago' && hasPermission('estudantes', 'editar') && (
+                                              <>
+                                                <button
+                                                  onClick={async () => {
+                                                    try {
+                                                      await addDoc(collection(db, 'notificacoes'), {
+                                                        destinatario_id: 'todos',
+                                                        titulo: '⚠️ Alerta de Prazo de Mensalidade',
+                                                        mensagem: `A fatura "${f.descricao}" do estudante ${usr?.nome} está pendente no valor de ${f.valor.toLocaleString('pt-MZ', { style: 'currency', currency: 'MZN' })}.`,
+                                                        tipo: 'alerta',
+                                                        lido: false,
+                                                        created_at: new Date().toISOString()
+                                                      });
+
+                                                      if (stud?.user_id) {
+                                                        await addDoc(collection(db, 'notificacoes'), {
+                                                          destinatario_id: stud.user_id,
+                                                          titulo: '⏳ Vencimento de Mensalidade Escolar',
+                                                          mensagem: `A sua mensalidade "${f.descricao}" no valor de ${f.valor.toLocaleString('pt-MZ', { style: 'currency', currency: 'MZN' })} está próxima do vencimento (${new Date(f.data_vencimento).toLocaleDateString('pt-BR')}). Por favor regularize o pagamento.`,
+                                                          tipo: 'alerta',
+                                                          lido: false,
+                                                          created_at: new Date().toISOString()
+                                                        });
+                                                      }
+
+                                                      await queueOrSendEmail(
+                                                        usr?.email || 'geral@escola.ac.mz',
+                                                        '⏳ Lembrete de Pagamento de Mensalidade - SGE',
+                                                        `Prezado Encarregado / Estudante,\n\nRelembramos que a mensalidade escolar "${f.descricao}" do aluno ${usr?.nome || 'Estudante'} com vencimento em ${new Date(f.data_vencimento).toLocaleDateString('pt-BR')} no valor de ${f.valor.toLocaleString('pt-MZ', { style: 'currency', currency: 'MZN' })} está aguardando pagamento.\n\nPor favor, efetue o pagamento para regularizar a situação financeira.\n\nAtenciosamente,\nDireção Financeira`
+                                                      );
+
+                                                      const popup = document.createElement('div');
+                                                      popup.className = 'fixed bottom-5 right-5 bg-indigo-600 text-white font-bold text-xs px-4 py-3 rounded-xl shadow-2xl border border-indigo-500 z-50 flex items-center gap-2 animate-bounce';
+                                                      popup.innerHTML = `✅ Alertas de prazo enviados para administrador, estudante e encarregado!`;
+                                                      document.body.appendChild(popup);
+                                                      setTimeout(() => popup.remove(), 6000);
+
+                                                    } catch (err: any) {
+                                                      alert("Erro ao enviar lembretes: " + err.message);
+                                                    }
+                                                  }}
+                                                  className="bg-amber-600 hover:bg-amber-500 text-white font-extrabold text-[10px] px-2.5 py-1.5 rounded-lg flex items-center gap-1 cursor-pointer"
+                                                  title="Enviar alertas de vencimento para estudante, encarregado e administrador"
+                                                >
+                                                  <Bell className="w-3 h-3" /> Notificar Prazo
+                                                </button>
+
+                                                <button
+                                                  onClick={async () => {
+                                                    try {
+                                                      await setDoc(doc(db, 'faturas_estudantes', f.id!), {
+                                                        status: 'Pago',
+                                                        pago_em: new Date().toISOString()
+                                                      }, { merge: true });
+                                                      await tenantAuditLog(
+                                                        "Confirmar Pagamento",
+                                                        "FaturaEstudante",
+                                                        f.id!,
+                                                        `Pagamento confirmado para factura "${f.descricao}" no valor de MZN ${f.valor}.`
+                                                      );
+
+                                                      await queueOrSendEmail(
+                                                        usr?.email || 'geral@escola.ac.mz',
+                                                        '🧾 Recibo de Pagamento - SGE',
+                                                        `Estimado encarregado,\n\nConfirmamos com sucesso a receção do pagamento da factura "${f.descricao}" no valor de ${f.valor.toLocaleString('pt-MZ', { style: 'currency', currency: 'MZN' })} para o aluno ${usr?.nome}.\n\nObrigado pela sua colaboração.\nAtenciosamente,\nSecretaria Académica`
+                                                      );
+
+                                                      loadTenantContext();
+                                                    } catch (err: any) {
+                                                      alert("Erro ao confirmar pagamento: " + err.message);
+                                                    }
+                                                  }}
+                                                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[10px] px-2.5 py-1.5 rounded-lg flex items-center gap-1 cursor-pointer"
+                                                >
+                                                  <Check className="w-3 h-3" /> Confirmar Pagamento
+                                                </button>
+                                              </>
+                                            )}
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </>
+                      )}
+
+                      {/* ESTUDANTES FACTURADOS TAB VIEW */}
+                      {faturasTab === 'estudantes_facturados' && (
+                        <div className="space-y-4">
+                          <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-50 dark:bg-slate-900 p-4 rounded-2xl border border-slate-100 dark:border-slate-800">
+                            <div>
+                              <h4 className="font-bold text-slate-800 dark:text-white text-sm">Estudantes Inscritos no Plano de Faturação</h4>
+                              <p className="text-xs text-slate-500">Listagem consolidada de alunos e status de mensalidades</p>
+                            </div>
+                            <div className="flex items-center gap-2 max-w-sm w-full bg-white dark:bg-slate-950 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800">
+                              <Search className="w-4 h-4 text-slate-400" />
+                              <input
+                                type="text"
+                                placeholder="Filtrar estudante por nome ou matrícula..."
+                                value={faturaSearch}
+                                onChange={(e) => setFaturaSearch(e.target.value)}
+                                className="bg-transparent border-none text-xs w-full text-slate-800 dark:text-white focus:outline-none"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="overflow-x-auto rounded-2xl border border-slate-100 dark:border-slate-800">
+                            <table className="w-full text-left text-xs">
+                              <thead className="bg-slate-50 dark:bg-slate-900 text-slate-500 uppercase font-black text-[10px]">
+                                <tr>
+                                  <th className="px-6 py-3">Estudante</th>
+                                  <th className="px-6 py-3">Escola / Turma</th>
+                                  <th className="px-6 py-3">Periodicidade</th>
+                                  <th className="px-6 py-3">Estado Faturação</th>
+                                  <th className="px-6 py-3">Histórico de Facturas</th>
+                                  <th className="px-6 py-3 text-right">Ações</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                {students
+                                  .filter(s => {
+                                    const usr = tenantUsers.find(u => u.id === s.user_id);
+                                    const sName = (usr?.nome || '').toLowerCase();
+                                    const sMat = (s.numero_matricula || '').toLowerCase();
+                                    return sName.includes(faturaSearch.toLowerCase()) || sMat.includes(faturaSearch.toLowerCase());
+                                  })
+                                  .map(s => {
+                                    const usr = tenantUsers.find(u => u.id === s.user_id);
+                                    const esc = schools.find(e => e.id === s.escola_id);
+                                    const tur = turmas.find(t => t.id === s.turma_id);
+                                    const sFaturas = studentFaturas.filter(f => f.estudante_id === s.id);
+                                    const pagasCount = sFaturas.filter(f => f.status === 'Pago').length;
+                                    const pendentesCount = sFaturas.filter(f => f.status === 'Pendente').length;
+                                    const atrasadasCount = sFaturas.filter(f => f.status === 'Atrasado').length;
+                                    const totalValor = sFaturas.reduce((acc, f) => acc + f.valor, 0);
+
+                                    return (
+                                      <tr key={s.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/50">
+                                        <td className="px-6 py-4">
+                                          <div className="flex items-center gap-3">
+                                            {s.foto_url ? (
+                                              <img src={s.foto_url} alt="" className="w-8 h-8 rounded-full object-cover border border-slate-200" referrerPolicy="no-referrer" />
+                                            ) : (
+                                              <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-xs">
+                                                {(usr?.nome || 'E')[0].toUpperCase()}
+                                              </div>
+                                            )}
+                                            <div>
+                                              <p className="font-bold text-slate-900 dark:text-white">{usr?.nome || 'Estudante'}</p>
+                                              <p className="text-[10px] text-slate-500 font-mono">MATRÍCULA: {s.numero_matricula || s.id}</p>
+                                            </div>
+                                          </div>
+                                        </td>
+                                        <td className="px-6 py-4">
+                                          <p className="font-semibold text-slate-800 dark:text-slate-200">{esc?.nome || 'Escola'}</p>
+                                          <p className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold">{tur?.nome || 'Sem Turma'}</p>
+                                        </td>
+                                        <td className="px-6 py-4">
+                                          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                                            {s.periodo_facturacao || 'Mensal'}
+                                          </span>
+                                        </td>
+                                        <td className="px-6 py-4">
+                                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black ${
+                                            s.faturado !== false ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20' : 'bg-slate-100 text-slate-600'
+                                          }`}>
+                                            {s.faturado !== false ? '● Facturado' : 'Isento / Não Facturado'}
+                                          </span>
+                                        </td>
+                                        <td className="px-6 py-4">
+                                          <div className="flex items-center gap-1.5 flex-wrap">
+                                            <span className="bg-emerald-50 text-emerald-700 text-[10px] font-extrabold px-1.5 py-0.5 rounded" title="Facturas Pagas">
+                                              {pagasCount} Pagas
+                                            </span>
+                                            <span className="bg-amber-50 text-amber-700 text-[10px] font-extrabold px-1.5 py-0.5 rounded" title="Facturas Pendentes">
+                                              {pendentesCount} Pendentes
+                                            </span>
+                                            {atrasadasCount > 0 && (
+                                              <span className="bg-rose-50 text-rose-700 text-[10px] font-extrabold px-1.5 py-0.5 rounded" title="Facturas em Atraso">
+                                                {atrasadasCount} Vencidas
+                                              </span>
+                                            )}
+                                          </div>
+                                          <p className="text-[10px] font-mono text-slate-500 mt-1">Total: {totalValor.toLocaleString('pt-MZ', { style: 'currency', currency: 'MZN' })}</p>
+                                        </td>
+                                        <td className="px-6 py-4 text-right">
+                                          <button
+                                            onClick={() => {
+                                              setFaturaForm({
+                                                estudante_id: s.id,
+                                                escola_id: s.escola_id || schools[0]?.id || '',
+                                                turma_id: s.turma_id || turmas[0]?.id || '',
+                                                descricao: 'Mensalidade Escolar',
+                                                valor: 3500,
+                                                data_vencimento: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+                                              });
+                                              setIsFaturaModalOpen(true);
+                                            }}
+                                            className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] px-3 py-1.5 rounded-xl shadow-xs inline-flex items-center gap-1 cursor-pointer"
+                                          >
+                                            <Plus className="w-3.5 h-3.5" /> Lançar Mensalidade
+                                          </button>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                              </tbody>
+                            </table>
+                          </div>
                         </div>
-                      </div>
+                      )}
                     </div>
                   )}
-
-                </div>
-              )
-            )}
+                  </div>
+                )
+              )}
 
             {/* TAB: TURMAS */}
             {activeTab === 'turmas' && (
@@ -13040,18 +13001,18 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           showSystemNotification(`${count} utilizador(es) eliminado(s) com sucesso!`, 'cadastro');
                         } else if (action === 'suspender') {
                           for (const userId of selectedUserIds) {
-                            await updateDoc(doc(db, 'users', userId), {
+                            await setDoc(doc(db, 'users', userId), {
                               ativo: false,
                               updated_at: new Date().toISOString()
-                            });
+                            }, { merge: true });
                           }
                           showSystemNotification(`${count} utilizador(es) suspenso(s) com sucesso!`, 'cadastro');
                         } else if (action === 'restaurar') {
                           for (const userId of selectedUserIds) {
-                            await updateDoc(doc(db, 'users', userId), {
+                            await setDoc(doc(db, 'users', userId), {
                               ativo: true,
                               updated_at: new Date().toISOString()
-                            });
+                            }, { merge: true });
                           }
                           showSystemNotification(`${count} utilizador(es) reativado(s) com sucesso!`, 'cadastro');
                         }
@@ -13296,9 +13257,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                   const rawPass = Math.floor(100000 + Math.random() * 900000).toString();
                                                   const newPass = `SGE-${rawPass}`;
                                                   try {
-                                                    await updateDoc(doc(db, 'users', u.id), {
+                                                    await setDoc(doc(db, 'users', u.id), {
                                                       senha_temporaria: newPass
-                                                    });
+                                                    }, { merge: true });
                                                     showSystemNotification(`Senha resetada com sucesso para o utilizador "${u.nome}"! Nova senha temporária: ${newPass}`, "sucesso");
                                                     loadTenantContext();
                                                   } catch (err: any) {
@@ -13316,9 +13277,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                 onClick={async () => {
                                                   const nextStatus = !u.ativo;
                                                   try {
-                                                    await updateDoc(doc(db, 'users', u.id), {
+                                                    await setDoc(doc(db, 'users', u.id), {
                                                       ativo: nextStatus
-                                                    });
+                                                    }, { merge: true });
                                                     loadTenantContext();
                                                     showSystemNotification(`Acesso do utilizador ${u.nome} foi ${nextStatus ? 'ativado' : 'suspenso'}.`, 'cadastro');
                                                   } catch (err: any) {
@@ -14434,8 +14395,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       </div>
                     </div>
 
+                    {/* Active Status Badge or Suspended Watermark */}
+                    {(s.ativo === false || s.cracha_inutilizado) ? (
+                      <div className="mt-2 w-full bg-rose-600 text-white font-black text-[9px] py-1 px-2 rounded-md uppercase tracking-wider flex items-center justify-center gap-1 animate-pulse">
+                        <AlertTriangle className="w-3 h-3" /> CRACHÁ INUTILIZADO (ESTUDANTE SUSPENSO)
+                      </div>
+                    ) : null}
+
                     {/* Student Photo */}
-                    <div className="mt-4 relative">
+                    <div className="mt-3 relative">
                       <div className="w-24 h-24 rounded-full border-4 border-white dark:border-slate-950 shadow-md overflow-hidden bg-slate-100 dark:bg-slate-850 flex items-center justify-center">
                         {s.foto_url ? (
                           <img 
@@ -14449,7 +14417,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         )}
                       </div>
                       {/* Active Status Badge */}
-                      <span className="absolute bottom-0 right-1.5 bg-emerald-500 border-2 border-white dark:border-slate-900 w-3.5 h-3.5 rounded-full" />
+                      <span className={`absolute bottom-0 right-1.5 border-2 border-white dark:border-slate-900 w-3.5 h-3.5 rounded-full ${s.ativo === false || s.cracha_inutilizado ? 'bg-rose-600' : 'bg-emerald-500'}`} />
                     </div>
 
                     {/* Student Details */}
@@ -14490,15 +14458,55 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               })()}
             </div>
 
-            {/* Print and Download Actions */}
-            <div className="flex gap-3 mt-6 border-t border-slate-100 dark:border-slate-800 pt-4">
+            {/* Crachá Actions: Actualizar, Eliminar, Imprimir */}
+            <div className="grid grid-cols-3 gap-2 mt-5 border-t border-slate-100 dark:border-slate-800 pt-4">
               <button
                 type="button"
-                onClick={() => setCrachaStudent(null)}
-                className="flex-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold py-2.5 rounded-xl transition-all text-center cursor-pointer"
+                onClick={async () => {
+                  try {
+                    await setDoc(doc(db, 'estudantes', crachaStudent.id), {
+                      cracha_gerado: true,
+                      cracha_atualizado_em: new Date().toISOString(),
+                      cracha_inutilizado: crachaStudent.ativo === false
+                    }, { merge: true });
+                    showSystemNotification('Crachá actualizado com sucesso no banco de dados!', 'sucesso');
+                    loadTenantContext();
+                  } catch (err: any) {
+                    showSystemNotification(`Erro ao actualizar crachá: ${err.message}`, 'erro');
+                  }
+                }}
+                className="bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold py-2 px-2.5 rounded-xl transition-all text-[11px] flex items-center justify-center gap-1 cursor-pointer"
+                title="Actualizar dados do Crachá"
               >
-                Fechar
+                <RefreshCw className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                Actualizar
               </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  if (confirm('Tem certeza que deseja eliminar / inutilizar este crachá?')) {
+                    try {
+                      await setDoc(doc(db, 'estudantes', crachaStudent.id), {
+                        cracha_gerado: false,
+                        cracha_inutilizado: true,
+                        cracha_eliminado_em: new Date().toISOString()
+                      }, { merge: true });
+                      showSystemNotification('Crachá eliminado e inutilizado com sucesso!', 'sucesso');
+                      setCrachaStudent(null);
+                      loadTenantContext();
+                    } catch (err: any) {
+                      showSystemNotification(`Erro ao eliminar crachá: ${err.message}`, 'erro');
+                    }
+                  }
+                }}
+                className="bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/30 dark:hover:bg-rose-900/40 text-rose-700 dark:text-rose-400 font-bold py-2 px-2.5 rounded-xl transition-all text-[11px] flex items-center justify-center gap-1 cursor-pointer"
+                title="Eliminar / Inutilizar Crachá"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                Eliminar
+              </button>
+
               <button
                 type="button"
                 onClick={() => {
@@ -14508,25 +14516,52 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     const printWindow = window.open('', '_blank');
                     if (printWindow) {
                       printWindow.document.write(`
+                        <!DOCTYPE html>
                         <html>
                           <head>
-                            <title>Imprimir Crachá</title>
+                            <title>Crachá do Estudante - Formato A7 (10.5 x 7.4 cm)</title>
                             <script src="https://cdn.tailwindcss.com"></script>
                             <style>
+                              @page {
+                                size: 74mm 105mm; /* A7 Portrait: 7.4cm x 10.5cm */
+                                margin: 0;
+                              }
+                              @media print {
+                                html, body {
+                                  width: 74mm;
+                                  height: 105mm;
+                                  margin: 0 !important;
+                                  padding: 0 !important;
+                                  overflow: hidden;
+                                  -webkit-print-color-adjust: exact;
+                                  print-color-adjust: exact;
+                                }
+                              }
                               body {
+                                margin: 0;
+                                padding: 0;
+                                width: 74mm;
+                                height: 105mm;
                                 display: flex;
                                 justify-content: center;
                                 align-items: center;
-                                height: 100vh;
-                                background-color: white;
-                                margin: 0;
-                                -webkit-print-color-adjust: exact;
-                                print-color-adjust: exact;
+                                background: #ffffff;
+                                box-sizing: border-box;
+                              }
+                              #print-cracha-card {
+                                width: 70mm !important;
+                                height: 100mm !important;
+                                max-width: 70mm !important;
+                                max-height: 100mm !important;
+                                padding: 8px !important;
+                                border-radius: 8px !important;
+                                box-sizing: border-box !important;
+                                border: 1px solid #cbd5e1 !important;
                               }
                             </style>
                           </head>
                           <body>
-                            <div class="scale-125">
+                            <div style="width: 74mm; height: 105mm; display: flex; align-items: center; justify-content: center;">
                               ${printContents}
                             </div>
                             <script>
@@ -14542,9 +14577,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     }
                   }
                 }}
-                className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 rounded-xl transition-all text-center shadow-md hover:shadow-lg flex items-center justify-center gap-1.5 cursor-pointer"
+                className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-2.5 rounded-xl transition-all text-[11px] flex items-center justify-center gap-1 cursor-pointer shadow-md"
+                title="Imprimir Crachá no Formato A7 (10.5x7.4cm)"
               >
-                <Printer className="w-4 h-4" /> Imprimir
+                <Printer className="w-3.5 h-3.5" />
+                Imprimir
               </button>
             </div>
           </div>
@@ -14573,12 +14610,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   const studName = tenantUsers.find(u => u.id === user_id)?.nome || 'Estudante';
                   
                   // Update Student Record (Soft delete)
-                  await updateDoc(doc(db, 'estudantes', studentToDeactivate.id), {
+                  await setDoc(doc(db, 'estudantes', studentToDeactivate.id), {
                     ativo: false,
+                    cracha_inutilizado: true,
                     motivo_desativacao: deactivateReason,
                     desativado_em: new Date().toISOString(),
                     desativado_por: loggedInUser?.nome || 'Admin'
-                  });
+                  }, { merge: true });
 
                   // Add Historical Entry in processes
                   await addDoc(collection(db, 'processos_aluno'), {
@@ -14681,20 +14719,21 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   const studentTurma = turmas.find(t => t.id === s.turma_id);
 
                   // 1. Update Student Record
-                  await updateDoc(doc(db, 'estudantes', s.id), {
+                  await setDoc(doc(db, 'estudantes', s.id), {
                     ativo: false,
+                    cracha_inutilizado: true,
                     motivo_desativacao: dropoutReason,
                     desativado_em: new Date().toISOString(),
                     desativado_por: loggedInUser?.nome || 'Admin',
                     desistiu: true
-                  });
+                  }, { merge: true });
 
                   // 2. Suspend Student User account access
                   if (user_id) {
-                    await updateDoc(doc(db, 'users', user_id), {
+                    await setDoc(doc(db, 'users', user_id), {
                       ativo: false,
                       suspenso_motivo: `Desistência de estudos registrada em ${new Date().toLocaleDateString('pt-MZ')}`
-                    });
+                    }, { merge: true });
                   }
 
                   // 3. Add Historical Entry in processes

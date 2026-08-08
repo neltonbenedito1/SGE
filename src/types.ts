@@ -172,6 +172,12 @@ export interface Estudante {
   bi_nif?: string;
   encarregado_nome?: string;
   encarregado_contacto?: string;
+  cracha_gerado?: boolean;
+  cracha_gerado_em?: string;
+  cracha_inutilizado?: boolean;
+  cracha_atualizado_em?: string;
+  cracha_eliminado_em?: string;
+  qr_code_data?: string;
 }
 
 export interface FaturaEstudante {

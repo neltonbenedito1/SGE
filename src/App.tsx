@@ -681,10 +681,10 @@ export default function App() {
 
     try {
       // Update in Firestore 'users' collection
-      await updateDoc(doc(db, 'users', firstLoginResetUser.id), {
+      await setDoc(doc(db, 'users', firstLoginResetUser.id), {
         senha: newFirstPassword,
         requer_alteracao_senha: false
-      });
+      }, { merge: true });
 
       showNotification("Senha redefinida com sucesso! Acesso liberado.", "sucesso");
 
@@ -1015,9 +1015,9 @@ const clientSideCache: Record<string, any> = {
       });
 
       // 2. Update User status to active
-      await updateDoc(doc(db, 'users', checkoutUser.id), {
+      await setDoc(doc(db, 'users', checkoutUser.id), {
         ativo: true
-      });
+      }, { merge: true });
 
       // 3. Register standard billing receipt document
       const randomPaymentId = "pag-" + Math.random().toString(36).substr(2, 9);
