@@ -83,6 +83,8 @@ import {
   List,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  Building2,
   ChevronsLeft,
   ChevronsRight,
   Menu,
@@ -1077,6 +1079,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [teacherSearchText, setTeacherSearchText] = useState('');
   const [studentSearchText, setStudentSearchText] = useState('');
   const [disciplineSearchText, setDisciplineSearchText] = useState('');
+  const [disciplineSchoolFilter, setDisciplineSchoolFilter] = useState('todas');
+  const [disciplineDocenteFilter, setDisciplineDocenteFilter] = useState('todos');
+  const [schoolFilterSearchText, setSchoolFilterSearchText] = useState('');
+  const [docenteFilterSearchText, setDocenteFilterSearchText] = useState('');
+  const [isSchoolFilterOpen, setIsSchoolFilterOpen] = useState(false);
+  const [isDocenteFilterOpen, setIsDocenteFilterOpen] = useState(false);
+
+  // Discipline Form Dynamic Search States
+  const [formSchoolSearchText, setFormSchoolSearchText] = useState('');
+  const [formClassSearchText, setFormClassSearchText] = useState('');
+  const [formTeacherSearchText, setFormTeacherSearchText] = useState('');
 
   // SCHOOLS FILTERS (moved up to be initialized before useMemo)
   const [schoolStatusFilter, setSchoolStatusFilter] = useState<'todos' | 'ativo' | 'inativo'>('todos');
@@ -1134,18 +1147,46 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     );
   }, [students, studentSearchText]);
 
+  const isBaseDiscipline = (c: any) => {
+    if (!c) return false;
+    if (c.is_agendamento === true || c.tipo === 'agendamento') return false;
+    if (c.disciplina_id && String(c.disciplina_id).trim() !== '') return false;
+    if (c.turma_id && c.data && c.horario) return false;
+    return true;
+  };
+
   const searchedClasses = useMemo(() => {
-    if (!disciplineSearchText.trim()) return classes;
-    const query = disciplineSearchText.toLowerCase();
-    return classes.filter(c => {
-      const tur = turmas.find(t => t.id === c.turma_id);
-      return (
-        c.nome.toLowerCase().includes(query) || 
-        (c.codigo || '').toLowerCase().includes(query) ||
-        (tur?.nome || '').toLowerCase().includes(query)
-      );
-    });
-  }, [classes, turmas, disciplineSearchText]);
+    // Only base registered disciplines should be displayed in the Disciplinas tab
+    let list = classes.filter(isBaseDiscipline);
+
+    // Filter by Escola
+    if (disciplineSchoolFilter && disciplineSchoolFilter !== 'todas') {
+      list = list.filter(c => {
+        const schoolsArr = (c as any).escolas_ids || (c.escola_id ? [c.escola_id] : []);
+        return schoolsArr.includes(disciplineSchoolFilter) || c.escola_id === disciplineSchoolFilter;
+      });
+    }
+
+    // Filter by Docente
+    if (disciplineDocenteFilter && disciplineDocenteFilter !== 'todos') {
+      list = list.filter(c => {
+        const teachersArr = c.professores_responsaveis || (c.docente_id ? [c.docente_id] : []);
+        return teachersArr.includes(disciplineDocenteFilter) || c.docente_id === disciplineDocenteFilter;
+      });
+    }
+
+    // Filter by Text Search
+    if (disciplineSearchText.trim()) {
+      const query = disciplineSearchText.toLowerCase();
+      list = list.filter(c => {
+        const codeStr = (c.codigo || c.id || '').toLowerCase();
+        const nameStr = (c.nome || '').toLowerCase();
+        return nameStr.includes(query) || codeStr.includes(query);
+      });
+    }
+
+    return list;
+  }, [classes, disciplineSchoolFilter, disciplineDocenteFilter, disciplineSearchText]);
 
   const [selectedSchoolFilter, setSelectedSchoolFilter] = useState('todos');
   const [selectedTurmaFilter, setSelectedTurmaFilter] = useState('todos');
@@ -1174,41 +1215,43 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   };
 
   const OFFICIAL_BREAKS = [
-    { name: 'Manhã', start: parseTimeToMinutes('09:25'), end: parseTimeToMinutes('09:35'), label: '09:25 às 09:35' },
-    { name: 'Tarde', start: parseTimeToMinutes('14:25'), end: parseTimeToMinutes('14:35'), label: '14:25 às 14:35' },
-    { name: 'Noite', start: parseTimeToMinutes('20:25'), end: parseTimeToMinutes('20:35'), label: '20:25 às 20:35' },
+    { name: 'Manhã', start: parseTimeToMinutes('09:15'), end: parseTimeToMinutes('09:30'), label: '09:15 às 09:30' },
+    { name: 'Tarde', start: parseTimeToMinutes('14:15'), end: parseTimeToMinutes('14:30'), label: '14:15 às 14:30' },
+    { name: 'Noite', start: parseTimeToMinutes('20:15'), end: parseTimeToMinutes('20:30'), label: '20:15 às 20:30' },
   ];
 
   const getShiftDefaultSlots = (turn: 'manha' | 'tarde' | 'noite'): string[] => {
     if (turn === 'manha') {
       return [
         "07:00 - 07:45",
-        "07:50 - 08:35",
-        "08:40 - 09:25",
-        "09:25 - 09:35",
-        "09:35 - 10:20",
-        "10:25 - 11:10",
-        "11:15 - 12:00"
+        "07:45 - 08:30",
+        "08:30 - 09:15",
+        "09:15 - 09:30",
+        "09:30 - 10:15",
+        "10:15 - 11:00",
+        "11:00 - 11:45",
+        "11:45 - 12:30"
       ];
     } else if (turn === 'tarde') {
       return [
         "12:00 - 12:45",
-        "12:50 - 13:35",
-        "13:40 - 14:25",
-        "14:25 - 14:35",
-        "14:35 - 15:20",
-        "15:25 - 16:10",
-        "16:15 - 17:00"
+        "12:45 - 13:30",
+        "13:30 - 14:15",
+        "14:15 - 14:30",
+        "14:30 - 15:15",
+        "15:15 - 16:00",
+        "16:00 - 16:45",
+        "16:45 - 17:30"
       ];
     } else {
       return [
         "18:00 - 18:45",
-        "18:50 - 19:35",
-        "19:40 - 20:25",
-        "20:25 - 20:35",
-        "20:35 - 21:20",
-        "21:25 - 22:10",
-        "22:15 - 23:00"
+        "18:45 - 19:30",
+        "19:30 - 20:15",
+        "20:15 - 20:30",
+        "20:30 - 21:15",
+        "21:15 - 22:00",
+        "22:00 - 22:45"
       ];
     }
   };
@@ -1260,14 +1303,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       const cStart = parseTimeToMinutes(cStartStr);
       const cEnd = parseTimeToMinutes(cEndStr);
 
-      // 5-min transition gap rule
-      const overlapsWithGap = (pStart < cEnd + 5) && (pEnd + 5 > cStart);
+      // Classes overlap if pStart < cEnd and pEnd > cStart.
+      // Back-to-back classes touching at boundary (pStart === cEnd or pEnd === cStart) do NOT overlap.
+      const overlaps = (pStart < cEnd) && (pEnd > cStart);
 
-      if (overlapsWithGap) {
+      if (overlaps) {
         if (sala && c.sala && c.sala.trim().toLowerCase() === sala.trim().toLowerCase()) {
           return {
             conflict: true,
-            reason: `Conflito de Sala! A sala "${sala}" já possui a aula "${c.nome}" agendada (${cStartStr} - ${cEndStr}). É necessário pelo menos 5 min de intervalo entre aulas.`
+            reason: `Conflito de Sala! A sala "${sala}" já possui a aula "${c.nome}" agendada (${cStartStr} - ${cEndStr}).`
           };
         }
         if (docenteId && c.docente_id === docenteId) {
@@ -5874,6 +5918,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
         const disciplinePayload = {
           ...classeForm,
+          tipo: 'disciplina',
+          is_agendamento: false,
           nome: finalDisciplineName,
           codigo: generatedCode,
           professores_responsaveis: selectedTeacherIds,
@@ -5882,8 +5928,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           docente_id: primaryDocenteId,
           escola_id: targetSchoolId
         };
+        delete (disciplinePayload as any).data;
+        delete (disciplinePayload as any).horario;
+        delete (disciplinePayload as any).disciplina_id;
+        delete (disciplinePayload as any).justificativa;
 
-        const dupClass = classes.find(c => 
+        const baseClassesList = classes.filter(isBaseDiscipline);
+        const dupClass = baseClassesList.find(c => 
           c.id !== editingItem?.id && 
           c.escola_id === targetSchoolId && 
           (c.nome?.trim().toLowerCase() === finalDisciplineName.toLowerCase() || (c.codigo && generatedCode && c.codigo.toUpperCase() === generatedCode.toUpperCase()))
@@ -5906,7 +5957,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             created_at: new Date().toISOString()
           });
         } else {
-          if (!checkLimit('max_disciplinas', classes.length)) return;
+          if (!checkLimit('max_disciplinas', baseClassesList.length)) return;
           await addDoc(collection(db, 'classes'), { 
             ...disciplinePayload, 
             status_aprovacao: 'aprovado',
@@ -6002,6 +6053,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         }
 
         const payload = {
+          tipo: 'agendamento',
+          is_agendamento: true,
           nome: horarioForm.disciplina_nome,
           disciplina_id: horarioForm.disciplina_id || '',
           turma_id: horarioForm.turma_id,
@@ -9778,20 +9831,44 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                   onClick={() => {
                                     setEditingItem(t);
                                     setTurmaForm({
-                                      nome: t.nome,
-                                      escola_id: t.escola_id,
-                                      ano_letivo: t.ano_letivo,
-                                      nivel: t.nivel,
-                                      docente_id: t.docente_id,
-                                      capacidade_max: t.capacidade_max,
+                                      nome: t.nome || '',
+                                      escola_id: t.escola_id || schools[0]?.id || '',
+                                      ano_letivo: t.ano_letivo || '2026',
+                                      nivel: t.nivel || 'Primário',
+                                      docente_id: t.docente_id || '',
+                                      capacidade_max: t.capacidade_max || 30,
                                       classe_escolar_id: t.classe_escolar_id || ''
                                     });
                                     setModalType('turma');
                                     setIsModalOpen(true);
                                   }}
-                                  className="bg-white border border-slate-200 text-slate-600 px-2.5 py-1 rounded text-xs font-bold hover:bg-slate-50 transition-colors cursor-pointer"
+                                  className="p-2 text-slate-500 hover:text-indigo-600 hover:bg-white rounded-lg transition-colors cursor-pointer"
+                                  title="Editar Turma"
                                 >
-                                  Editar
+                                  <Edit className="w-4 h-4" />
+                                </button>
+                              )}
+                              {hasPermission('turmas', 'excluir') && (
+                                <button 
+                                  onClick={() => {
+                                    setConfirmModal({
+                                      isOpen: true,
+                                      title: 'Confirmar Exclusão',
+                                      message: `Tem certeza que deseja excluir a turma "${t.nome}"?`,
+                                      confirmText: 'Excluir',
+                                      cancelText: 'Cancelar',
+                                      isCritical: true,
+                                      onConfirm: async () => {
+                                        await deleteDoc(doc(db, 'turmas', t.id));
+                                        showSystemNotification(`A turma "${t.nome}" foi excluída com sucesso!`, 'sucesso');
+                                        await loadTenantContext();
+                                      }
+                                    });
+                                  }}
+                                  className="p-2 text-slate-500 hover:text-rose-600 hover:bg-white rounded-lg transition-colors cursor-pointer"
+                                  title="Eliminar Turma"
+                                >
+                                  <Trash2 className="w-4 h-4" />
                                 </button>
                               )}
                             </div>
@@ -9799,7 +9876,6 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         );
                       })}
                     </div>
-                    {renderPagination(pageTurmas, turmas.length, 25, setPageTurmas)}
                   </div>
                 </div>
               )
@@ -9810,14 +9886,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               !hasPermission('disciplinas') ? renderRestrictedAccess('Gestão de Disciplinas') : (
                 <div className="space-y-6 animate-fadeIn">
                   <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-4">
+                    {/* Header */}
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                       <div>
-                        <h3 className="font-bold text-slate-800 text-lg">Cadastro de Disciplinas (Matérias)</h3>
-                        <p className="text-xs text-slate-400">Gerencie a grade curricular e associe docentes a cada matéria.</p>
+                        <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                          <BookMarked className="w-5 h-5 text-indigo-600" /> Cadastro de Disciplinas
+                        </h3>
+                        <p className="text-xs text-slate-400">Consulte e gerencie as disciplinas cadastradas no sistema com filtros por escola e docente.</p>
                       </div>
-                      {isLimitReached('max_disciplinas', classes.length) ? (
+                      {isLimitReached('max_disciplinas', classes.filter(isBaseDiscipline).length) ? (
                         <button 
-                          onClick={() => openUpgradeModal('max_disciplinas', classes.length)}
+                          onClick={() => openUpgradeModal('max_disciplinas', classes.filter(isBaseDiscipline).length)}
                           className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs py-2.5 px-4 rounded-lg flex items-center gap-1.5 shadow-sm transition-all animate-pulse cursor-pointer"
                         >
                           <Sparkles className="w-3.5 h-3.5" /> Upgrade • Limite Atingido
@@ -9839,6 +9918,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 setEditingItem(null);
                                 setClasseForm({ 
                                   nome: '', 
+                                  codigo: 'DISC-' + Math.random().toString(36).substring(2, 8).toUpperCase(),
                                   turma_id: turmas[0]?.id || '', 
                                   docente_id: teachers[0]?.id || '', 
                                   horario: '08:00 - 09:30', 
@@ -9846,12 +9926,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                   data: new Date().toISOString().split('T')[0], 
                                   dia_semana: getDiaSemanaFromDate(new Date().toISOString().split('T')[0]),
                                   escola_id: schools[0]?.id || '',
+                                  escolas_ids: schools[0]?.id ? [schools[0].id] : [],
+                                  classes_associadas_ids: [],
                                   professores_responsaveis: []
                                 });
+                                setFormSchoolSearchText('');
+                                setFormClassSearchText('');
+                                setFormTeacherSearchText('');
                                 setModalType('classe');
                                 setIsModalOpen(true);
                               }}
-                              className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2.5 px-4 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                              className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2.5 px-4 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
                             >
                               <Plus className="w-4 h-4" /> Cadastrar Disciplina
                             </button>
@@ -9860,154 +9945,370 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       )}
                     </div>
 
-                    {/* Search Input Box */}
-                    <div className="flex items-center gap-2 max-w-md bg-slate-50 px-3 py-2 rounded-xl border border-slate-200 shadow-2xs">
-                      <Search className="w-4 h-4 text-slate-400 shrink-0" />
-                      <input
-                        type="text"
-                        placeholder="Pesquisar por disciplina, código ou turma..."
-                        value={disciplineSearchText}
-                        onChange={(e) => setDisciplineSearchText(e.target.value)}
-                        className="bg-transparent border-none text-xs w-full text-slate-800 focus:outline-none"
-                      />
-                    </div>
+                    {/* Filter Bar with dynamic dropdown searches */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                      
+                      {/* 1. Filtro por Escola (dropdown com pesquisa dinâmica) */}
+                      <div className="relative">
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                          Filtro por Escola
+                        </label>
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsSchoolFilterOpen(!isSchoolFilterOpen);
+                              setIsDocenteFilterOpen(false);
+                            }}
+                            className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-800 flex items-center justify-between shadow-2xs hover:bg-slate-50 transition-colors cursor-pointer"
+                          >
+                            <div className="flex items-center gap-2 truncate">
+                              <Building2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                              <span className="truncate">
+                                {disciplineSchoolFilter === 'todas'
+                                  ? 'Todas as Escolas'
+                                  : schools.find(s => s.id === disciplineSchoolFilter)?.nome || 'Todas as Escolas'}
+                              </span>
+                            </div>
+                            <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          </button>
 
-                  {/* Limit meter */}
-                  {plan && (
-                    <div className="p-4 bg-indigo-50/50 rounded-xl border border-indigo-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs">
-                      <div>
-                        <p className="font-bold text-indigo-950">Limite do {plan.nome}: {plan.limits.max_disciplinas >= 9999 ? "Ilimitado" : `${plan.limits.max_disciplinas} disciplinas`}</p>
-                        <p className="text-slate-500 mt-0.5">As disciplinas organizam a carga horária de cada turma.</p>
+                          {/* Dynamic Search Popover for School Filter */}
+                          {isSchoolFilterOpen && (
+                            <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-30 p-2.5 space-y-2 animate-in fade-in zoom-in-95 duration-150">
+                              <div className="relative">
+                                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                                <input 
+                                  type="text"
+                                  placeholder="Pesquisar escola..."
+                                  value={schoolFilterSearchText}
+                                  onChange={(e) => setSchoolFilterSearchText(e.target.value)}
+                                  className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-7 pr-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                  autoFocus
+                                />
+                              </div>
+                              <div className="max-h-48 overflow-y-auto space-y-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDisciplineSchoolFilter('todas');
+                                    setIsSchoolFilterOpen(false);
+                                  }}
+                                  className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors ${
+                                    disciplineSchoolFilter === 'todas' ? 'bg-indigo-50 text-indigo-900 font-bold' : 'hover:bg-slate-50 text-slate-700'
+                                  }`}
+                                >
+                                  🏢 Todas as Escolas
+                                </button>
+                                {schools
+                                  .filter(s => s.nome.toLowerCase().includes(schoolFilterSearchText.toLowerCase()))
+                                  .map(s => (
+                                    <button
+                                      key={s.id}
+                                      type="button"
+                                      onClick={() => {
+                                        setDisciplineSchoolFilter(s.id);
+                                        setIsSchoolFilterOpen(false);
+                                      }}
+                                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors flex items-center justify-between ${
+                                        disciplineSchoolFilter === s.id ? 'bg-indigo-50 text-indigo-900 font-bold' : 'hover:bg-slate-50 text-slate-700'
+                                      }`}
+                                    >
+                                      <span className="truncate">{s.nome}</span>
+                                      {s.codigo && (
+                                        <span className="text-[9px] font-mono text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
+                                          {s.codigo}
+                                        </span>
+                                      )}
+                                    </button>
+                                  ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <div className="w-32 bg-slate-200 rounded-full h-2">
-                          <div 
-                            className={`h-2 rounded-full ${classes.length >= (plan.limits.max_disciplinas ?? 15) ? 'bg-rose-500' : 'bg-indigo-600'}`}
-                            style={{ width: `${Math.min(100, (classes.length / (plan.limits.max_disciplinas ?? 15)) * 100)}%` }}
+
+                      {/* 2. Filtro por Docente (dropdown com pesquisa dinâmica) */}
+                      <div className="relative">
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                          Filtro por Docente
+                        </label>
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsDocenteFilterOpen(!isDocenteFilterOpen);
+                              setIsSchoolFilterOpen(false);
+                            }}
+                            className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-800 flex items-center justify-between shadow-2xs hover:bg-slate-50 transition-colors cursor-pointer"
+                          >
+                            <div className="flex items-center gap-2 truncate">
+                              <UserCheck className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                              <span className="truncate">
+                                {disciplineDocenteFilter === 'todos'
+                                  ? 'Todos os Docentes'
+                                  : (() => {
+                                      const t = teachers.find(tea => tea.id === disciplineDocenteFilter);
+                                      const usr = tenantUsers.find(u => u.id === t?.user_id);
+                                      return usr?.nome || t?.nome || 'Todos os Docentes';
+                                    })()}
+                              </span>
+                            </div>
+                            <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          </button>
+
+                          {/* Dynamic Search Popover for Docente Filter */}
+                          {isDocenteFilterOpen && (
+                            <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-30 p-2.5 space-y-2 animate-in fade-in zoom-in-95 duration-150">
+                              <div className="relative">
+                                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                                <input 
+                                  type="text"
+                                  placeholder="Pesquisar docente..."
+                                  value={docenteFilterSearchText}
+                                  onChange={(e) => setDocenteFilterSearchText(e.target.value)}
+                                  className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-7 pr-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                  autoFocus
+                                />
+                              </div>
+                              <div className="max-h-48 overflow-y-auto space-y-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDisciplineDocenteFilter('todos');
+                                    setIsDocenteFilterOpen(false);
+                                  }}
+                                  className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors ${
+                                    disciplineDocenteFilter === 'todos' ? 'bg-indigo-50 text-indigo-900 font-bold' : 'hover:bg-slate-50 text-slate-700'
+                                  }`}
+                                >
+                                  👨‍🏫 Todos os Docentes
+                                </button>
+                                {teachers
+                                  .filter(t => {
+                                    const usr = tenantUsers.find(u => u.id === t.user_id);
+                                    const tName = usr?.nome || t.nome || '';
+                                    return tName.toLowerCase().includes(docenteFilterSearchText.toLowerCase()) ||
+                                           (t.especialidade || '').toLowerCase().includes(docenteFilterSearchText.toLowerCase());
+                                  })
+                                  .map(t => {
+                                    const usr = tenantUsers.find(u => u.id === t.user_id);
+                                    const tName = usr?.nome || t.nome || "Docente";
+                                    return (
+                                      <button
+                                        key={t.id}
+                                        type="button"
+                                        onClick={() => {
+                                          setDisciplineDocenteFilter(t.id);
+                                          setIsDocenteFilterOpen(false);
+                                        }}
+                                        className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors flex items-center justify-between ${
+                                          disciplineDocenteFilter === t.id ? 'bg-indigo-50 text-indigo-900 font-bold' : 'hover:bg-slate-50 text-slate-700'
+                                        }`}
+                                      >
+                                        <span className="truncate">{tName}</span>
+                                        {t.especialidade && (
+                                          <span className="text-[9px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">
+                                            {t.especialidade}
+                                          </span>
+                                        )}
+                                      </button>
+                                    );
+                                  })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* 3. Pesquisa por texto */}
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                          Pesquisar
+                        </label>
+                        <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-2xs">
+                          <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <input
+                            type="text"
+                            placeholder="Nome da disciplina ou código..."
+                            value={disciplineSearchText}
+                            onChange={(e) => setDisciplineSearchText(e.target.value)}
+                            className="bg-transparent border-none text-xs w-full text-slate-800 focus:outline-none"
                           />
                         </div>
-                        <span className="font-mono font-bold text-slate-700">{classes.length} / {plan.limits.max_disciplinas >= 9999 ? '∞' : (plan.limits.max_disciplinas ?? 15)}</span>
                       </div>
+
                     </div>
-                  )}
 
-                  <div className="overflow-x-auto border border-slate-100 rounded-xl">
-                    <table className="w-full text-left border-collapse text-sm">
-                      <thead>
-                        <tr className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100">
-                          <th className="p-4">Nome da Disciplina</th>
-                          <th className="p-4">Turma Associada</th>
-                          <th className="p-4">Professor Docente</th>
-                          <th className="p-4 text-right sticky right-0 bg-slate-50 dark:bg-slate-900 z-10">Ações</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-50">
-                        {searchedClasses.length === 0 ? (
-                          <tr>
-                            <td colSpan={4} className="p-8 text-center text-slate-400">
-                              Nenhuma disciplina cadastrada neste tenant. Clique em "Cadastrar Disciplina" para começar.
-                            </td>
+                    {/* Limit Meter */}
+                    {plan && (
+                      <div className="p-3.5 bg-indigo-50/50 rounded-xl border border-indigo-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                        <div>
+                          <p className="font-bold text-indigo-950">Limite do {plan.nome}: {plan.limits.max_disciplinas >= 9999 ? "Ilimitado" : `${plan.limits.max_disciplinas} disciplinas`}</p>
+                          <p className="text-slate-500 text-[11px]">As disciplinas organizam a grade e as avaliações do ano letivo.</p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="w-32 bg-slate-200 rounded-full h-2">
+                            <div 
+                              className={`h-2 rounded-full ${classes.filter(isBaseDiscipline).length >= (plan.limits.max_disciplinas ?? 15) ? 'bg-rose-500' : 'bg-indigo-600'}`}
+                              style={{ width: `${Math.min(100, (classes.filter(isBaseDiscipline).length / (plan.limits.max_disciplinas ?? 15)) * 100)}%` }}
+                            />
+                          </div>
+                          <span className="font-mono font-bold text-slate-700">{classes.filter(isBaseDiscipline).length} / {plan.limits.max_disciplinas >= 9999 ? '∞' : (plan.limits.max_disciplinas ?? 15)}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Table listing ONLY registered disciplines in the system */}
+                    <div className="overflow-x-auto border border-slate-100 rounded-xl">
+                      <table className="w-full text-left border-collapse text-sm">
+                        <thead>
+                          <tr className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100 text-xs">
+                            <th className="p-3.5">Nome da Disciplina & Código</th>
+                            <th className="p-3.5">Escola(s)</th>
+                            <th className="p-3.5">Classe(s) Associada(s)</th>
+                            <th className="p-3.5">Docente(s) Responsável(is)</th>
+                            <th className="p-3.5 text-right sticky right-0 bg-slate-50 z-10">Ações</th>
                           </tr>
-                        ) : (
-                          searchedClasses.slice((pageClasses - 1) * 25, pageClasses * 25).map(c => {
-                            const tur = turmas.find(t => t.id === c.turma_id);
-                            const tea = teachers.find(t => t.id === c.docente_id);
-                            const teaUsr = tenantUsers.find(u => u.id === tea?.user_id);
-                            return (
-                              <tr key={c.id} data-context-type="discipline" data-context-id={c.id} className="hover:bg-slate-50/50 transition-colors">
-                                <td className="p-4 font-bold text-slate-800">
-                                  <div className="flex items-center gap-2">
-                                    <span>{c.nome}</span>
-                                    {c.codigo && (
-                                      <span className="text-[10px] font-mono text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-md font-bold">
-                                        {c.codigo}
-                                      </span>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {searchedClasses.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="p-8 text-center text-slate-400">
+                                Nenhuma disciplina encontrada com os filtros selecionados.
+                              </td>
+                            </tr>
+                          ) : (
+                            searchedClasses.slice((pageClasses - 1) * 25, pageClasses * 25).map(c => {
+                              // Resolve Schools
+                              const associatedSchoolIds = (c as any).escolas_ids || (c.escola_id ? [c.escola_id] : []);
+                              const schoolList = schools.filter(s => associatedSchoolIds.includes(s.id));
+                              
+                              // Resolve Classes
+                              const associatedClassIds = c.classes_associadas_ids || (c.classe_escolar_id ? [c.classe_escolar_id] : []);
+                              const classList = classesEscolares.filter(ce => associatedClassIds.includes(ce.id));
+
+                              // Resolve Docentes
+                              const associatedTeacherIds = c.professores_responsaveis || (c.docente_id ? [c.docente_id] : []);
+                              const teacherList = teachers.filter(t => associatedTeacherIds.includes(t.id));
+
+                              return (
+                                <tr key={c.id} data-context-type="discipline" data-context-id={c.id} className="hover:bg-slate-50/60 transition-colors">
+                                  <td className="p-3.5 font-bold text-slate-800">
+                                    <div className="flex flex-col gap-0.5">
+                                      <span className="text-slate-900 font-bold">{c.nome}</span>
+                                      {c.codigo && (
+                                        <span className="text-[10px] font-mono text-indigo-700 font-bold">
+                                          ID: {c.codigo}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="p-3.5">
+                                    <div className="flex flex-wrap gap-1">
+                                      {schoolList.length > 0 ? (
+                                        schoolList.map(s => (
+                                          <span key={s.id} className="bg-slate-100 text-slate-700 text-[11px] py-0.5 px-2 rounded-md font-medium">
+                                            {s.nome}
+                                          </span>
+                                        ))
+                                      ) : (
+                                        <span className="text-slate-400 text-xs italic">Todas / Geral</span>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="p-3.5">
+                                    <div className="flex flex-wrap gap-1">
+                                      {classList.length > 0 ? (
+                                        classList.map(ce => (
+                                          <span key={ce.id} className="bg-indigo-50 text-indigo-800 border border-indigo-100 text-[11px] py-0.5 px-2 rounded-md font-bold">
+                                            {ce.nome}
+                                          </span>
+                                        ))
+                                      ) : (
+                                        <span className="text-slate-400 text-xs italic">Sem classe definida</span>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="p-3.5 text-slate-600">
+                                    <div className="flex flex-wrap gap-1">
+                                      {teacherList.length > 0 ? (
+                                        teacherList.map(t => {
+                                          const usr = tenantUsers.find(u => u.id === t.user_id);
+                                          return (
+                                            <span key={t.id} className="bg-emerald-50 text-emerald-800 border border-emerald-100 text-[11px] py-0.5 px-2 rounded-md font-medium">
+                                              {usr?.nome || t.nome}
+                                            </span>
+                                          );
+                                        })
+                                      ) : (
+                                        <span className="text-slate-400 text-xs italic">Não designado</span>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="p-3.5 text-right space-x-2 sticky right-0 bg-white z-10">
+                                    {hasPermission('disciplinas', 'editar') && (
+                                      <button 
+                                        onClick={() => {
+                                          setEditingItem(c);
+                                          setClasseForm({
+                                            nome: c.nome,
+                                            codigo: c.codigo || ('DISC-' + Math.random().toString(36).substring(2, 8).toUpperCase()),
+                                            escola_id: c.escola_id || schools[0]?.id || '',
+                                            escolas_ids: (c as any).escolas_ids || (c.escola_id ? [c.escola_id] : []),
+                                            classes_associadas_ids: c.classes_associadas_ids || (c.classe_escolar_id ? [c.classe_escolar_id] : []),
+                                            professores_responsaveis: c.professores_responsaveis || (c.docente_id ? [c.docente_id] : []),
+                                            docente_id: c.docente_id || '',
+                                            turma_id: c.turma_id || '',
+                                            horario: c.horario || '',
+                                            sala: c.sala || '',
+                                            data: c.data || new Date().toISOString().split('T')[0],
+                                            dia_semana: c.dia_semana || getDiaSemanaFromDate(c.data || new Date().toISOString().split('T')[0])
+                                          });
+                                          setFormSchoolSearchText('');
+                                          setFormClassSearchText('');
+                                          setFormTeacherSearchText('');
+                                          setModalType('classe');
+                                          setIsModalOpen(true);
+                                        }}
+                                        className="text-indigo-600 hover:text-indigo-900 font-bold text-xs cursor-pointer"
+                                      >
+                                        Editar
+                                      </button>
                                     )}
-                                  </div>
-                                </td>
-                                <td className="p-4">
-                                  <span className="bg-slate-100 text-slate-700 text-xs py-1 px-2.5 rounded-full font-medium">
-                                    {tur?.nome || 'Geral / Sem Turma'}
-                                  </span>
-                                </td>
-                                <td className="p-4 text-slate-600">{teaUsr?.nome || 'Professor não designado'}</td>
-                                <td className="p-4 text-right space-x-2 sticky right-0 bg-white dark:bg-slate-900 z-10">
-                                  {hasPermission('disciplinas', 'editar') && (
-                                    <button 
-                                      onClick={() => {
-                                        setEditingItem(c);
-                                        setClasseForm({
-                                          nome: c.nome,
-                                          turma_id: c.turma_id,
-                                          docente_id: c.docente_id,
-                                          horario: c.horario,
-                                          sala: c.sala,
-                                          data: c.data || new Date().toISOString().split('T')[0],
-                                          dia_semana: c.dia_semana || getDiaSemanaFromDate(c.data || new Date().toISOString().split('T')[0]),
-                                          escola_id: c.escola_id || schools[0]?.id || '',
-                                          professores_responsaveis: c.professores_responsaveis || []
-                                        });
-                                        setModalType('classe');
-                                        setIsModalOpen(true);
-                                      }}
-                                      className="text-indigo-600 hover:text-indigo-900 font-bold text-xs cursor-pointer"
-                                    >
-                                      Editar
-                                    </button>
-                                  )}
-                                  {hasPermission('disciplinas', 'excluir') && (
-                                    <button 
-                                      onClick={() => {
-                                        setConfirmModal({
-                                          isOpen: true,
-                                          title: 'Confirmar Exclusão',
-                                          message: `Tem certeza que deseja excluir a disciplina "${c.nome}"?`,
-                                          confirmText: 'Excluir',
-                                          cancelText: 'Cancelar',
-                                          isCritical: true,
-                                          onConfirm: async () => {
-                                            await deleteDoc(doc(db, 'classes', c.id));
-                                            
-                                            // Notificar o administrador
-                                            await addDoc(collection(db, 'notificacoes'), {
-                                              destinatario_id: 'admin',
-                                              tenant_id: currentTenantId,
-                                              titulo: '🗑️ Disciplina Excluída',
-                                              mensagem: `A disciplina "${c.nome}" agendada para o dia ${c.data || c.dia_semana} às ${c.horario} foi excluída da agenda.`,
-                                              tipo: 'cadastro',
-                                              lido: false,
-                                              created_at: new Date().toISOString()
-                                            });
-
-                                            // Exibir popup da acao executada
-                                            showSystemNotification(`A disciplina "${c.nome}" foi excluída com sucesso!`, 'sucesso');
-
-                                            const popup = document.createElement('div');
-                                            popup.className = 'fixed bottom-5 right-5 bg-rose-600 text-white font-bold text-xs px-4 py-3 rounded-xl shadow-2xl border border-rose-500 z-[1000000] flex items-center gap-2 animate-bounce';
-                                            popup.innerHTML = `🗑️ Disciplina "${c.nome}" excluída da agenda! Administrador notificado.`;
-                                            document.body.appendChild(popup);
-                                            setTimeout(() => popup.remove(), 6000);
-
-                                            await loadTenantContext();
-                                          }
-                                        });
-                                      }}
-                                      className="text-rose-600 hover:text-rose-900 font-bold text-xs cursor-pointer"
-                                    >
-                                      Excluir
-                                    </button>
-                                  )}
-                                </td>
-                              </tr>
-                            );
-                          })
-                        )}
-                      </tbody>
-                    </table>
+                                    {hasPermission('disciplinas', 'excluir') && (
+                                      <button 
+                                        onClick={() => {
+                                          setConfirmModal({
+                                            isOpen: true,
+                                            title: 'Confirmar Exclusão',
+                                            message: `Tem certeza que deseja excluir a disciplina "${c.nome}"?`,
+                                            confirmText: 'Excluir',
+                                            cancelText: 'Cancelar',
+                                            isCritical: true,
+                                            onConfirm: async () => {
+                                              await deleteDoc(doc(db, 'classes', c.id));
+                                              showSystemNotification(`A disciplina "${c.nome}" foi excluída com sucesso!`, 'sucesso');
+                                              await loadTenantContext();
+                                            }
+                                          });
+                                        }}
+                                        className="text-rose-600 hover:text-rose-900 font-bold text-xs cursor-pointer"
+                                      >
+                                        Excluir
+                                      </button>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                    {renderPagination(pageClasses, searchedClasses.length, 25, setPageClasses)}
                   </div>
-                  {renderPagination(pageClasses, searchedClasses.length, 25, setPageClasses)}
                 </div>
-              </div>
               )
             )}
 
@@ -10730,7 +11031,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                               const rows = displayedSlots.map((timeSlot) => {
                                 // Render official break row across columns
-                                if (timeSlot === "09:25 - 09:35" || timeSlot === "14:25 - 14:35" || timeSlot === "20:25 - 20:35") {
+                                if (
+                                  timeSlot === "09:15 - 09:30" || timeSlot === "09:25 - 09:35" ||
+                                  timeSlot === "14:15 - 14:30" || timeSlot === "14:25 - 14:35" ||
+                                  timeSlot === "20:15 - 20:30" || timeSlot === "20:25 - 20:35"
+                                ) {
                                   return (
                                     <tr key={timeSlot} className="bg-amber-50/70 border-y-2 border-amber-200/90">
                                       <td className="p-3 bg-amber-100/80 border-r border-amber-200 font-bold font-mono text-center text-amber-900 text-xs">
@@ -15841,6 +16146,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     ? `${editingItem ? 'Editar Feriado' : 'Novo Feriado Nacionais/Local'}`
                     : modalType === 'ferias'
                     ? `${editingItem ? 'Editar Período de Férias' : 'Novo Período de Férias'}`
+                    : modalType === 'classe'
+                    ? `${editingItem ? 'Editar Disciplina' : 'Cadastrar Disciplina'}`
                     : `${editingItem ? 'Editar Registro' : 'Novo Lançamento'} (${modalType.toUpperCase()})`}
                 </h3>
                 <button
@@ -16586,213 +16893,355 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
               {/* CLASSE FORM */}
               {/* CLASSE / DISCIPLINA FORM */}
+              {/* FORMULÁRIO SEPARADO PARA CADASTRO DE DISCIPLINA */}
               {modalType === 'classe' && (
-                <div className="space-y-5">
-                  {/* 1. Nome da Disciplina */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Nome da Disciplina <span className="text-rose-500">*</span>
-                    </label>
-                    <select 
-                      value={["Matemática", "Língua Portuguesa", "Física", "Química", "História", "Geografia", "Biologia", "Educação Física", "Artes", "Inglês", "Filosofia"].includes(classeForm.nome) || !classeForm.nome ? classeForm.nome : "Custom"}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val === "Custom") {
-                          setClasseForm({ ...classeForm, nome: "" });
-                        } else {
-                          setClasseForm({ ...classeForm, nome: val });
-                        }
-                      }}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm text-slate-800 mb-2 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                    >
-                      <option value="">-- Selecionar Disciplina Padronizada --</option>
-                      <option value="Matemática">Matemática</option>
-                      <option value="Língua Portuguesa">Língua Portuguesa</option>
-                      <option value="Física">Física</option>
-                      <option value="Química">Química</option>
-                      <option value="História">História</option>
-                      <option value="Geografia">Geografia</option>
-                      <option value="Biologia">Biologia</option>
-                      <option value="Educação Física">Educação Física</option>
-                      <option value="Artes">Artes</option>
-                      <option value="Inglês">Inglês</option>
-                      <option value="Filosofia">Filosofia</option>
-                      <option value="Custom">Outra (Digitar Nome Personalizado...)</option>
-                    </select>
+                <div className="space-y-6 animate-in fade-in duration-200">
+                  <div className="bg-indigo-50/60 p-3.5 rounded-xl border border-indigo-100 flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-lg bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-xs font-bold text-sm">
+                      <BookMarked className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-slate-800 text-xs">Formulário de Cadastro de Disciplina</h4>
+                      <p className="text-[11px] text-slate-500">Preencha as informações obrigatórias para cadastrar a disciplina no sistema.</p>
+                    </div>
+                  </div>
 
-                    {(!["Matemática", "Língua Portuguesa", "Física", "Química", "História", "Geografia", "Biologia", "Educação Física", "Artes", "Inglês", "Filosofia"].includes(classeForm.nome) || classeForm.nome === "") && (
+                  {/* Campo 1: Disciplina (String) */}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-700">
+                      1. Disciplina (Matéria) <span className="text-rose-500">*</span>
+                    </label>
+                    <div className="space-y-2">
                       <input 
                         type="text"
                         required
-                        value={classeForm.nome}
+                        value={classeForm.nome || ''}
                         onChange={(e) => setClasseForm({ ...classeForm, nome: e.target.value })}
-                        placeholder="Digite o nome completo da disciplina..."
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm animate-in fade-in duration-200 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                        placeholder="Digite o nome da disciplina (ex: Matemática, Física, Língua Portuguesa)..."
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm text-slate-800 font-semibold focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                       />
-                    )}
+                      
+                      {/* Sugestões rápidas de disciplinas */}
+                      <div>
+                        <p className="text-[10px] text-slate-400 font-medium mb-1">Sugestões rápidas:</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {["Matemática", "Língua Portuguesa", "Física", "Química", "Biologia", "História", "Geografia", "Inglês", "Filosofia", "Educação Física", "Artes", "Informática"].map(sub => (
+                            <button
+                              key={sub}
+                              type="button"
+                              onClick={() => setClasseForm({ ...classeForm, nome: sub })}
+                              className={`text-[11px] px-2.5 py-1 rounded-lg border font-medium transition-all cursor-pointer ${
+                                classeForm.nome === sub
+                                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                                  : 'bg-white hover:bg-slate-100 text-slate-600 border-slate-200'
+                              }`}
+                            >
+                              {sub}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
-                  {/* 2. Código da Disciplina (gerado pelo sistema) */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Código da Disciplina <span className="text-slate-400 font-normal">(Gerado pelo sistema)</span>
-                    </label>
-                    <input 
-                      type="text"
-                      readOnly
-                      value={classeForm.codigo || (() => {
-                        const code = 'DISC-' + Math.random().toString(36).substring(2, 8).toUpperCase();
-                        setTimeout(() => {
-                          if (!classeForm.codigo) {
-                            setClasseForm((prev: any) => ({ ...prev, codigo: code }));
+                  {/* Campo 2: Escola (dropdown com pesquisa dinâmica e selecção múltipla, listar escolas associadas ao utilizador) */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-bold text-slate-700">
+                        2. Escola <span className="text-rose-500">*</span>
+                      </label>
+                      <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
+                        {(classeForm.escolas_ids || (classeForm.escola_id ? [classeForm.escola_id] : [])).length} Selecionada(s)
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400">Escolas associadas à sua sessão (pesquisa dinâmica e seleção múltipla):</p>
+
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-3">
+                      {/* Pesquisa Dinâmica */}
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                        <input 
+                          type="text"
+                          placeholder="Pesquisar escola por nome ou código..."
+                          value={formSchoolSearchText}
+                          onChange={(e) => setFormSchoolSearchText(e.target.value)}
+                          className="w-full bg-white border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </div>
+
+                      {/* Lista com Seleção Múltipla */}
+                      <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
+                        {(() => {
+                          const userSchools = schools;
+                          const filteredUserSchools = userSchools.filter(s => 
+                            s.nome.toLowerCase().includes(formSchoolSearchText.toLowerCase()) ||
+                            (s.codigo || '').toLowerCase().includes(formSchoolSearchText.toLowerCase())
+                          );
+
+                          if (filteredUserSchools.length === 0) {
+                            return (
+                              <p className="text-xs text-slate-400 italic py-2 text-center">
+                                Nenhuma escola encontrada.
+                              </p>
+                            );
                           }
-                        }, 0);
-                        return code;
-                      })()}
-                      className="w-full bg-slate-100 border border-slate-200 rounded-xl p-2.5 text-sm text-slate-600 font-bold font-mono cursor-not-allowed"
-                    />
+
+                          const currentSelectedSchools = classeForm.escolas_ids || (classeForm.escola_id ? [classeForm.escola_id] : []);
+
+                          return filteredUserSchools.map(s => {
+                            const isChecked = currentSelectedSchools.includes(s.id);
+                            return (
+                              <label 
+                                key={s.id}
+                                className={`flex items-center gap-2.5 p-2 rounded-lg text-xs font-medium cursor-pointer transition-all ${
+                                  isChecked ? 'bg-indigo-50 text-indigo-900 border border-indigo-200 font-bold' : 'hover:bg-white text-slate-700 border border-transparent'
+                                }`}
+                              >
+                                <input 
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={(e) => {
+                                    let list = [...currentSelectedSchools];
+                                    if (e.target.checked) {
+                                      list.push(s.id);
+                                    } else {
+                                      list = list.filter(id => id !== s.id);
+                                    }
+                                    setClasseForm({ 
+                                      ...classeForm, 
+                                      escolas_ids: list,
+                                      escola_id: list[0] || ''
+                                    });
+                                  }}
+                                  className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <p className="truncate font-semibold">{s.nome}</p>
+                                </div>
+                                {s.codigo && (
+                                  <span className="text-[9px] font-mono font-bold bg-slate-200/60 text-slate-600 px-1.5 py-0.5 rounded">
+                                    {s.codigo}
+                                  </span>
+                                )}
+                              </label>
+                            );
+                          });
+                        })()}
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Escola Context (Optional selector if tenant has multiple schools) */}
-                  {schools.length > 1 && (
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">Escola Associada</label>
-                      <select
-                        value={classeForm.escola_id || ''}
-                        onChange={(e) => setClasseForm({ ...classeForm, escola_id: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                      >
-                        <option value="">-- Selecionar Escola --</option>
-                        {schools.map(s => (
-                          <option key={s.id} value={s.id}>{s.nome}</option>
-                        ))}
-                      </select>
+                  {/* Campo 3: Classe (dropdown com pesquisa dinâmica, listar classes associadas às escolas selecionadas) */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-bold text-slate-700">
+                        3. Classe <span className="text-rose-500">*</span>
+                      </label>
+                      <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
+                        {(classeForm.classes_associadas_ids || []).length} Selecionada(s)
+                      </span>
                     </div>
-                  )}
+                    <p className="text-[11px] text-slate-400">Classes associadas às escolas selecionadas (pesquisa dinâmica):</p>
 
-                  {/* 3. Professores responsáveis (drop-down com checkbox de seleção múltipla) */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Professores Responsáveis
-                    </label>
-                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 max-h-48 overflow-y-auto space-y-2">
-                      <p className="text-[10px] text-slate-400 font-semibold mb-1">
-                        Selecione os docentes que lecionam esta matéria na escola:
-                      </p>
-                      {(() => {
-                        const targetSchoolId = classeForm.escola_id || schools[0]?.id;
-                        const availableTeachers = teachers.filter(t => !targetSchoolId || !t.escola_id || t.escola_id === targetSchoolId);
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-3">
+                      {/* Pesquisa Dinâmica */}
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                        <input 
+                          type="text"
+                          placeholder="Pesquisar classe por nome (ex: 10ª Classe)..."
+                          value={formClassSearchText}
+                          onChange={(e) => setFormClassSearchText(e.target.value)}
+                          className="w-full bg-white border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </div>
 
-                        if (availableTeachers.length === 0) {
-                          return (
-                            <p className="text-xs text-amber-600 italic py-2">
-                              Nenhum docente cadastrado nesta escola.
-                            </p>
+                      {/* Lista de Classes Filtradas */}
+                      <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
+                        {(() => {
+                          const currentSelectedSchools = classeForm.escolas_ids || (classeForm.escola_id ? [classeForm.escola_id] : []);
+                          
+                          const availableClasses = classesEscolares.filter(ce => 
+                            currentSelectedSchools.length === 0 || 
+                            !ce.escola_id || 
+                            currentSelectedSchools.includes(ce.escola_id)
                           );
-                        }
 
-                        return availableTeachers.map(t => {
-                          const usr = tenantUsers.find(u => u.id === t.user_id);
-                          const teacherName = usr?.nome || t.nome || "Docente";
-                          const isChecked = (classeForm.professores_responsaveis || []).includes(t.id);
-                          const teacherSchool = schools.find(s => s.id === t.escola_id);
-
-                          return (
-                            <label 
-                              key={t.id} 
-                              className={`flex items-center gap-2.5 p-2 rounded-lg text-xs font-medium cursor-pointer transition-colors ${
-                                isChecked ? 'bg-indigo-50/80 text-indigo-900 border border-indigo-200/60' : 'hover:bg-slate-100/80 text-slate-700'
-                              }`}
-                            >
-                              <input 
-                                type="checkbox"
-                                checked={isChecked}
-                                onChange={(e) => {
-                                  let list = [...(classeForm.professores_responsaveis || [])];
-                                  if (e.target.checked) {
-                                    list.push(t.id);
-                                  } else {
-                                    list = list.filter(id => id !== t.id);
-                                  }
-                                  setClasseForm({ ...classeForm, professores_responsaveis: list });
-                                }}
-                                className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer"
-                              />
-                              <span className="flex-1 font-semibold">{teacherName}</span>
-                              {t.especialidade && (
-                                <span className="text-[10px] text-slate-400 font-normal">({t.especialidade})</span>
-                              )}
-                              {teacherSchool && (
-                                <span className="text-[9px] font-bold bg-slate-200/60 text-slate-600 px-1.5 py-0.5 rounded">
-                                  {teacherSchool.nome}
-                                </span>
-                              )}
-                            </label>
+                          const filteredClasses = availableClasses.filter(ce =>
+                            ce.nome.toLowerCase().includes(formClassSearchText.toLowerCase()) ||
+                            (ce.nivel || '').toLowerCase().includes(formClassSearchText.toLowerCase())
                           );
-                        });
-                      })()}
+
+                          if (filteredClasses.length === 0) {
+                            return (
+                              <p className="text-xs text-amber-600 italic py-2 text-center">
+                                {availableClasses.length === 0 
+                                  ? "Nenhuma classe cadastrada nas escolas selecionadas."
+                                  : `Nenhuma classe encontrada para "${formClassSearchText}".`}
+                              </p>
+                            );
+                          }
+
+                          return filteredClasses.map(ce => {
+                            const isChecked = (classeForm.classes_associadas_ids || []).includes(ce.id);
+                            const school = schools.find(s => s.id === ce.escola_id);
+                            return (
+                              <label 
+                                key={ce.id}
+                                className={`flex items-center gap-2.5 p-2 rounded-lg text-xs font-medium cursor-pointer transition-all ${
+                                  isChecked ? 'bg-indigo-50 text-indigo-900 border border-indigo-200 font-bold' : 'hover:bg-white text-slate-700 border border-transparent'
+                                }`}
+                              >
+                                <input 
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={(e) => {
+                                    let list = [...(classeForm.classes_associadas_ids || [])];
+                                    if (e.target.checked) {
+                                      list.push(ce.id);
+                                    } else {
+                                      list = list.filter(id => id !== ce.id);
+                                    }
+                                    setClasseForm({ ...classeForm, classes_associadas_ids: list });
+                                  }}
+                                  className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer"
+                                />
+                                <span className="flex-1 font-bold">{ce.nome}</span>
+                                {ce.nivel && (
+                                  <span className="text-[10px] font-semibold text-slate-500 bg-slate-200/50 px-2 py-0.5 rounded-full">
+                                    {ce.nivel}
+                                  </span>
+                                )}
+                                {school && (
+                                  <span className="text-[9px] font-bold text-slate-500 bg-slate-200 px-1.5 py-0.5 rounded">
+                                    {school.nome}
+                                  </span>
+                                )}
+                              </label>
+                            );
+                          });
+                        })()}
+                      </div>
                     </div>
-                    <p className="text-[10px] text-slate-400 mt-1">
-                      {(classeForm.professores_responsaveis || []).length} docente(s) selecionado(s).
-                    </p>
                   </div>
 
-                  {/* 4. Classe associada (drop-down com checkbox de seleção múltipla) */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Classe Associada <span className="text-rose-500">*</span>
+                  {/* Campo 4: ID (automática) */}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-700">
+                      4. ID da Disciplina <span className="text-slate-400 font-normal">(Gerado automaticamente)</span>
                     </label>
-                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 max-h-52 overflow-y-auto space-y-2">
-                      <p className="text-[10px] text-slate-400 font-semibold mb-1">
-                        Selecione as classes letivas cadastradas no sistema que usam esta disciplina:
-                      </p>
-                      {(() => {
-                        const targetSchoolId = classeForm.escola_id || schools[0]?.id;
-                        const availableClasses = classesEscolares.filter(ce => !targetSchoolId || !ce.escola_id || ce.escola_id === targetSchoolId);
-
-                        if (availableClasses.length === 0) {
-                          return (
-                            <p className="text-xs text-amber-600 italic py-2">
-                              Nenhuma classe escolar cadastrada nesta escola. Cadastre classes primeiro.
-                            </p>
-                          );
-                        }
-
-                        return availableClasses.map(ce => {
-                          const isChecked = (classeForm.classes_associadas_ids || []).includes(ce.id);
-                          return (
-                            <label 
-                              key={ce.id} 
-                              className={`flex items-center gap-2.5 p-2 rounded-lg text-xs font-medium cursor-pointer transition-colors ${
-                                isChecked ? 'bg-indigo-50/80 text-indigo-900 border border-indigo-200/60' : 'hover:bg-slate-100/80 text-slate-700'
-                              }`}
-                            >
-                              <input 
-                                type="checkbox"
-                                checked={isChecked}
-                                onChange={(e) => {
-                                  let list = [...(classeForm.classes_associadas_ids || [])];
-                                  if (e.target.checked) {
-                                    list.push(ce.id);
-                                  } else {
-                                    list = list.filter(id => id !== ce.id);
-                                  }
-                                  setClasseForm({ ...classeForm, classes_associadas_ids: list });
-                                }}
-                                className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer"
-                              />
-                              <span className="flex-1 font-bold">{ce.nome}</span>
-                              <span className="text-[10px] font-semibold text-slate-500 bg-slate-200/50 px-2 py-0.5 rounded-full">
-                                {ce.nivel}
-                              </span>
-                            </label>
-                          );
-                        });
-                      })()}
+                    <div className="relative">
+                      <input 
+                        type="text"
+                        readOnly
+                        value={classeForm.codigo || editingItem?.id || 'DISC-AUTOMATIC'}
+                        className="w-full bg-slate-100 border border-slate-200 rounded-xl p-2.5 text-sm text-slate-700 font-bold font-mono cursor-not-allowed shadow-inner"
+                      />
+                      <span className="absolute right-3 top-2.5 text-[10px] font-bold bg-slate-200 text-slate-600 px-2 py-0.5 rounded-md">
+                        AUTO ID
+                      </span>
                     </div>
-                    <p className="text-[10px] text-slate-400 mt-1">
-                      {(classeForm.classes_associadas_ids || []).length} classe(s) associada(s). O nome da classe aparecerá como sufixo da disciplina.
-                    </p>
+                  </div>
+
+                  {/* Campo 5: Docente/Professor responsável (dropdown com pesquisa dinâmica, listar docentes associados às escolas selecionadas) */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-bold text-slate-700">
+                        5. Docente / Professor Responsável
+                      </label>
+                      <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
+                        {(classeForm.professores_responsaveis || []).length} Selecionado(s)
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400">Docentes associados às escolas selecionadas (pesquisa dinâmica):</p>
+
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-3">
+                      {/* Pesquisa Dinâmica */}
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                        <input 
+                          type="text"
+                          placeholder="Pesquisar docente por nome ou especialidade..."
+                          value={formTeacherSearchText}
+                          onChange={(e) => setFormTeacherSearchText(e.target.value)}
+                          className="w-full bg-white border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </div>
+
+                      {/* Lista de Docentes Filtrados */}
+                      <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
+                        {(() => {
+                          const currentSelectedSchools = classeForm.escolas_ids || (classeForm.escola_id ? [classeForm.escola_id] : []);
+
+                          const availableTeachers = teachers.filter(t => 
+                            currentSelectedSchools.length === 0 || 
+                            !t.escola_id || 
+                            currentSelectedSchools.includes(t.escola_id)
+                          );
+
+                          const filteredTeachers = availableTeachers.filter(t => {
+                            const usr = tenantUsers.find(u => u.id === t.user_id);
+                            const teacherName = usr?.nome || t.nome || '';
+                            return teacherName.toLowerCase().includes(formTeacherSearchText.toLowerCase()) ||
+                                   (t.especialidade || '').toLowerCase().includes(formTeacherSearchText.toLowerCase());
+                          });
+
+                          if (filteredTeachers.length === 0) {
+                            return (
+                              <p className="text-xs text-amber-600 italic py-2 text-center">
+                                {availableTeachers.length === 0 
+                                  ? "Nenhum docente cadastrado nas escolas selecionadas."
+                                  : `Nenhum docente encontrado para "${formTeacherSearchText}".`}
+                              </p>
+                            );
+                          }
+
+                          return filteredTeachers.map(t => {
+                            const usr = tenantUsers.find(u => u.id === t.user_id);
+                            const teacherName = usr?.nome || t.nome || "Docente";
+                            const isChecked = (classeForm.professores_responsaveis || []).includes(t.id);
+                            const teacherSchool = schools.find(s => s.id === t.escola_id);
+
+                            return (
+                              <label 
+                                key={t.id}
+                                className={`flex items-center gap-2.5 p-2 rounded-lg text-xs font-medium cursor-pointer transition-all ${
+                                  isChecked ? 'bg-indigo-50 text-indigo-900 border border-indigo-200 font-bold' : 'hover:bg-white text-slate-700 border border-transparent'
+                                }`}
+                              >
+                                <input 
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={(e) => {
+                                    let list = [...(classeForm.professores_responsaveis || [])];
+                                    if (e.target.checked) {
+                                      list.push(t.id);
+                                    } else {
+                                      list = list.filter(id => id !== t.id);
+                                    }
+                                    setClasseForm({ 
+                                      ...classeForm, 
+                                      professores_responsaveis: list,
+                                      docente_id: list[0] || ''
+                                    });
+                                  }}
+                                  className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <p className="truncate font-semibold">{teacherName}</p>
+                                  {t.especialidade && <p className="text-[10px] text-slate-400 font-normal">{t.especialidade}</p>}
+                                </div>
+                                {teacherSchool && (
+                                  <span className="text-[9px] font-bold bg-slate-200/60 text-slate-600 px-1.5 py-0.5 rounded shrink-0">
+                                    {teacherSchool.nome}
+                                  </span>
+                                )}
+                              </label>
+                            );
+                          });
+                        })()}
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -17512,7 +17961,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         const selectedTurma = turmas.find(t => t.id === horarioForm.turma_id);
                         const turmaClasseEscolarId = selectedTurma?.classe_escolar_id;
                         
-                        const filtered = classes.filter(c => {
+                        const filtered = classes.filter(isBaseDiscipline).filter(c => {
                           if (!turmaClasseEscolarId) return true;
                           if (c.classe_escolar_id === turmaClasseEscolarId) return true;
                           if (c.classes_associadas_ids && c.classes_associadas_ids.includes(turmaClasseEscolarId)) return true;

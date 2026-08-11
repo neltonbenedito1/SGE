@@ -111,6 +111,7 @@ export interface Escola {
   tenant_id: string;
   provincia_id: string;
   nome: string;
+  codigo?: string;
   endereco: string;
   telefone: string;
   email: string;
