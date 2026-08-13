@@ -2880,8 +2880,30 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   // Dynamic Forms State
   const [provinciaForm, setProvinciaForm] = useState(() => getSavedFormDraft('draft_provincia', { nome: '', codigo: '' }));
   const [escolaForm, setEscolaForm] = useState(() => getSavedFormDraft('draft_escola', { nome: '', provincia_id: '', endereco: '', telefone: '', email: '', diretor_id: '', ativo: true, latitude: '', longitude: '', logo_url: '', controlar_assiduidade: false, tolerancia_manha: '07:15', tolerancia_tarde: '12:15', tolerancia_noite: '18:15' }));
-  const [teacherForm, setTeacherForm] = useState(() => getSavedFormDraft('draft_teacher', { nome: '', email: '', especialidade: '', numero_registro: '', escola_id: '', data_admissao: new Date().toISOString().split('T')[0] }));
-  const [studentForm, setStudentForm] = useState(() => getSavedFormDraft('draft_student', { nome: '', email: '', escola_id: '', turma_id: '', numero_matricula: '', data_nascimento: '', data_admissao: new Date().toISOString().split('T')[0], genero: 'Masculino' as 'Masculino' | 'Feminino', pai_id: '', faturado: false, periodo_facturacao: 'Mensal' as 'Mensal' | 'Semestral' | 'Anual', foto_url: '', usuario_sistema: false, senha_temporaria: '' }));
+  const [teacherForm, setTeacherForm] = useState<{
+    nome: string;
+    email: string;
+    especialidade: string;
+    numero_registro: string;
+    escola_id: string;
+    data_admissao?: string;
+  }>(() => getSavedFormDraft('draft_teacher', { nome: '', email: '', especialidade: '', numero_registro: '', escola_id: '', data_admissao: new Date().toISOString().split('T')[0] }));
+  const [studentForm, setStudentForm] = useState<{
+    nome: string;
+    email: string;
+    escola_id: string;
+    turma_id: string;
+    numero_matricula: string;
+    data_nascimento: string;
+    data_admissao?: string;
+    genero: 'Masculino' | 'Feminino';
+    pai_id: string;
+    faturado: boolean;
+    periodo_facturacao: 'Mensal' | 'Semestral' | 'Anual';
+    foto_url: string;
+    usuario_sistema: boolean;
+    senha_temporaria: string;
+  }>(() => getSavedFormDraft('draft_student', { nome: '', email: '', escola_id: '', turma_id: '', numero_matricula: '', data_nascimento: '', data_admissao: new Date().toISOString().split('T')[0], genero: 'Masculino' as 'Masculino' | 'Feminino', pai_id: '', faturado: false, periodo_facturacao: 'Mensal' as 'Mensal' | 'Semestral' | 'Anual', foto_url: '', usuario_sistema: false, senha_temporaria: '' }));
   const [turmaForm, setTurmaForm] = useState(() => getSavedFormDraft('draft_turma', { nome: '', escola_id: '', ano_letivo: '2026', nivel: 'Primário', docente_id: '', capacidade_max: 30, classe_escolar_id: '' }));
   const [classeForm, setClasseForm] = useState<any>(() => getSavedFormDraft('draft_classe', { nome: '', turma_id: '', docente_id: '', horario: '', sala: '', data: new Date().toISOString().split('T')[0], dia_semana: getDiaSemanaFromDate(new Date().toISOString().split('T')[0]), codigo: '', escola_id: '', classe_escolar_id: '', professores_responsaveis: [] }));
   const [pautaForm, setPautaForm] = useState<any>(() => getSavedFormDraft('draft_pauta', { escola_id: '', estudante_id: '', classe_id: '', trimestre: '1º Trimestre', nota_prova: '', nota_trabalho: '', nota_participacao: '', nota_exame: '', nota_reavaliacao: '', observacao: '', num_avaliacoes: 3, avaliacao_1: '', avaliacao_2: '', avaliacao_3: '', status_estudante: 'Admitido', status: 'publicado' }));

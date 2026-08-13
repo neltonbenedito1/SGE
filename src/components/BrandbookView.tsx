@@ -32,907 +32,1469 @@ import {
   CreditCard,
   Briefcase,
   Layers,
-  ArrowRight
+  ArrowRight,
+  ChevronLeft,
+  ChevronRight,
+  School,
+  MapPin,
+  ListOrdered,
+  Clock,
+  QrCode,
+  Shield,
+  Server,
+  Mail,
+  FileSpreadsheet,
+  CheckCircle2,
+  AlertCircle,
+  BarChart3,
+  Building2,
+  Sparkles,
+  Maximize2,
+  Minimize2,
+  HelpCircle
 } from 'lucide-react';
 
+// Generated imagery paths
+import heroBannerImg from '../assets/images/sysedu_hero_banner_1786584832528.jpg';
+import academicMgmtImg from '../assets/images/sysedu_academic_mgmt_1786584846649.jpg';
+import financeMgmtImg from '../assets/images/sysedu_finance_mgmt_1786584863615.jpg';
+import student360Img from '../assets/images/sysedu_student_360_1786663342297.jpg';
+import securityCloudImg from '../assets/images/sysedu_security_cloud_1786663353598.jpg';
+import analyticsKpiImg from '../assets/images/sysedu_analytics_kpi_1786663363949.jpg';
+
 export default function BrandbookView() {
+  const [activeCategory, setActiveCategory] = useState<'all' | 'vision' | 'academic' | 'tech' | 'branding'>('all');
+  const [slideMode, setSlideMode] = useState<boolean>(false);
+  const [currentSlideIndex, setCurrentSlideIndex] = useState<number>(0);
   const [copiedColor, setCopiedColor] = useState<string | null>(null);
   const [copiedSvg, setCopiedSvg] = useState<string | null>(null);
 
   const colors = [
     {
-      name: 'Fundo Principal (Branco)',
-      hex: '#FFFFFF',
-      rgb: 'rgb(255, 255, 255)',
-      use: 'Telas, cards, fundos de formulários e espaços vazios.',
-      bgClass: 'bg-[#FFFFFF] border border-gray-200'
-    },
-    {
-      name: 'Fundo Secundário (Off-White)',
-      hex: '#F8FAFC',
-      rgb: 'rgb(248, 250, 252)',
-      use: 'Planos de fundo de páginas, faixas de separação e alternância de tabelas.',
-      bgClass: 'bg-[#F8FAFC] border border-gray-200'
-    },
-    {
-      name: 'Azul-Marinho (Texto e Título)',
+      name: 'Azul-Marinho (Institucional / Títulos)',
       hex: '#0D1B3D',
       rgb: 'rgb(13, 27, 61)',
-      use: 'Títulos principais, cabeçalhos de alta importância, corpo de texto principal e contraste forte.',
+      use: 'Títulos principais, cabeçalhos executivos, textos de alto contraste e fundos nobres.',
       bgClass: 'bg-[#0D1B3D] text-white'
     },
     {
-      name: 'Azul Primário (SaaS Principal)',
+      name: 'Azul Primário (SysEdu Core SaaS)',
       hex: '#1E66F5',
       rgb: 'rgb(30, 102, 245)',
-      use: 'Botões principais, links ativos, destaques de navegação e identidade primária.',
+      use: 'Botões principais, links ativos, destaques de navegação, ícones de foco e identidade central.',
       bgClass: 'bg-[#1E66F5] text-white'
+    },
+    {
+      name: 'Verde-Água (Sucesso & Validação)',
+      hex: '#10B981',
+      rgb: 'rgb(16, 185, 129)',
+      use: 'Indicadores positivos, status pago/presente, taxas de aprovação e validação de assiduidade.',
+      bgClass: 'bg-[#10B981] text-white'
     },
     {
       name: 'Azul Claro (Destaque Suave)',
       hex: '#7DB7FF',
       rgb: 'rgb(125, 183, 255)',
-      use: 'Efeitos de hover em botões secundários, bordas ativas suaves e badges.',
+      use: 'Efeitos de foco suave, badges secundários e realces de interface.',
       bgClass: 'bg-[#7DB7FF] text-slate-900'
     },
     {
-      name: 'Verde-Água (Sucesso/Aprovado)',
-      hex: '#10B981',
-      rgb: 'rgb(16, 185, 129)',
-      use: 'Indicadores positivos, status ativo/pago, taxas crescentes e botões de finalização com sucesso.',
-      bgClass: 'bg-[#10B981] text-white'
-    },
-    {
-      name: 'Cinza Neutro (Secundário)',
+      name: 'Cinza Neutro (Tipografia de Apoio)',
       hex: '#6B7280',
       rgb: 'rgb(107, 114, 128)',
-      use: 'Legendas, rótulos (labels), subtítulos secundários e ícones não-selecionados.',
+      use: 'Legendas, rótulos de campos, metadados secundários e linhas de apoio.',
       bgClass: 'bg-[#6B7280] text-white'
     },
     {
-      name: 'Bordas & Divisores',
-      hex: '#E5E7EB',
-      rgb: 'rgb(229, 231, 235)',
-      use: 'Bordas de cards, linhas divisórias finas e contorno de campos de formulário.',
-      bgClass: 'bg-[#E5E7EB] border border-gray-300 text-slate-800'
+      name: 'Fundo Neutro (Off-White)',
+      hex: '#F8FAFC',
+      rgb: 'rgb(248, 250, 252)',
+      use: 'Planos de fundo de páginas, faixas de separação e alternância de tabelas.',
+      bgClass: 'bg-[#F8FAFC] border border-gray-200 text-slate-800'
     }
-  ];
-
-  const brandAttributes = [
-    {
-      title: 'Moderno',
-      icon: <Zap className="w-5 h-5 text-[#1E66F5]" />,
-      desc: 'Reflete tecnologia educacional de ponta, com fluxo SaaS rápido e visual limpo adaptado aos novos tempos.'
-    },
-    {
-      title: 'Confiável',
-      icon: <ShieldCheck className="w-5 h-5 text-[#1E66F5]" />,
-      desc: 'Segurança absoluta para dados escolares e financeiros. Uma infraestrutura robusta, clara e estável.'
-    },
-    {
-      title: 'Intuitivo',
-      icon: <Compass className="w-5 h-5 text-[#1E66F5]" />,
-      desc: 'Curva de aprendizado mínima. Menus limpos, ações fáceis e acessibilidade total para toda a comunidade.'
-    },
-    {
-      title: 'Completo',
-      icon: <Award className="w-5 h-5 text-[#1E66F5]" />,
-      desc: 'Da gestão de salas de aula ao faturamento de propinas e relatórios financeiros superadmins na mesma plataforma.'
-    },
-    {
-      title: 'Transformador',
-      icon: <Layers className="w-5 h-5 text-[#1E66F5]" />,
-      desc: 'Foco no progresso real de alunos e docentes. Automatização que libera tempo para o que realmente importa: educar.'
-    }
-  ];
-
-  const outlineIconsList = [
-    { label: 'Dashboard', icon: <LayoutDashboard className="w-5 h-5 text-[#1E66F5]" /> },
-    { label: 'Alunos', icon: <GraduationCap className="w-5 h-5 text-[#1E66F5]" /> },
-    { label: 'Professores', icon: <Users className="w-5 h-5 text-[#1E66F5]" /> },
-    { label: 'Turmas', icon: <FolderGit className="w-5 h-5 text-[#1E66F5]" /> },
-    { label: 'Matrículas', icon: <FileText className="w-5 h-5 text-[#1E66F5]" /> },
-    { label: 'Frequência', icon: <CheckSquare className="w-5 h-5 text-[#1E66F5]" /> },
-    { label: 'Avaliações', icon: <Award className="w-5 h-5 text-[#1E66F5]" /> },
-    { label: 'Notas', icon: <BookOpen className="w-5 h-5 text-[#1E66F5]" /> },
-    { label: 'Mensagens', icon: <MessageSquare className="w-5 h-5 text-[#1E66F5]" /> },
-    { label: 'Financeiro', icon: <DollarSign className="w-5 h-5 text-[#1E66F5]" /> },
-    { label: 'Relatórios', icon: <TrendingUp className="w-5 h-5 text-[#1E66F5]" /> },
-    { label: 'Configurações', icon: <Settings className="w-5 h-5 text-[#1E66F5]" /> }
   ];
 
   const handleCopyColor = (hex: string) => {
     navigator.clipboard.writeText(hex);
     setCopiedColor(hex);
-    setTimeout(() => setCopiedColor(null), 1500);
+    setTimeout(() => setCopiedColor(null), 2000);
   };
 
-  const copySvgText = (id: string, text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedSvg(id);
-    setTimeout(() => setCopiedSvg(null), 1500);
-  };
+  const slidesData = [
+    {
+      id: 1,
+      tag: "PLATAFORMA DE GESTÃO EDUCACIONAL",
+      title: "Um ecossistema. Todas as escolas. Uma única visão.",
+      subtitle: "ERP / SIS educacional multi-tenant em nuvem, desenhado para mantenedoras, redes de ensino e instituições que gerem múltiplas escolas sob uma única infraestrutura.",
+      quote: "“Da gestão de uma escola à gestão de todo um ecossistema educacional.”",
+      image: heroBannerImg,
+      badge: "Abertura Institucional"
+    },
+    {
+      id: 2,
+      tag: "O CONTEXTO",
+      title: "O desafio da gestão educacional em rede",
+      subtitle: "Quanto maior a instituição, maior a complexidade de gerir escolas, pessoas, processos e informação.",
+      items: [
+        { num: "1", title: "Dados dispersos", desc: "Informação académica e administrativa fragmentada entre múltiplas unidades escolares." },
+        { num: "2", title: "Cobranças manuais", desc: "Gestão manual e ineficiente de propinas e cobranças de estudantes." },
+        { num: "3", title: "Assiduidade descontrolada", desc: "Falta de controlo de presença de alunos e docentes, sem regras por turno." },
+        { num: "4", title: "Pautas morosas", desc: "Processo lento de elaboração, cálculo e publicação de pautas trimestrais." },
+        { num: "5", title: "Falta de auditabilidade", desc: "Ausência de rasto das ações dos utilizadores em âmbito global e local." }
+      ],
+      badge: "Diagnóstico do Sistema"
+    },
+    {
+      id: 3,
+      tag: "A NOSSA VISÃO",
+      title: "Uma infraestrutura SaaS educacional escalável",
+      subtitle: "Capaz de atuar como núcleo operacional para mantenedoras e redes de ensino de qualquer dimensão.",
+      items: [
+        { num: "1", title: "Multi-tenant nativo", desc: "Arquitetura pronta para sustentar mantenedoras e grupos educacionais de grande porte, com isolamento de dados por instituição." },
+        { num: "2", title: "Planos SaaS parametrizados", desc: "Gestão centralizada de assinaturas, com limites configuráveis de escolas, alunos, professores e turmas por plano." },
+        { num: "3", title: "Multi-idioma configurável", desc: "Suporte a tradução e configuração de idioma ao nível do tenant, preparado para diferentes mercados." }
+      ],
+      badge: "Visão de Produto"
+    },
+    {
+      id: 4,
+      tag: "POSICIONAMENTO",
+      title: "Uma plataforma de gestão e operações educacionais",
+      subtitle: "Cobertura real por domínio funcional, verificada e validada no sistema.",
+      grid: [
+        { name: "Académico", status: "Implementado", color: "bg-emerald-500 text-white" },
+        { name: "Administrativo", status: "Implementado", color: "bg-emerald-500 text-white" },
+        { name: "Financeiro", status: "Implementado", color: "bg-emerald-500 text-white" },
+        { name: "Pessoas", status: "Implementado", color: "bg-emerald-500 text-white" },
+        { name: "Comunicação", status: "Parcial", color: "bg-amber-500 text-white" },
+        { name: "Famílias", status: "Parcial", color: "bg-amber-500 text-white" },
+        { name: "Documental", status: "Parcial", color: "bg-amber-500 text-white" },
+        { name: "Analytics", status: "Parcial", color: "bg-amber-500 text-white" },
+        { name: "Automação", status: "Parcial", color: "bg-amber-500 text-white" },
+        { name: "Integrações", status: "Não existe", color: "bg-slate-300 dark:bg-slate-700 text-slate-700 dark:text-slate-300" }
+      ],
+      badge: "Matriz Funcional"
+    },
+    {
+      id: 5,
+      tag: "MODELO DE DADOS",
+      title: "Multi-instituição, multi-escola",
+      subtitle: "Centralização onde faz sentido. Autonomia onde é necessária.",
+      flow: ["Mantenedora (Tenant)", "Província / Região", "Escola"],
+      details: [
+        "Isolamento lógico rigoroso de dados por tenant_id em todas as coleções",
+        "Configuração independente por unidade (tolerâncias, logótipo, endereço, direção)",
+        "Permissões diferenciadas por nível hierárquico (módulo de permissões globais)",
+        "Relatórios tabulares agregados por tenant e filtráveis por escola individual"
+      ],
+      badge: "Arquitetura Multi-Tenant"
+    },
+    {
+      id: 6,
+      tag: "O ECOSSISTEMA",
+      title: "16 módulos nativos, um único core",
+      subtitle: "Cobertura de ponta a ponta das operações escolares.",
+      modules: [
+        "01. Dashboard Executivo", "02. Províncias / Regiões", "03. Escolas", "04. Docentes",
+        "05. Estudantes", "06. Turmas", "07. Disciplinas", "08. Classes Escolares",
+        "09. Calendário & Horários", "10. Pauta Geral & Avaliações", "11. Facturação & Propinas", "12. Processos de Alunos",
+        "13. Biblioteca Digital", "14. Assiduidade", "15. Workflows de Tarefas", "16. Permissões & Utilizadores"
+      ],
+      badge: "Core Funcional"
+    },
+    {
+      id: 7,
+      tag: "FUNDAÇÃO TÉCNICA",
+      title: "Core da plataforma",
+      subtitle: "Componentes transversais que sustentam todos os módulos com alta robustez.",
+      features: [
+        { title: "Utilizadores", desc: "Criação, atribuição de papel, ativação/suspensão e reset de senha." },
+        { title: "Perfis & Permissões (RBAC)", desc: "Ações granulares: visualizar, criar, editar, excluir, exportar, aprovar." },
+        { title: "Workflow", desc: "Gestão de atividades pendentes com severidade e atribuição a funções." },
+        { title: "Notificações", desc: "In-app e fila assíncrona de e-mails via SMTP/Gmail." },
+        { title: "Auditoria", desc: "Registo de log administrativo para todas as ações operacionais." },
+        { title: "Configurações", desc: "Escalas de avaliação, dados bancários/fiscais e SMTP por tenant." },
+        { title: "Gestão Documental", desc: "Anexos em PDF nos processos e biblioteca digital de e-books." },
+        { title: "Segurança", desc: "Autenticação Firebase e verificação de escopo por tenant_id." }
+      ],
+      image: securityCloudImg,
+      badge: "Fundação Técnica"
+    },
+    {
+      id: 8,
+      tag: "MÓDULO ACADÉMICO",
+      title: "Gestão académica ponta a ponta",
+      subtitle: "Ciclo pedagógico completo e automatizado.",
+      flow: ["Ano Letivo", "Classes & Turmas", "Disciplinas & Agendamento", "Avaliação Contínua", "Pauta & Resultado"],
+      details: [
+        "Classes Escolares: Primário, Secundário, Médio e Pré-escolar com estrutura própria.",
+        "Turmas: Vinculadas a escola, docente titular e capacidade máxima definida.",
+        "Disciplinas: Agendamento com salas, docentes e dias da semana.",
+        "Pautas: Notas de 1º, 2º e 3º trimestre, exames, reavaliação e cálculo automático de média e situação final."
+      ],
+      image: academicMgmtImg,
+      badge: "Ciclo Pedagógico"
+    },
+    {
+      id: 9,
+      tag: "PERFIL UNIFICADO",
+      title: "Gestão do aluno — visão 360º",
+      subtitle: "Centralização completa das informações do estudante.",
+      categories: [
+        { label: "Pessoais", desc: "Nome, foto, género, data de nascimento, BI/NIF, documento de identificação." },
+        { label: "Familiares", desc: "Vínculo com encarregado, contacto e endereço." },
+        { label: "Académicos", desc: "Matrícula, escola, turma, histórico de pautas, transferências e suspensões." },
+        { label: "Financeiros", desc: "Plano de propina, histórico de faturas e recibos emitidos." },
+        { label: "Comportamentais", desc: "Assiduidade em tempo real, crachá digital e QR Code." }
+      ],
+      image: student360Img,
+      badge: "Student 360º"
+    },
+    {
+      id: 10,
+      tag: "MÓDULO FINANCEIRO",
+      title: "Gestão financeira e faturação de propinas",
+      subtitle: "Ciclo financeiro transparente e estruturado.",
+      flow: ["Preçário", "Facturação", "Pagamento", "Reconciliação", "Dívida"],
+      details: [
+        "Preçário configurável: Taxa de propina base, multa por atraso e taxa de IVA definidas por tenant.",
+        "Faturação flexível: Emissão manual/automática de faturas por período: mensal, semestral ou anual.",
+        "Pagamento & reconciliação: Alteração de estado (pendente → pago), registo de data, método e número de recibo.",
+        "Controlo de dívida: Monitorização de faturas em atraso e saldo devedor consolidado por escola."
+      ],
+      image: financeMgmtImg,
+      badge: "Ciclo Financeiro"
+    },
+    {
+      id: 11,
+      tag: "RECURSOS HUMANOS",
+      title: "Gestão de pessoas (docentes e colaboradores)",
+      subtitle: "Governança do corpo docente e técnico.",
+      items: [
+        { num: "1", title: "Cadastro de Docentes", desc: "Especialidade, número de registo, data de admissão, escola alocada e turmas atribuídas." },
+        { num: "2", title: "Horários & Carga Horária", desc: "Alocação de professores às disciplinas agendadas." },
+        { num: "3", title: "Assiduidade por Turno", desc: "Registo diário (manhã, tarde, noite) validado contra a tolerância de cada escola." },
+        { num: "4", title: "Justificativas de Ausência", desc: "Fluxo de submissão e avaliação de justificativas, com atualização de estado da falta." }
+      ],
+      badge: "People 360º"
+    },
+    {
+      id: 12,
+      tag: "RELACIONAMENTO",
+      title: "Comunicação e relacionamento",
+      subtitle: "Canais e fluxos de comunicação integrados.",
+      flow: ["Escola", "Professor", "Aluno", "Encarregado"],
+      details: [
+        "Notificações do sistema: Emissão in-app para gestores, professores e utilizadores.",
+        "Motor de e-mail assíncrono: Configuração SMTP manual ou Gmail OAuth/App Password por tenant.",
+        "Fila de reenvio automático: Tabela de e-mails pendentes reprocessada para garantir entrega confiável.",
+        "Comunicação com encarregados: Notificação sobre ausências e emissão de declarações."
+      ],
+      badge: "Comunicação Escolar"
+    },
+    {
+      id: 13,
+      tag: "EXPERIÊNCIA MULTI-PERFIL",
+      title: "Portais e experiências",
+      subtitle: "5 experiências dedicadas em Web SPA responsiva.",
+      portals: [
+        { num: "1", name: "SuperAdmin", desc: "Gestão multi-tenant, planos SaaS, aprovação de pagamentos e logs operacionais globais." },
+        { num: "2", name: "Mantenedora / Tenant", desc: "Painel consolidado de rede de escolas, estatísticas globais, regiões e permissões." },
+        { num: "3", name: "Diretor de Escola", desc: "Operação da unidade: turmas, pautas, assiduidade e fecho financeiro local." },
+        { num: "4", name: "Professor", desc: "Turmas atribuídas, lançamento de notas e agendamento de aulas." },
+        { num: "5", name: "Aluno / Encarregado", desc: "Boletim, propinas, biblioteca digital e crachá QR Code." }
+      ],
+      badge: "5 Experiências"
+    },
+    {
+      id: 14,
+      tag: "INTELIGÊNCIA",
+      title: "Dashboards & Analytics em tempo real",
+      subtitle: "Dados → informação → decisão em tempo real.",
+      items: [
+        { num: "SaaS", title: "SaaS Executivo", desc: "Receita recorrente mensal, contagem de tenants por estado e alertas de vencimento." },
+        { num: "Operação", title: "Operação da Rede", desc: "Total de escolas, docentes, estudantes, turmas e disciplinas por instituição." },
+        { num: "Presença", title: "Assiduidade", desc: "Indicador percentual de presença acumulada em tempo real." },
+        { num: "Finanças", title: "Financeiro", desc: "Volume de propinas cobradas vs. pendentes / em dívida com exportação Excel/CSV." }
+      ],
+      image: analyticsKpiImg,
+      badge: "Dashboards & Analytics"
+    },
+    {
+      id: 15,
+      tag: "EFICIÊNCIA OPERACIONAL",
+      title: "Automação de processos",
+      subtitle: "Menos processos manuais, maior velocidade operacional.",
+      automations: [
+        { title: "Fila de e-mails", desc: "Reprocessamento automático a cada 15 segundos, garantindo entrega mesmo após falhas de ligação." },
+        { title: "Assiduidade", desc: "Classificação automática (presente/atrasado) por comparação entre check-in e tolerância do turno." },
+        { title: "Cálculo de pautas", desc: "Apuração automática de médias trimestrais e resultado final de aprovação." },
+        { title: "Regras financeiras", desc: "Aplicação automática de multas por atraso e taxas nas faturas." }
+      ],
+      badge: "Automação"
+    },
+    {
+      id: 16,
+      tag: "TECNOLOGIA",
+      title: "Arquitetura cloud moderna",
+      subtitle: "Stack tecnológico de alto desempenho e segurança.",
+      stack: [
+        { label: "Interface", desc: "React 18 + TypeScript — Single Page Application rápida e responsiva." },
+        { label: "Dados & Autenticação", desc: "Firebase Firestore (NoSQL) + Firebase Authentication com regras de segurança." },
+        { label: "Comunicação", desc: "SMTP customizado e Gmail OAuth2 / App Password com fila resiliente." },
+        { label: "Ficheiros & QR", desc: "SheetJS (Excel), visualizador PDF integrado e geração/leitura de QR Code." }
+      ],
+      image: securityCloudImg,
+      badge: "Stack Tecnológico"
+    },
+    {
+      id: 17,
+      tag: "CONFIANÇA",
+      title: "Segurança e governança",
+      subtitle: "Governança de dados de classe empresarial.",
+      checks: [
+        { label: "Autenticação", desc: "Gestão de utilizadores via Firebase Auth." },
+        { label: "RBAC granular", desc: "Matriz configurável por categoria: visualizar, criar, editar, excluir, exportar, aprovar." },
+        { label: "Isolamento por tenant", desc: "Segregação obrigatória de dados por tenant_id em todas as coleções." },
+        { label: "Auditoria completa", desc: "Registo de log administrativo para todas as operações de gestão." },
+        { label: "Soft delete", desc: "Exclusão lógica (deleted_at) em mantenedoras e escolas, sem perda de histórico." }
+      ],
+      badge: "Governança de Dados"
+    },
+    {
+      id: 18,
+      tag: "POR QUE ESTA PLATAFORMA",
+      title: "Diferenciais competitivos",
+      subtitle: "5 pilares estratégicos de diferenciação real.",
+      items: [
+        { num: "1", title: "Escala", desc: "Hierarquia completa Mantenedora → Região → Escola para redes de ensino." },
+        { num: "2", title: "Integração", desc: "Fila de e-mails híbrida nativa e leitura de QR Code sem investimento em hardware." },
+        { num: "3", title: "Experiência", desc: "Interface responsiva e rápida, com busca em tempo real em todas as tabelas." },
+        { num: "4", title: "Inteligência", desc: "Tolerância de assiduidade por turno e cálculo automatizado de aprovação." },
+        { num: "5", title: "Automação", desc: "Motor de pautas trimestrais com transição automática do histórico do aluno." }
+      ],
+      badge: "5 Pilares"
+    },
+    {
+      id: 19,
+      tag: "IMPACTO",
+      title: "Benefícios por stakeholder",
+      subtitle: "Um sistema, seis perspetivas complementares.",
+      stakeholders: [
+        { name: "Direção Institucional", desc: "Controlo centralizado da rede, governança de limites por plano e relatório financeiro consolidado." },
+        { name: "Direção de Escola", desc: "Autonomia para gerir turmas, salas, professores locais e regras de tolerância." },
+        { name: "Professores", desc: "Lançamento simplificado de notas e frequências, com pautas automatizadas." },
+        { name: "Alunos & Encarregados", desc: "Boletim digital, propinas, crachá QR Code e leitor de e-books." },
+        { name: "Financeiro", desc: "Automação de faturamento, regras de mora e recibos numerados." },
+        { name: "TI / Administradores", desc: "RBAC customizável por função, sem gerir infraestrutura física." }
+      ],
+      badge: "Impacto por Stakeholder"
+    },
+    {
+      id: 20,
+      tag: "EVOLUÇÃO DO PRODUTO",
+      title: "Roadmap de maturidade",
+      subtitle: "Estado real e transparente de implementação.",
+      phases: [
+        { name: "Fase 1 — Digitalizar", progress: 100, desc: "Matrículas, pautas, escolas, disciplinas, biblioteca, QR Code e assiduidade.", color: "bg-emerald-600" },
+        { name: "Fase 2 — Integrar", progress: 55, desc: "E-mail SMTP e Excel concluídos; roadmap para gateways bancários.", color: "bg-amber-500" },
+        { name: "Fase 3 — Automatizar", progress: 55, desc: "Fila de e-mails e cálculo de pautas automáticos; cobrança em evolução.", color: "bg-amber-500" },
+        { name: "Fase 4 — Inteligência", progress: 20, desc: "Dashboards ativos; roadmap para modelos preditivos de evasão.", color: "bg-blue-500" },
+        { name: "Fase 5 — Ecossistema", progress: 5, desc: "Planejamento para abertura de APIs públicas para parceiros.", color: "bg-slate-400" }
+      ],
+      badge: "Roadmap"
+    },
+    {
+      id: 21,
+      tag: "COMERCIAL",
+      title: "Modelo de negócio",
+      subtitle: "Previsibilidade de receita alinhada ao crescimento de cada mantenedora.",
+      items: [
+        { num: "1", title: "SaaS B2B recorrente", desc: "Assinatura mensal ou anual, gerida centralmente através do portal SuperAdmin." },
+        { num: "2", title: "Precificação por camadas", desc: "Planos com limites parametrizados de escolas, docentes, estudantes, turmas e disciplinas." },
+        { num: "3", title: "Faturação centralizada", desc: "Histórico de pagamentos e faturas da mantenedora geridos numa única coleção." }
+      ],
+      badge: "Monetização SaaS"
+    },
+    {
+      id: 22,
+      tag: "FECHO INSTITUCIONAL",
+      title: "Uma instituição. Múltiplas escolas. Uma única plataforma.",
+      subtitle: "Uma visão consolidada de dados e uma experiência integrada para toda a comunidade educativa.",
+      quote: "“Da gestão de uma escola à gestão de todo um ecossistema educacional.”",
+      image: heroBannerImg,
+      badge: "Visão de Futuro"
+    }
+  ];
 
   return (
-    <div className="bg-slate-50 min-h-screen text-[#0D1B3D] font-poppins pb-24 selection:bg-[#7DB7FF] selection:text-[#0D1B3D]">
-      {/* BRANDBOOK COVER HERO */}
-      <section className="bg-white border-b border-[#E5E7EB] pt-12 pb-16 px-4 md:px-8 relative overflow-hidden">
-        <div className="absolute right-0 top-0 w-96 h-96 bg-gradient-to-br from-[#1E66F5]/5 to-[#10B981]/5 rounded-full blur-3xl -z-10"></div>
-        <div className="absolute left-10 bottom-0 w-80 h-80 bg-gradient-to-tr from-[#7DB7FF]/5 to-[#10B981]/5 rounded-full blur-3xl -z-10"></div>
-        
-        <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-10">
-          <div className="space-y-4 max-w-2xl text-left">
-            <span className="bg-[#1E66F5]/10 text-[#1E66F5] text-xs font-extrabold px-3 py-1.5 rounded-full uppercase tracking-wider">
-              Brand Identity & Style Guide
+    <main id="branding-root-main" className="min-h-screen bg-slate-900 text-slate-100 font-sans pb-24 selection:bg-blue-600 selection:text-white">
+      {/* Top Navigation & Mode Switcher Bar */}
+      <header id="branding-header" className="sticky top-0 z-50 bg-slate-950/90 backdrop-blur-xl border-b border-slate-800/80 px-4 sm:px-8 py-3.5 transition-all shadow-md">
+        <div id="branding-header-inner" className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <SysEduLogo variant="negative" size={36} />
+            <div className="h-6 w-[1px] bg-slate-800 hidden sm:block"></div>
+            <span className="text-xs font-semibold uppercase tracking-widest text-blue-400/90 hidden sm:inline-block">
+              Pitch Deck & Brandbook Institucional
             </span>
-            <h1 className="text-4xl md:text-5xl font-black text-[#0D1B3D] tracking-tight leading-tight">
-              SysEdu Brandbook
-            </h1>
-            <p className="text-[#6B7280] text-sm md:text-base leading-relaxed">
-              Manual de identidade visual e guia de estilo completo do ecossistema educacional de alta performance. 
-              Criado para garantir a consistência estética e a sofisticação da experiência SaaS clara, amigável e transformadora do SysEdu.
-            </p>
-            <div className="flex flex-wrap gap-3.5 pt-2">
-              <a 
-                href="#logo-section" 
-                className="bg-[#1E66F5] hover:bg-[#1E66F5]/90 text-white font-bold text-xs py-3 px-5 rounded-xl transition-all shadow-lg shadow-[#1E66F5]/20 flex items-center gap-1.5"
-              >
-                Logotipo <ArrowRight className="w-4 h-4" />
-              </a>
-              <a 
-                href="#mockup-section" 
-                className="bg-white border border-[#E5E7EB] hover:bg-slate-50 text-[#0D1B3D] font-bold text-xs py-3 px-5 rounded-xl transition-all shadow-sm"
-              >
-                Mockups de Aplicação
-              </a>
-            </div>
           </div>
 
-          <div className="bg-slate-50 p-8 rounded-3xl border border-[#E5E7EB] shadow-xl flex items-center justify-center min-w-[280px]">
-            <SysEduLogo variant="vertical" size={130} showSlogan={true} />
-          </div>
-        </div>
-      </section>
+          <div className="flex items-center gap-2.5 flex-wrap justify-center">
+            {/* View Mode Switcher */}
+            <button
+              id="btn-toggle-presentation-mode"
+              onClick={() => setSlideMode(!slideMode)}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer border ${
+                slideMode
+                  ? 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-900/40'
+                  : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+              }`}
+            >
+              {slideMode ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+              {slideMode ? 'Visualização em Grade' : 'Modo Apresentação (Slides)'}
+            </button>
 
-      <div className="max-w-6xl mx-auto px-4 md:px-8 mt-12 grid grid-cols-1 lg:grid-cols-4 gap-8">
-        
-        {/* BRANDBOOK NAVIGATION SIDEBAR */}
-        <aside className="lg:col-span-1 space-y-3 lg:sticky lg:top-8 h-fit">
-          <div className="bg-white p-5 rounded-2xl border border-[#E5E7EB] shadow-sm space-y-4">
-            <h3 className="font-extrabold text-xs text-[#0D1B3D] uppercase tracking-wider">
-              Sumário de Seções
-            </h3>
-            <nav className="flex flex-col space-y-1">
-              {[
-                { label: '1. O Logotipo Oficial', id: 'logo-section' },
-                { label: '2. Paleta de Cores', id: 'color-section' },
-                { label: '3. Tipografia Oficial', id: 'typography-section' },
-                { label: '4. Ícones Corporativos', id: 'icons-section' },
-                { label: '5. Variações da Marca', id: 'variations-section' },
-                { label: '6. Aplicação Digital (SaaS)', id: 'mockup-section' },
-                { label: '7. Aplicações Físicas', id: 'physical-section' },
-                { label: '8. Atributos Fundamentais', id: 'attributes-section' }
-              ].map((item) => (
-                <a
-                  key={item.id}
-                  href={`#${item.id}`}
-                  className="text-xs font-semibold text-[#6B7280] hover:text-[#1E66F5] hover:bg-[#1E66F5]/5 px-3 py-2.5 rounded-lg transition-all flex items-center justify-between group"
-                >
-                  <span>{item.label}</span>
-                  <span className="opacity-0 group-hover:opacity-100 text-[#1E66F5] transition-opacity">→</span>
-                </a>
-              ))}
-            </nav>
-          </div>
-
-          {/* Quick Stats Banner */}
-          <div className="bg-gradient-to-br from-[#0D1B3D] to-[#1E66F5] p-5 rounded-2xl text-white shadow-lg space-y-2.5">
-            <p className="text-[10px] font-extrabold uppercase tracking-widest text-[#7DB7FF]">Slogan Corporativo</p>
-            <p className="text-sm font-semibold italic">"Organizar hoje, transformar o amanhã."</p>
-            <div className="border-t border-white/10 pt-2.5 mt-2 flex items-center gap-1.5 text-[10px] text-blue-200">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#10B981] animate-pulse"></span>
-              <span>Tema Claro Padrão Homologado</span>
-            </div>
-          </div>
-        </aside>
-
-        {/* BRANDBOOK CONTENT SECTIONS */}
-        <main className="lg:col-span-3 space-y-12">
-          
-          {/* SECTION 1: LOGOTIPO OFICIAL */}
-          <section id="logo-section" className="bg-white p-6 md:p-8 rounded-3xl border border-[#E5E7EB] shadow-sm space-y-6">
-            <div className="border-b border-[#E5E7EB] pb-4 flex justify-between items-start">
-              <div className="space-y-1">
-                <span className="text-[10px] font-black text-[#1E66F5] uppercase tracking-wider font-mono">Seção 01</span>
-                <h2 className="text-xl md:text-2xl font-black text-[#0D1B3D]">O Logotipo Oficial</h2>
-              </div>
-            </div>
-
-            <p className="text-xs text-[#6B7280] leading-relaxed">
-              O logotipo do SysEdu é composto por um ícone integrado de um <strong>chapéu de formatura (mural board cap)</strong> com um pingente sofisticado, posicionado dinamicamente sobre um <strong>livro aberto</strong>. O livro aberto apresenta uma metade em gradiente azul vibrante e a outra metade em verde-água energético, ilustrando a transição do conhecimento tradicional para a modernidade digital da gestão educacional de alto nível.
-            </p>
-
-            {/* Display of Horizontal and Vertical variants */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-slate-50 p-6 rounded-2xl border border-[#E5E7EB]">
-              
-              <div className="bg-white p-6 rounded-xl border border-[#E5E7EB] flex flex-col items-center justify-between min-h-[180px] space-y-4">
-                <span className="text-[9px] font-bold text-[#6B7280] uppercase tracking-wider">Assinatura Horizontal (Preferencial)</span>
-                <div className="py-2.5">
-                  <SysEduLogo variant="full" size={48} showSlogan={false} />
-                </div>
-                <p className="text-[10px] text-[#6B7280] text-center">Para cabeçalhos de sistemas, sites corporativos, papéis timbrados e mídias amplas.</p>
-              </div>
-
-              <div className="bg-white p-6 rounded-xl border border-[#E5E7EB] flex flex-col items-center justify-between min-h-[180px] space-y-4">
-                <span className="text-[9px] font-bold text-[#6B7280] uppercase tracking-wider">Assinatura Vertical (Iconográfica)</span>
-                <div className="py-1">
-                  <SysEduLogo variant="vertical" size={54} showSlogan={false} />
-                </div>
-                <p className="text-[10px] text-[#6B7280] text-center">Para materiais de marketing, capas de manuais, brindes e crachás de identificação.</p>
-              </div>
-
-            </div>
-
-            {/* SVG Code Export Option */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-extrabold uppercase tracking-wider text-[#0D1B3D]">Elemento de Código (SVG Vetorial)</h4>
+            {/* Category Filter Tabs (when in grid mode) */}
+            {!slideMode && (
+              <div className="flex items-center bg-slate-900 border border-slate-800 rounded-xl p-1 gap-1">
                 <button
-                  onClick={() => copySvgText('logo-svg', `<svg viewBox="0 0 160 160" width="100" height="100"><path d="M 80,30 L 138,52 L 80,74 L 22,52 Z" fill="#1E66F5"/><path d="M 45,60 L 45,78 C 45,95 115,95 115,78 L 115,60" fill="#1E66F5"/><circle cx="80" cy="80" r="14" fill="#1E66F5"/><path d="M 80,105 C 55,90 28,100 24,115 L 24,142 C 28,127 55,117 80,132 Z" fill="#1E66F5"/><path d="M 80,105 C 105,90 132,100 136,115 L 136,142 C 132,127 105,117 80,132 Z" fill="#10B981"/></svg>`)}
-                  className="text-[10px] text-[#1E66F5] hover:text-[#1E66F5]/80 font-bold flex items-center gap-1 cursor-pointer"
+                  onClick={() => setActiveCategory('all')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    activeCategory === 'all' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                  }`}
                 >
-                  {copiedSvg === 'logo-svg' ? (
-                    <>
-                      <Check className="w-3.5 h-3.5 text-emerald-500" /> Copiado!
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5" /> Copiar Código SVG
-                    </>
-                  )}
+                  Todos (22 Tópicos)
+                </button>
+                <button
+                  onClick={() => setActiveCategory('vision')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    activeCategory === 'vision' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Visão & Estrutura
+                </button>
+                <button
+                  onClick={() => setActiveCategory('academic')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    activeCategory === 'academic' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Académico & Módulos
+                </button>
+                <button
+                  onClick={() => setActiveCategory('tech')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    activeCategory === 'tech' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Tecnologia & Governança
+                </button>
+                <button
+                  onClick={() => setActiveCategory('branding')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    activeCategory === 'branding' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Identidade Visual
                 </button>
               </div>
-              <div className="bg-[#0D1B3D] text-[#7DB7FF] p-3 rounded-xl font-mono text-[9px] overflow-x-auto whitespace-pre">
-                {`<!-- Logo SysEdu: Chapéu de Formatura & Livro Aberto -->
-<svg viewBox="0 0 160 160" width="80" height="80">
-  <path d="M 80,30 L 138,52 L 80,74 L 22,52 Z" fill="#1E66F5" />
-  <path d="M 45,60 L 45,78 C 45,95 115,95 115,78 L 115,60" fill="#1E66F5" />
-  <path d="M 80,105 C 55,90 28,100 24,115 L 24,142 Z" fill="#1E66F5" />
-  <path d="M 80,105 C 105,90 132,100 136,115 L 136,142 Z" fill="#10B981" />
-</svg>`}
+            )}
+
+            <button
+              onClick={() => window.print()}
+              className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors cursor-pointer"
+              title="Imprimir Apresentação"
+            >
+              <Printer className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* =========================================================================
+          SLIDE MODE (PITCH DECK INTERACTIVE SLIDE VIEWER)
+         ========================================================================= */}
+      {slideMode ? (
+        <div id="slide-mode-container" className="max-w-6xl mx-auto px-4 py-8">
+          <div className="bg-slate-950 border border-slate-800 rounded-3xl p-8 sm:p-12 shadow-2xl relative overflow-hidden min-h-[600px] flex flex-col justify-between">
+            {/* Background Graphic Accents */}
+            <div className="absolute -top-24 -right-24 w-96 h-96 bg-blue-600/10 rounded-full blur-3xl pointer-events-none"></div>
+            <div className="absolute -bottom-24 -left-24 w-96 h-96 bg-teal-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+            {/* Slide Header */}
+            <div className="flex items-center justify-between border-b border-slate-800/80 pb-6 mb-8 relative z-10">
+              <div className="flex items-center gap-3">
+                <span className="px-3 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 text-xs font-bold rounded-full uppercase tracking-wider">
+                  {slidesData[currentSlideIndex].tag}
+                </span>
+                <span className="text-xs text-slate-500 font-mono">
+                  Slide {currentSlideIndex + 1} de {slidesData.length}
+                </span>
+              </div>
+              <SysEduLogo variant="negative" size={28} />
+            </div>
+
+            {/* Slide Body Content */}
+            <div className="relative z-10 my-auto">
+              <h2 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight mb-4 leading-tight">
+                {slidesData[currentSlideIndex].title}
+              </h2>
+              <p className="text-lg text-slate-300 font-normal leading-relaxed max-w-3xl mb-8">
+                {slidesData[currentSlideIndex].subtitle}
+              </p>
+
+              {/* Dynamic Slide Content by Schema */}
+              {slidesData[currentSlideIndex].image && (
+                <div className="relative rounded-2xl overflow-hidden border border-slate-800 my-6 shadow-xl max-h-72">
+                  <img 
+                    src={slidesData[currentSlideIndex].image} 
+                    alt={slidesData[currentSlideIndex].title}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-72 object-cover"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent to-transparent"></div>
+                  <div className="absolute bottom-4 left-6 flex items-center gap-3">
+                    <SysEduLogo variant="icon" size={24} />
+                    <span className="text-xs font-bold text-white uppercase tracking-wider drop-shadow-md">
+                      Plataforma Integrada SysEdu
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {slidesData[currentSlideIndex].items && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mt-6">
+                  {slidesData[currentSlideIndex].items.map((it: any, idx: number) => (
+                    <div key={idx} className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 hover:border-slate-700 transition-all">
+                      <div className="w-8 h-8 rounded-xl bg-blue-600/20 text-blue-400 font-bold flex items-center justify-center text-sm mb-3 border border-blue-500/20">
+                        {it.num}
+                      </div>
+                      <h4 className="font-bold text-white text-base mb-1">{it.title}</h4>
+                      <p className="text-xs text-slate-400 leading-relaxed">{it.desc}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {slidesData[currentSlideIndex].grid && (
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-6">
+                  {slidesData[currentSlideIndex].grid.map((g: any, idx: number) => (
+                    <div key={idx} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 text-center">
+                      <p className="font-bold text-sm text-slate-200 mb-2">{g.name}</p>
+                      <span className={`inline-block px-2.5 py-0.5 text-[11px] font-bold rounded-full ${g.color}`}>
+                        {g.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {slidesData[currentSlideIndex].flow && (
+                <div className="my-6">
+                  <div className="flex flex-wrap items-center gap-3 bg-slate-900/60 p-4 rounded-2xl border border-slate-800">
+                    {slidesData[currentSlideIndex].flow.map((step: string, idx: number) => (
+                      <React.Fragment key={idx}>
+                        <div className="bg-blue-600/20 border border-blue-500/30 px-4 py-2 rounded-xl text-blue-300 font-bold text-xs sm:text-sm flex items-center gap-2">
+                          <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center">{idx + 1}</span>
+                          {step}
+                        </div>
+                        {idx < slidesData[currentSlideIndex].flow.length - 1 && (
+                          <ArrowRight className="w-4 h-4 text-slate-600 shrink-0" />
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </div>
+                  {slidesData[currentSlideIndex].details && (
+                    <ul className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+                      {slidesData[currentSlideIndex].details.map((d: string, idx: number) => (
+                        <li key={idx} className="flex items-start gap-2.5 text-xs text-slate-300 bg-slate-900/40 p-3 rounded-xl border border-slate-800/60">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                          <span>{d}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+
+              {slidesData[currentSlideIndex].modules && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6">
+                  {slidesData[currentSlideIndex].modules.map((m: string, idx: number) => (
+                    <div key={idx} className="bg-slate-900/90 border border-slate-800/90 rounded-xl p-3.5 hover:border-blue-500/40 transition-colors">
+                      <p className="font-semibold text-xs text-slate-200">{m}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {slidesData[currentSlideIndex].portals && (
+                <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 mt-6">
+                  {slidesData[currentSlideIndex].portals.map((p: any, idx: number) => (
+                    <div key={idx} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between">
+                      <div>
+                        <span className="w-6 h-6 rounded-lg bg-blue-600/30 text-blue-400 font-bold text-xs flex items-center justify-center mb-2">
+                          {p.num}
+                        </span>
+                        <h4 className="font-bold text-sm text-white mb-1.5">{p.name}</h4>
+                        <p className="text-[11px] text-slate-400 leading-normal">{p.desc}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {slidesData[currentSlideIndex].phases && (
+                <div className="space-y-3.5 mt-6">
+                  {slidesData[currentSlideIndex].phases.map((ph: any, idx: number) => (
+                    <div key={idx} className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="font-bold text-sm text-white">{ph.name}</span>
+                        <span className="font-bold text-xs text-blue-400">{ph.progress}%</span>
+                      </div>
+                      <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden mb-2">
+                        <div className={`h-2 rounded-full ${ph.color}`} style={{ width: `${ph.progress}%` }}></div>
+                      </div>
+                      <p className="text-xs text-slate-400">{ph.desc}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {slidesData[currentSlideIndex].quote && (
+                <div className="mt-8 border-l-4 border-teal-500 pl-4 py-1">
+                  <p className="italic text-base sm:text-lg text-teal-300 font-serif">
+                    {slidesData[currentSlideIndex].quote}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Slide Navigation Footer */}
+            <div className="flex items-center justify-between border-t border-slate-800/80 pt-6 mt-8 relative z-10">
+              <button
+                onClick={() => setCurrentSlideIndex(Math.max(0, currentSlideIndex - 1))}
+                disabled={currentSlideIndex === 0}
+                className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-40 disabled:pointer-events-none text-slate-300 text-xs font-bold flex items-center gap-2 border border-slate-800 transition-colors cursor-pointer"
+              >
+                <ChevronLeft className="w-4 h-4" /> Anterior
+              </button>
+
+              <div className="flex items-center gap-1.5 overflow-x-auto px-2 max-w-md">
+                {slidesData.map((_, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => setCurrentSlideIndex(idx)}
+                    className={`h-2 rounded-full transition-all cursor-pointer ${
+                      currentSlideIndex === idx ? 'w-6 bg-blue-500' : 'w-2 bg-slate-800 hover:bg-slate-700'
+                    }`}
+                    title={`Ir para slide ${idx + 1}`}
+                  />
+                ))}
+              </div>
+
+              <button
+                onClick={() => setCurrentSlideIndex(Math.min(slidesData.length - 1, currentSlideIndex + 1))}
+                disabled={currentSlideIndex === slidesData.length - 1}
+                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:pointer-events-none text-white text-xs font-bold flex items-center gap-2 border border-blue-500 transition-colors cursor-pointer shadow-md"
+              >
+                Próximo <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* =========================================================================
+            GRID OVERVIEW MODE (FULL 22-SLIDE DECK & BRANDBOOK EXPERIENCE)
+           ========================================================================= */
+        <div id="grid-mode-container" className="max-w-7xl mx-auto px-4 sm:px-8 py-10 space-y-16">
+          
+          {/* HERO BANNER SECTION (SLIDE 1) */}
+          <section id="section-hero" className="relative rounded-3xl overflow-hidden border border-slate-800 bg-gradient-to-br from-slate-950 via-[#0D1B3D] to-slate-950 p-8 sm:p-14 shadow-2xl">
+            <div className="absolute top-0 right-0 w-full sm:w-1/2 h-full opacity-35 pointer-events-none">
+              <img 
+                src={heroBannerImg} 
+                alt="SysEdu Ecosystem Banner" 
+                referrerPolicy="no-referrer"
+                className="w-full h-full object-cover object-center"
+              />
+              <div className="absolute inset-0 bg-gradient-to-r from-[#0D1B3D] via-[#0D1B3D]/70 to-transparent"></div>
+            </div>
+
+            <div className="relative z-10 max-w-2xl">
+              <div className="inline-flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-bold uppercase tracking-wider mb-6">
+                <Sparkles className="w-3.5 h-3.5" /> Plataforma de Gestão Educacional
+              </div>
+              <h1 className="text-4xl sm:text-5xl font-black text-white tracking-tight leading-tight mb-4">
+                Um ecossistema. <br />
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-teal-300 to-blue-200">
+                  Todas as escolas.
+                </span> <br />
+                Uma única visão.
+              </h1>
+              <p className="text-base sm:text-lg text-slate-300 leading-relaxed mb-6 font-normal">
+                ERP / SIS educacional multi-tenant em nuvem, desenhado para mantenedoras, redes de ensino e instituições que gerem múltiplas escolas sob uma única infraestrutura.
+              </p>
+              
+              <div className="border-l-4 border-teal-400 pl-4 py-1 mb-8">
+                <p className="text-sm italic text-teal-300 font-serif">
+                  “Da gestão de uma escola à gestão de todo um ecossistema educacional.”
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-4">
+                <button
+                  onClick={() => { setSlideMode(true); setCurrentSlideIndex(0); }}
+                  className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all shadow-lg shadow-blue-900/30 flex items-center gap-2 cursor-pointer"
+                >
+                  <Maximize2 className="w-4 h-4" /> Iniciar Apresentação Interativa
+                </button>
+                <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-900/80 px-4 py-3 rounded-xl border border-slate-800">
+                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                  <span>Multi-Tenant • RBAC • Nuvem Firestore</span>
+                </div>
               </div>
             </div>
           </section>
 
-          {/* SECTION 2: PALETA DE CORES (TEMA CLARO) */}
-          <section id="color-section" className="bg-white p-6 md:p-8 rounded-3xl border border-[#E5E7EB] shadow-sm space-y-6">
-            <div className="border-b border-[#E5E7EB] pb-4">
-              <span className="text-[10px] font-black text-[#1E66F5] uppercase tracking-wider font-mono">Seção 02</span>
-              <h2 className="text-xl md:text-2xl font-black text-[#0D1B3D]">Paleta de Cores Oficial</h2>
-            </div>
-
-            <p className="text-xs text-[#6B7280] leading-relaxed">
-              O ecossistema visual do SysEdu foi migrado inteiramente para uma paleta de <strong>Tema Claro</strong> extremamente límpida, corporativa e educacional, substituindo quaisquer referências escuras anteriores. Isso traz um aspeto leve, acolhedor e profissional, maximizando a legibilidade de dados estruturados e notas estudantis.
-            </p>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-              {colors.map((c) => (
-                <div key={c.hex} className="bg-white rounded-2xl border border-[#E5E7EB] overflow-hidden flex flex-col justify-between shadow-sm hover:shadow-md transition-all">
-                  <div className={`h-24 ${c.bgClass} flex items-end p-3 relative`}>
-                    <button 
-                      onClick={() => handleCopyColor(c.hex)}
-                      className="absolute top-2 right-2 p-1.5 bg-white/20 backdrop-blur-md rounded-lg hover:bg-white/40 transition-colors text-white"
-                      title="Copiar Hexadecimal"
-                    >
-                      {copiedColor === c.hex ? (
-                        <Check className="w-3.5 h-3.5 text-emerald-200" />
-                      ) : (
-                        <Copy className="w-3.5 h-3.5" />
-                      )}
-                    </button>
-                    <span className="text-xs font-black drop-shadow-sm uppercase tracking-wide">{c.hex}</span>
-                  </div>
-                  <div className="p-3.5 space-y-1.5">
-                    <p className="text-xs font-extrabold text-[#0D1B3D] truncate">{c.name}</p>
-                    <p className="text-[9px] font-mono text-[#6B7280]">{c.rgb}</p>
-                    <div className="h-[1px] bg-slate-100 my-1"></div>
-                    <p className="text-[10px] text-[#6B7280] leading-snug h-12 overflow-y-auto no-scrollbar">{c.use}</p>
-                  </div>
+          {/* SLIDE 2: O CONTEXTO & DESAFIO */}
+          {(activeCategory === 'all' || activeCategory === 'vision') && (
+            <section id="section-context" className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-bold uppercase tracking-wider text-blue-400">O Contexto</span>
+                  <h2 className="text-2xl font-extrabold text-white tracking-tight">O desafio da gestão educacional em rede</h2>
                 </div>
-              ))}
-            </div>
-          </section>
+                <span className="text-xs text-slate-500 font-mono">Slide 02</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                {[
+                  { n: "1", title: "Dados dispersos", desc: "Informação académica e administrativa fragmentada entre múltiplas unidades escolares." },
+                  { n: "2", title: "Cobranças manuais", desc: "Gestão manual e ineficiente de propinas e cobranças de estudantes." },
+                  { n: "3", title: "Assiduidade descontrolada", desc: "Falta de controlo de presença de alunos e docentes, sem regras por turno." },
+                  { n: "4", title: "Pautas morosas", desc: "Processo lento de elaboração, cálculo e publicação de pautas trimestrais." },
+                  { n: "5", title: "Falta de auditabilidade", desc: "Ausência de rasto das ações dos utilizadores em âmbito global e local." }
+                ].map((item, idx) => (
+                  <div key={idx} className="bg-slate-950 border border-slate-800/90 rounded-2xl p-5 hover:border-slate-700 transition-all flex flex-col justify-between">
+                    <div>
+                      <div className="w-8 h-8 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20 font-black text-sm flex items-center justify-center mb-3">
+                        {item.n}
+                      </div>
+                      <h3 className="font-bold text-white text-sm mb-1.5">{item.title}</h3>
+                      <p className="text-xs text-slate-400 leading-relaxed">{item.desc}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-slate-500 italic text-center">
+                Quanto maior a instituição, maior a complexidade de gerir escolas, pessoas, processos e informação.
+              </p>
+            </section>
+          )}
 
-          {/* SECTION 3: TIPOGRAFIA */}
-          <section id="typography-section" className="bg-white p-6 md:p-8 rounded-3xl border border-[#E5E7EB] shadow-sm space-y-6">
-            <div className="border-b border-[#E5E7EB] pb-4">
-              <span className="text-[10px] font-black text-[#1E66F5] uppercase tracking-wider font-mono">Seção 03</span>
-              <h2 className="text-xl md:text-2xl font-black text-[#0D1B3D]">Tipografia Corporativa</h2>
-            </div>
-
-            <p className="text-xs text-[#6B7280] leading-relaxed">
-              A tipografia principal homologada é a <strong>"Poppins"</strong>. Trata-se de uma fonte geométrica sem serifa extremamente moderna, amigável e legível. Ela é aplicada aqui em tom azul-marinho escuro (#0D1B3D) sobre fundos brancos/off-white para oferecer o melhor balanço ergonômico.
-            </p>
-
-            <div className="bg-slate-50 p-6 rounded-2xl border border-[#E5E7EB] space-y-6 text-left">
-              <div className="space-y-1">
-                <span className="text-[9px] font-extrabold text-[#6B7280] uppercase tracking-wider font-mono">Visualização do Alfabeto (Poppins)</span>
-                <p className="text-xl font-extrabold text-[#0D1B3D] tracking-tight font-poppins">
-                  A B C D E F G H I J K L M N O P Q R S T U V W X Y Z
+          {/* SLIDE 3 & 4: VISÃO & POSICIONAMENTO */}
+          {(activeCategory === 'all' || activeCategory === 'vision') && (
+            <section id="section-vision-positioning" className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              {/* Visão de Produto */}
+              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-teal-400">A Nossa Visão</span>
+                    <h3 className="text-xl font-black text-white mt-1">Infraestrutura SaaS Escalável</h3>
+                  </div>
+                  <SysEduLogo variant="icon" size={28} />
+                </div>
+                <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+                  Uma infraestrutura SaaS educacional escalável, capaz de atuar como núcleo operacional para mantenedoras e redes de ensino de qualquer dimensão.
                 </p>
-                <p className="text-xl font-medium text-[#0D1B3D] tracking-tight font-poppins">
-                  a b c d e f g h i j k l m n o p q r s t u v w x y z
-                </p>
-                <p className="text-xl font-mono text-[#1E66F5] tracking-tight">
-                  0 1 2 3 4 5 6 7 8 9 ( ) [ ] + - = % / @
-                </p>
+                <div className="space-y-3">
+                  {[
+                    { n: "1", t: "Multi-tenant nativo", d: "Arquitetura pronta para sustentar mantenedoras e grupos educacionais de grande porte, com isolamento de dados por instituição." },
+                    { n: "2", t: "Planos SaaS parametrizados", d: "Gestão centralizada de assinaturas, com limites configuráveis de escolas, alunos, professores e turmas por plano." },
+                    { n: "3", t: "Multi-idioma configurável", d: "Suporte a tradução e configuração de idioma ao nível do tenant, preparado para diferentes mercados." }
+                  ].map((it, idx) => (
+                    <div key={idx} className="bg-slate-900/70 border border-slate-800/80 rounded-2xl p-4 flex items-start gap-3">
+                      <span className="w-6 h-6 rounded-lg bg-teal-500/20 text-teal-300 font-black text-xs flex items-center justify-center shrink-0 mt-0.5">
+                        {it.n}
+                      </span>
+                      <div>
+                        <h4 className="font-bold text-xs text-white mb-0.5">{it.t}</h4>
+                        <p className="text-[11px] text-slate-400">{it.d}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
 
-              <div className="h-[1px] bg-slate-200"></div>
+              {/* Posicionamento & Cobertura Real */}
+              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-blue-400">Posicionamento</span>
+                    <h3 className="text-xl font-black text-white mt-1">Cobertura Real por Domínio</h3>
+                  </div>
+                  <span className="text-xs text-slate-500 font-mono">10 Domínios</span>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Cobertura real por domínio funcional, verificada e comprovada no sistema:
+                </p>
+                <div className="grid grid-cols-2 gap-2.5">
+                  {[
+                    { name: "Académico", status: "Implementado", color: "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" },
+                    { name: "Administrativo", status: "Implementado", color: "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" },
+                    { name: "Financeiro", status: "Implementado", color: "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" },
+                    { name: "Pessoas (RH)", status: "Implementado", color: "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" },
+                    { name: "Comunicação", status: "Parcial", color: "bg-amber-500/10 text-amber-400 border border-amber-500/30" },
+                    { name: "Famílias", status: "Parcial", color: "bg-amber-500/10 text-amber-400 border border-amber-500/30" },
+                    { name: "Documental", status: "Parcial", color: "bg-amber-500/10 text-amber-400 border border-amber-500/30" },
+                    { name: "Analytics", status: "Parcial", color: "bg-amber-500/10 text-amber-400 border border-amber-500/30" },
+                    { name: "Automação", status: "Parcial", color: "bg-amber-500/10 text-amber-400 border border-amber-500/30" },
+                    { name: "Integrações", status: "Não existe", color: "bg-slate-800 text-slate-400 border border-slate-700" }
+                  ].map((dom, idx) => (
+                    <div key={idx} className="bg-slate-900 border border-slate-800/80 rounded-xl p-3 flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-200">{dom.name}</span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${dom.color}`}>
+                        {dom.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )}
 
-              <div className="space-y-4">
-                <span className="text-[9px] font-extrabold text-[#6B7280] uppercase tracking-wider font-mono">Hierarquia Tipográfica de Layout</span>
-                
-                <div className="space-y-1">
-                  <p className="text-xs text-[#6B7280] font-mono">Heading 1 (Poppins Bold 32px / 1.25)</p>
-                  <p className="text-2xl md:text-3xl font-bold text-[#0D1B3D] tracking-tight">Painel Executivo de Gestão</p>
+          {/* SLIDE 5: MODELO DE DADOS MULTI-INSTITUIÇÃO */}
+          {(activeCategory === 'all' || activeCategory === 'vision') && (
+            <section id="section-data-model" className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-10 space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-4">
+                <div>
+                  <span className="text-xs font-bold uppercase tracking-wider text-blue-400">Modelo de Dados</span>
+                  <h2 className="text-2xl font-extrabold text-white mt-1">Multi-instituição, multi-escola</h2>
+                </div>
+                <p className="text-xs italic text-teal-400 font-serif">“Centralização onde faz sentido. Autonomia onde é necessária.”</p>
+              </div>
+
+              {/* Hierarchy Diagram Flow */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 my-6">
+                <div className="bg-gradient-to-br from-[#0D1B3D] to-blue-950 border border-blue-800/60 rounded-2xl p-6 text-center relative shadow-lg">
+                  <Building2 className="w-8 h-8 text-blue-400 mx-auto mb-3" />
+                  <h4 className="font-black text-white text-base">Mantenedora (Tenant)</h4>
+                  <p className="text-xs text-blue-200/80 mt-1">Governança, Planos SaaS e Configuração Geral</p>
+                  <span className="inline-block mt-3 px-2.5 py-0.5 bg-blue-500/20 text-blue-300 text-[10px] font-mono rounded-md">tenant_id</span>
                 </div>
 
-                <div className="space-y-1">
-                  <p className="text-xs text-[#6B7280] font-mono">Heading 2 (Poppins Semibold 20px)</p>
-                  <p className="text-lg md:text-xl font-semibold text-[#0D1B3D] tracking-tight">Cadastro Geral de Estudantes</p>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center relative">
+                  <MapPin className="w-8 h-8 text-teal-400 mx-auto mb-3" />
+                  <h4 className="font-black text-white text-base">Província / Região</h4>
+                  <p className="text-xs text-slate-400 mt-1">Agrupamento regional e jurisdições escolares</p>
+                  <span className="inline-block mt-3 px-2.5 py-0.5 bg-teal-500/20 text-teal-300 text-[10px] font-mono rounded-md">provincia_id</span>
                 </div>
 
-                <div className="space-y-1">
-                  <p className="text-xs text-[#6B7280] font-mono">Body Text (Poppins Medium/Regular 13px)</p>
-                  <p className="text-xs text-[#6B7280] leading-relaxed max-w-xl">
-                    Com o sistema unificado do SysEdu, a coordenação escolar pode monitorar frequências diárias, lançar pautas de notas avaliativas e emitir recibos de mensalidades de forma totalmente intuitiva e segura.
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center relative">
+                  <School className="w-8 h-8 text-emerald-400 mx-auto mb-3" />
+                  <h4 className="font-black text-white text-base">Escola / Unidade</h4>
+                  <p className="text-xs text-slate-400 mt-1">Turmas, salas, assiduidade e regras locais</p>
+                  <span className="inline-block mt-3 px-2.5 py-0.5 bg-emerald-500/20 text-emerald-300 text-[10px] font-mono rounded-md">escola_id</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {[
+                  "Isolamento lógico rigoroso de dados por tenant_id em todas as coleções",
+                  "Configuração independente por unidade (tolerâncias por turno, logótipo, endereço, direção)",
+                  "Permissões diferenciadas por nível hierárquico (módulo de permissões globais)",
+                  "Relatórios tabulares agregados por tenant e filtráveis por escola individual"
+                ].map((txt, idx) => (
+                  <div key={idx} className="flex items-start gap-3 bg-slate-900/60 p-4 rounded-xl border border-slate-800/60">
+                    <CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0 mt-0.5" />
+                    <span className="text-xs text-slate-300 leading-relaxed">{txt}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* SLIDE 6: OS 16 MÓDULOS NATIVOS DO ECOSSISTEMA */}
+          {(activeCategory === 'all' || activeCategory === 'academic') && (
+            <section id="section-modules" className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-bold uppercase tracking-wider text-blue-400">O Ecossistema</span>
+                  <h2 className="text-2xl font-extrabold text-white tracking-tight">16 módulos nativos, um único core</h2>
+                </div>
+                <span className="text-xs text-slate-500 font-mono">Slide 06</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+                {[
+                  { n: "01", t: "Dashboard Executivo", icon: <LayoutDashboard className="w-4 h-4 text-blue-400" /> },
+                  { n: "02", t: "Províncias / Regiões", icon: <MapPin className="w-4 h-4 text-blue-400" /> },
+                  { n: "03", t: "Escolas", icon: <School className="w-4 h-4 text-blue-400" /> },
+                  { n: "04", t: "Docentes", icon: <Users className="w-4 h-4 text-blue-400" /> },
+                  { n: "05", t: "Estudantes", icon: <GraduationCap className="w-4 h-4 text-teal-400" /> },
+                  { n: "06", t: "Turmas", icon: <BookOpen className="w-4 h-4 text-teal-400" /> },
+                  { n: "07", t: "Disciplinas", icon: <BookMarked className="w-4 h-4 text-teal-400" /> },
+                  { n: "08", t: "Classes Escolares", icon: <ListOrdered className="w-4 h-4 text-teal-400" /> },
+                  { n: "09", t: "Calendário & Horários", icon: <Calendar className="w-4 h-4 text-emerald-400" /> },
+                  { n: "10", t: "Pauta Geral & Avaliações", icon: <Award className="w-4 h-4 text-emerald-400" /> },
+                  { n: "11", t: "Facturação & Propinas", icon: <DollarSign className="w-4 h-4 text-emerald-400" /> },
+                  { n: "12", t: "Processos de Alunos", icon: <FileText className="w-4 h-4 text-emerald-400" /> },
+                  { n: "13", t: "Biblioteca Digital", icon: <BookOpen className="w-4 h-4 text-blue-300" /> },
+                  { n: "14", t: "Assiduidade & QR", icon: <QrCode className="w-4 h-4 text-blue-300" /> },
+                  { n: "15", t: "Workflows de Tarefas", icon: <CheckSquare className="w-4 h-4 text-blue-300" /> },
+                  { n: "16", t: "Permissões & Utilizadores", icon: <Lock className="w-4 h-4 text-blue-300" /> }
+                ].map((mod, idx) => (
+                  <div key={idx} className="bg-slate-950 border border-slate-800 rounded-2xl p-4 hover:border-slate-700 transition-all flex items-center gap-3">
+                    <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 shrink-0">
+                      {mod.icon}
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-mono text-slate-500">{mod.n}</span>
+                      <h4 className="font-bold text-xs text-slate-200 leading-tight">{mod.t}</h4>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* SLIDE 7 & 8: GESTÃO ACADÉMICA & STUDENT 360 */}
+          {(activeCategory === 'all' || activeCategory === 'academic') && (
+            <section id="section-academic-student" className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              {/* Gestão Académica */}
+              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-blue-400">Módulo Académico</span>
+                    <h3 className="text-xl font-black text-white mt-1">Gestão académica ponta a ponta</h3>
+                  </div>
+                  <span className="text-xs text-slate-500 font-mono">Slide 08</span>
+                </div>
+
+                <div className="rounded-2xl overflow-hidden border border-slate-800 shadow-md">
+                  <img src={academicMgmtImg} alt="Academic Management" referrerPolicy="no-referrer" className="w-full h-44 object-cover" />
+                </div>
+
+                {/* Academic Flow */}
+                <div className="flex items-center gap-1.5 overflow-x-auto py-2">
+                  {["Ano Letivo", "Classes & Turmas", "Disciplinas", "Avaliação Contínua", "Pauta Final"].map((st, i) => (
+                    <React.Fragment key={i}>
+                      <span className="px-2.5 py-1 bg-slate-900 border border-slate-800 text-[11px] font-bold text-slate-300 rounded-lg shrink-0">
+                        {st}
+                      </span>
+                      {i < 4 && <ArrowRight className="w-3 h-3 text-slate-600 shrink-0" />}
+                    </React.Fragment>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/80">
+                    <h5 className="font-bold text-xs text-white mb-1">Classes Escolares</h5>
+                    <p className="text-[11px] text-slate-400">Primário, Secundário, Médio e Pré-escolar com estrutura própria.</p>
+                  </div>
+                  <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/80">
+                    <h5 className="font-bold text-xs text-white mb-1">Turmas & Salas</h5>
+                    <p className="text-[11px] text-slate-400">Vinculadas a escola, docente titular e capacidade máxima.</p>
+                  </div>
+                  <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/80">
+                    <h5 className="font-bold text-xs text-white mb-1">Disciplinas & Grade</h5>
+                    <p className="text-[11px] text-slate-400">Agendamento com salas, docentes e dias da semana.</p>
+                  </div>
+                  <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/80">
+                    <h5 className="font-bold text-xs text-white mb-1">Pautas & Resultados</h5>
+                    <p className="text-[11px] text-slate-400">Trimestres, exames, reavaliação e cálculo automático de média.</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Student 360 */}
+              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-teal-400">Perfil Unificado</span>
+                    <h3 className="text-xl font-black text-white mt-1">Gestão do aluno — visão 360º</h3>
+                  </div>
+                  <span className="text-xs text-slate-500 font-mono">Slide 09</span>
+                </div>
+
+                <div className="rounded-2xl overflow-hidden border border-slate-800 shadow-md">
+                  <img src={student360Img} alt="Student 360" referrerPolicy="no-referrer" className="w-full h-44 object-cover" />
+                </div>
+
+                <div className="space-y-2.5">
+                  {[
+                    { cat: "Pessoais", desc: "Nome, foto, género, data de nascimento, BI/NIF, documento de identificação." },
+                    { cat: "Familiares", desc: "Vínculo com encarregado, contacto e endereço." },
+                    { cat: "Académicos", desc: "Matrícula, escola, turma, histórico de pautas, transferências e suspensões." },
+                    { cat: "Financeiros", desc: "Plano de propina, histórico de faturas e recibos emitidos." },
+                    { cat: "Comportamentais", desc: "Assiduidade em tempo real, crachá digital e QR Code." }
+                  ].map((c, idx) => (
+                    <div key={idx} className="bg-slate-900/60 p-3 rounded-xl border border-slate-800/80 flex items-start gap-3">
+                      <span className="px-2 py-0.5 bg-blue-500/10 text-blue-300 border border-blue-500/20 text-[10px] font-bold rounded-md uppercase tracking-wider shrink-0 mt-0.5">
+                        {c.cat}
+                      </span>
+                      <p className="text-xs text-slate-300">{c.desc}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* SLIDE 10 & 11: FINANCEIRO & RECURSOS HUMANOS */}
+          {(activeCategory === 'all' || activeCategory === 'academic') && (
+            <section id="section-finance-rh" className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              {/* Financeiro */}
+              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">Módulo Financeiro</span>
+                    <h3 className="text-xl font-black text-white mt-1">Gestão financeira e faturação</h3>
+                  </div>
+                  <span className="text-xs text-slate-500 font-mono">Slide 10</span>
+                </div>
+
+                <div className="rounded-2xl overflow-hidden border border-slate-800 shadow-md">
+                  <img src={financeMgmtImg} alt="Finance Management" referrerPolicy="no-referrer" className="w-full h-44 object-cover" />
+                </div>
+
+                {/* Finance Flow */}
+                <div className="flex items-center gap-1.5 overflow-x-auto py-2">
+                  {["Preçário", "Facturação", "Pagamento", "Reconciliação", "Dívida"].map((st, i) => (
+                    <React.Fragment key={i}>
+                      <span className="px-2.5 py-1 bg-slate-900 border border-slate-800 text-[11px] font-bold text-slate-300 rounded-lg shrink-0">
+                        {st}
+                      </span>
+                      {i < 4 && <ArrowRight className="w-3 h-3 text-slate-600 shrink-0" />}
+                    </React.Fragment>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/80">
+                    <h5 className="font-bold text-xs text-white mb-1">Preçário Configurável</h5>
+                    <p className="text-[11px] text-slate-400">Propina base, multa por atraso e taxa de IVA por tenant.</p>
+                  </div>
+                  <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/80">
+                    <h5 className="font-bold text-xs text-white mb-1">Faturação Flexível</h5>
+                    <p className="text-[11px] text-slate-400">Emissão por período: mensal, semestral ou anual.</p>
+                  </div>
+                  <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/80">
+                    <h5 className="font-bold text-xs text-white mb-1">Pagamento & Recibo</h5>
+                    <p className="text-[11px] text-slate-400">Estado (pendente → pago), método e número de recibo.</p>
+                  </div>
+                  <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/80">
+                    <h5 className="font-bold text-xs text-white mb-1">Controlo de Dívida</h5>
+                    <p className="text-[11px] text-slate-400">Faturas em atraso e saldo devedor consolidado.</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Recursos Humanos */}
+              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-blue-400">Recursos Humanos</span>
+                    <h3 className="text-xl font-black text-white mt-1">Gestão de pessoas (docentes e colaboradores)</h3>
+                  </div>
+                  <span className="text-xs text-slate-500 font-mono">Slide 11</span>
+                </div>
+
+                <div className="space-y-3.5">
+                  {[
+                    { n: "1", title: "Cadastro de Docentes", desc: "Especialidade, número de registo, data de admissão, escola alocada e turmas atribuídas." },
+                    { n: "2", title: "Horários & Carga Horária", desc: "Alocação de professores às disciplinas agendadas e controle de salas." },
+                    { n: "3", title: "Assiduidade por Turno", desc: "Registo diário (manhã, tarde, noite) validado contra a tolerância de cada escola." },
+                    { n: "4", title: "Justificativas de Ausência", desc: "Fluxo de submissão e avaliação de justificativas, com atualização de estado da falta." }
+                  ].map((rh, idx) => (
+                    <div key={idx} className="bg-slate-900/70 border border-slate-800/80 rounded-2xl p-4 flex items-start gap-3">
+                      <span className="w-7 h-7 rounded-xl bg-blue-500/20 text-blue-400 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">
+                        {rh.n}
+                      </span>
+                      <div>
+                        <h4 className="font-bold text-xs text-white mb-0.5">{rh.title}</h4>
+                        <p className="text-[11px] text-slate-400">{rh.desc}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* SLIDE 13 & 14: PORTAIS & DASHBOARDS */}
+          {(activeCategory === 'all' || activeCategory === 'tech') && (
+            <section id="section-portals-dashboards" className="space-y-6">
+              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-10 space-y-8">
+                <div>
+                  <span className="text-xs font-bold uppercase tracking-wider text-teal-400">Experiência Multi-Perfil</span>
+                  <h2 className="text-2xl font-extrabold text-white mt-1">5 Portais e experiências dedicadas</h2>
+                  <p className="text-xs text-slate-400 mt-1">Web SPA responsiva — adaptada a cada perfil com alta fidelidade.</p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-5 gap-3.5">
+                  {[
+                    { n: "1", role: "SuperAdmin", desc: "Gestão multi-tenant, planos SaaS, aprovação de pagamentos e logs operacionais globais." },
+                    { n: "2", role: "Mantenedora / Tenant", desc: "Painel consolidado de rede de escolas, estatísticas globais, regiões e permissões." },
+                    { n: "3", role: "Diretor de Escola", desc: "Operação da unidade: turmas, pautas, assiduidade e fecho financeiro local." },
+                    { n: "4", role: "Professor", desc: "Turmas atribuídas, lançamento de notas e agendamento de aulas." },
+                    { n: "5", role: "Aluno / Encarregado", desc: "Boletim, propinas, biblioteca digital e crachá QR Code." }
+                  ].map((p, idx) => (
+                    <div key={idx} className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between">
+                      <div>
+                        <span className="w-6 h-6 rounded-lg bg-blue-600/30 text-blue-400 font-bold text-xs flex items-center justify-center mb-3">
+                          {p.n}
+                        </span>
+                        <h4 className="font-bold text-sm text-white mb-1.5">{p.role}</h4>
+                        <p className="text-[11px] text-slate-400 leading-normal">{p.desc}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="border-t border-slate-800/80 pt-6">
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-center">
+                    <div className="lg:col-span-2 space-y-4">
+                      <span className="text-xs font-bold uppercase tracking-wider text-blue-400">Inteligência & Analytics</span>
+                      <h3 className="text-xl font-black text-white">Dashboards & Analytics em tempo real</h3>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div className="bg-slate-900 p-3 rounded-xl border border-slate-800">
+                          <p className="text-[10px] text-slate-500 uppercase font-mono">SaaS</p>
+                          <p className="text-xs font-bold text-white mt-1">MRR & Tenants</p>
+                        </div>
+                        <div className="bg-slate-900 p-3 rounded-xl border border-slate-800">
+                          <p className="text-[10px] text-slate-500 uppercase font-mono">Operação</p>
+                          <p className="text-xs font-bold text-white mt-1">Escolas & Alunos</p>
+                        </div>
+                        <div className="bg-slate-900 p-3 rounded-xl border border-slate-800">
+                          <p className="text-[10px] text-slate-500 uppercase font-mono">Presença</p>
+                          <p className="text-xs font-bold text-white mt-1">Assiduidade Real</p>
+                        </div>
+                        <div className="bg-slate-900 p-3 rounded-xl border border-slate-800">
+                          <p className="text-[10px] text-slate-500 uppercase font-mono">Finanças</p>
+                          <p className="text-xs font-bold text-white mt-1">Propinas & Dívida</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="rounded-2xl overflow-hidden border border-slate-800 shadow-lg">
+                      <img src={analyticsKpiImg} alt="Analytics KPI" referrerPolicy="no-referrer" className="w-full h-36 object-cover" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* SLIDE 16 & 17: TECNOLOGIA & SEGURANÇA */}
+          {(activeCategory === 'all' || activeCategory === 'tech') && (
+            <section id="section-tech-security" className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              {/* Tecnologia */}
+              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-blue-400">Tecnologia</span>
+                    <h3 className="text-xl font-black text-white mt-1">Arquitetura cloud moderna</h3>
+                  </div>
+                  <Server className="w-5 h-5 text-blue-400" />
+                </div>
+
+                <div className="space-y-3">
+                  {[
+                    { l: "Interface", d: "React 18 + TypeScript — Single Page Application", i: <Laptop className="w-4 h-4 text-blue-400" /> },
+                    { l: "Dados & Autenticação", d: "Firebase Firestore (NoSQL) + Firebase Authentication", i: <Server className="w-4 h-4 text-teal-400" /> },
+                    { l: "Comunicação", d: "SMTP customizado e Gmail OAuth2 / App Password", i: <Mail className="w-4 h-4 text-amber-400" /> },
+                    { l: "Ficheiros & QR", d: "SheetJS (Excel), visualizador PDF e geração/leitura de QR Code", i: <FileSpreadsheet className="w-4 h-4 text-emerald-400" /> }
+                  ].map((st, idx) => (
+                    <div key={idx} className="bg-slate-900/70 border border-slate-800/80 rounded-2xl p-4 flex items-start gap-3">
+                      <div className="p-2 rounded-xl bg-slate-950 border border-slate-800 shrink-0">
+                        {st.i}
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-xs text-white mb-0.5">{st.l}</h4>
+                        <p className="text-[11px] text-slate-400">{st.d}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Segurança e Governança */}
+              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">Confiança</span>
+                    <h3 className="text-xl font-black text-white mt-1">Segurança e governança</h3>
+                  </div>
+                  <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                </div>
+
+                <div className="space-y-2.5">
+                  {[
+                    { label: "Autenticação", desc: "Gestão de utilizadores via Firebase Auth." },
+                    { label: "RBAC granular", desc: "Matriz configurável por categoria: visualizar, criar, editar, excluir, exportar, aprovar." },
+                    { label: "Isolamento por tenant", desc: "Segregação obrigatória de dados por tenant_id em todas as coleções." },
+                    { label: "Auditoria completa", desc: "Registo de log administrativo para todas as operações de gestão." },
+                    { label: "Soft delete", desc: "Exclusão lógica (deleted_at) em mantenedoras e escolas, sem perda de histórico." }
+                  ].map((sec, idx) => (
+                    <div key={idx} className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/80 flex items-start gap-3">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="text-xs font-bold text-white mr-1.5">{sec.label}:</span>
+                        <span className="text-xs text-slate-400">{sec.desc}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* SLIDE 18 & 19: DIFERENCIAIS & STAKEHOLDERS */}
+          {(activeCategory === 'all' || activeCategory === 'vision') && (
+            <section id="section-differentials-stakeholders" className="space-y-8">
+              {/* Diferenciais Competitivos */}
+              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-10 space-y-6">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-blue-400">Por Que Esta Plataforma</span>
+                    <h2 className="text-2xl font-extrabold text-white mt-1">Diferenciais competitivos</h2>
+                  </div>
+                  <span className="text-xs text-slate-500 font-mono">5 Pilares</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-5 gap-3.5">
+                  {[
+                    { n: "1", p: "Escala", d: "Hierarquia completa Mantenedora → Região → Escola para redes de ensino." },
+                    { n: "2", p: "Integração", d: "Fila de e-mails híbrida nativa e leitura de QR Code sem investimento em hardware." },
+                    { n: "3", p: "Experiência", d: "Interface responsiva e rápida, com busca em tempo real em todas as tabelas." },
+                    { n: "4", p: "Inteligência", d: "Tolerância de assiduidade por turno e cálculo automatizado de aprovação." },
+                    { n: "5", p: "Automação", d: "Motor de pautas trimestrais com transição automática do histórico do aluno." }
+                  ].map((pil, idx) => (
+                    <div key={idx} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between">
+                      <div>
+                        <span className="w-7 h-7 rounded-xl bg-blue-500/20 text-blue-400 font-bold text-xs flex items-center justify-center mb-3">
+                          {pil.n}
+                        </span>
+                        <h4 className="font-bold text-sm text-white mb-1.5">{pil.p}</h4>
+                        <p className="text-[11px] text-slate-400 leading-normal">{pil.d}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Benefícios por Stakeholder */}
+              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-10 space-y-6">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-teal-400">Impacto</span>
+                    <h2 className="text-2xl font-extrabold text-white mt-1">Benefícios por stakeholder</h2>
+                  </div>
+                  <span className="text-xs text-slate-500 font-mono">6 Perspetivas</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {[
+                    { s: "Direção Institucional", d: "Controlo centralizado da rede, governança de limites por plano e relatório financeiro consolidado." },
+                    { s: "Direção de Escola", d: "Autonomia para gerir turmas, salas, professores locais e regras de tolerância." },
+                    { s: "Professores", d: "Lançamento simplificado de notas e frequências, com pautas automatizadas." },
+                    { s: "Alunos & Encarregados", d: "Boletim digital, propinas, crachá QR Code e leitor de e-books." },
+                    { s: "Financeiro", d: "Automação de faturamento, regras de mora e recibos numerados." },
+                    { s: "TI / Administradores", d: "RBAC customizável por função, sem gerir infraestrutura física." }
+                  ].map((st, idx) => (
+                    <div key={idx} className="bg-slate-900/70 border border-slate-800/80 rounded-2xl p-4">
+                      <h4 className="font-bold text-xs text-teal-300 mb-1.5 flex items-center gap-2">
+                        <User className="w-3.5 h-3.5" /> {st.s}
+                      </h4>
+                      <p className="text-xs text-slate-400 leading-relaxed">{st.d}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* SLIDE 20 & 21: ROADMAP DE MATURIDADE & MODELO DE NEGÓCIO */}
+          {(activeCategory === 'all' || activeCategory === 'tech') && (
+            <section id="section-roadmap-business" className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              {/* Roadmap */}
+              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-blue-400">Evolução do Produto</span>
+                    <h3 className="text-xl font-black text-white mt-1">Roadmap de maturidade</h3>
+                  </div>
+                  <span className="text-xs text-slate-500 font-mono">Estado Real</span>
+                </div>
+
+                <div className="space-y-4">
+                  {[
+                    { f: "Fase 1 — Digitalizar", p: 100, d: "Matrículas, pautas, escolas, disciplinas, biblioteca, QR Code e assiduidade.", c: "bg-emerald-500" },
+                    { f: "Fase 2 — Integrar", p: 55, d: "E-mail SMTP e Excel concluídos; falta integração com gateways bancários.", c: "bg-amber-500" },
+                    { f: "Fase 3 — Automatizar", p: 55, d: "Fila de e-mails e cálculo de pautas automáticos; falta automação de cobranças.", c: "bg-amber-500" },
+                    { f: "Fase 4 — Inteligência", p: 20, d: "Dashboards ativos; faltam modelos preditivos de evasão escolar.", c: "bg-blue-500" },
+                    { f: "Fase 5 — Ecossistema", p: 5, d: "Ausência de API pública aberta para integrações de terceiros.", c: "bg-slate-600" }
+                  ].map((phase, idx) => (
+                    <div key={idx} className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-3.5">
+                      <div className="flex justify-between items-center mb-1.5">
+                        <span className="font-bold text-xs text-white">{phase.f}</span>
+                        <span className="font-mono text-xs font-bold text-slate-300">{phase.p}%</span>
+                      </div>
+                      <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden mb-2">
+                        <div className={`h-2 rounded-full ${phase.c}`} style={{ width: `${phase.p}%` }}></div>
+                      </div>
+                      <p className="text-[11px] text-slate-400">{phase.d}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Modelo de Negócio */}
+              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">Comercial</span>
+                    <h3 className="text-xl font-black text-white mt-1">Modelo de negócio SaaS</h3>
+                  </div>
+                  <CreditCard className="w-5 h-5 text-emerald-400" />
+                </div>
+
+                <div className="space-y-3.5">
+                  {[
+                    { n: "1", t: "SaaS B2B recorrente", d: "Assinatura mensal ou anual, gerida centralmente através do portal SuperAdmin com ativação instantânea." },
+                    { n: "2", t: "Precificação por camadas", d: "Planos com limites parametrizados de escolas, docentes, estudantes, turmas e disciplinas para atender desde escolas individuais a redes nacionais." },
+                    { n: "3", t: "Faturação centralizada", d: "Histórico de pagamentos e faturas da mantenedora geridos numa única coleção com comprovativo e controle de renovação." }
+                  ].map((bn, idx) => (
+                    <div key={idx} className="bg-slate-900/70 border border-slate-800/80 rounded-2xl p-4 flex items-start gap-3">
+                      <span className="w-7 h-7 rounded-xl bg-emerald-500/20 text-emerald-300 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">
+                        {bn.n}
+                      </span>
+                      <div>
+                        <h4 className="font-bold text-xs text-white mb-0.5">{bn.t}</h4>
+                        <p className="text-[11px] text-slate-400">{bn.d}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="p-4 bg-slate-900/90 rounded-2xl border border-slate-800 text-center">
+                  <p className="text-xs italic text-slate-300 font-serif">
+                    “Previsibilidade de receita alinhada ao crescimento de cada mantenedora.”
                   </p>
                 </div>
               </div>
-            </div>
-          </section>
+            </section>
+          )}
 
-          {/* SECTION 4: ÍCONES CORPORATIVOS */}
-          <section id="icons-section" className="bg-white p-6 md:p-8 rounded-3xl border border-[#E5E7EB] shadow-sm space-y-6">
-            <div className="border-b border-[#E5E7EB] pb-4">
-              <span className="text-[10px] font-black text-[#1E66F5] uppercase tracking-wider font-mono">Seção 04</span>
-              <h2 className="text-xl md:text-2xl font-black text-[#0D1B3D]">Ícones de Navegação</h2>
-            </div>
+          {/* SLIDE 22: FECHO INSTITUCIONAL */}
+          {(activeCategory === 'all' || activeCategory === 'vision') && (
+            <section id="section-closing" className="bg-gradient-to-r from-[#0D1B3D] via-slate-950 to-[#0D1B3D] border border-blue-800/40 rounded-3xl p-8 sm:p-12 text-center relative overflow-hidden shadow-2xl">
+              <div className="max-w-2xl mx-auto space-y-4 relative z-10">
+                <SysEduLogo variant="negative" size={48} />
+                <h2 className="text-3xl sm:text-4xl font-black text-white tracking-tight mt-4">
+                  Uma instituição. Múltiplas escolas. <br />
+                  <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-teal-300">
+                    Uma única plataforma.
+                  </span>
+                </h2>
+                <p className="text-sm sm:text-base text-slate-300 font-normal">
+                  Uma visão consolidada de dados e uma experiência integrada para toda a comunidade educativa.
+                </p>
+                <p className="text-sm italic text-teal-300 font-serif pt-2">
+                  “Da gestão de uma escola à gestão de todo um ecossistema educacional.”
+                </p>
+              </div>
+            </section>
+          )}
 
-            <p className="text-xs text-[#6B7280] leading-relaxed">
-              Os ícones do sistema seguem uma linha <strong>outline fina (contorno de 1.5px a 2px)</strong>, sempre renderizados na cor azul primário (#1E66F5) ou secundário, abrigados dentro de um fundo circular branco. Isso mantém um ritmo visual uniforme por toda a interface SaaS.
-            </p>
+          {/* =========================================================================
+              GUIA DE MARCA & ASSETS VISUAIS (BRANDBOOK COMPLETO)
+             ========================================================================= */}
+          {(activeCategory === 'all' || activeCategory === 'branding') && (
+            <section id="section-brandbook-assets" className="space-y-8 pt-8 border-t border-slate-800">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <span className="text-xs font-bold uppercase tracking-wider text-blue-400">Guia de Marca</span>
+                  <h2 className="text-2xl font-extrabold text-white">Identidade Visual & Assets Oficiais</h2>
+                </div>
+                <span className="text-xs text-slate-400">Diretrizes de Aplicação SysEdu</span>
+              </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-              {outlineIconsList.map((ic) => (
-                <div key={ic.label} className="bg-slate-50 p-4 rounded-xl border border-[#E5E7EB] flex items-center gap-3.5 hover:border-[#1E66F5]/30 hover:bg-[#1E66F5]/5 transition-colors">
-                  <div className="w-10 h-10 rounded-full bg-white shadow-sm border border-slate-200/80 flex items-center justify-center shrink-0">
-                    {ic.icon}
+              {/* Logo Showcase Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Horizontal Standard */}
+                <div className="bg-white rounded-2xl p-6 border border-slate-200 text-slate-900 shadow-sm flex flex-col justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-4 block">Versão Principal (Full)</span>
+                  <div className="py-4 flex items-center justify-center">
+                    <SysEduLogo variant="full" size={36} />
                   </div>
-                  <div className="text-left">
-                    <p className="text-xs font-extrabold text-[#0D1B3D]">{ic.label}</p>
-                    <p className="text-[9px] text-[#6B7280] uppercase tracking-wider font-mono">Outline 1.5px</p>
+                  <span className="text-[11px] text-slate-500 text-center">Fundo Claro / Documentos</span>
+                </div>
+
+                {/* Negative Dark */}
+                <div className="bg-[#0D1B3D] rounded-2xl p-6 border border-blue-900/60 text-white shadow-sm flex flex-col justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-blue-300/60 mb-4 block">Versão Negativa (Dark)</span>
+                  <div className="py-4 flex items-center justify-center">
+                    <SysEduLogo variant="negative" size={36} />
                   </div>
+                  <span className="text-[11px] text-blue-200/60 text-center">Fundo Escuro / Menus</span>
                 </div>
-              ))}
-            </div>
-          </section>
 
-          {/* SECTION 5: VARIAÇÕES DA MARCA */}
-          <section id="variations-section" className="bg-white p-6 md:p-8 rounded-3xl border border-[#E5E7EB] shadow-sm space-y-6">
-            <div className="border-b border-[#E5E7EB] pb-4">
-              <span className="text-[10px] font-black text-[#1E66F5] uppercase tracking-wider font-mono">Seção 05</span>
-              <h2 className="text-xl md:text-2xl font-black text-[#0D1B3D]">Variações Homologadas da Marca</h2>
-            </div>
-
-            <p className="text-xs text-[#6B7280] leading-relaxed">
-              Para garantir legibilidade perfeita em qualquer superfície gráfica, foram especificadas 3 variações oficiais da assinatura do logotipo SysEdu:
-            </p>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              
-              {/* Versão Principal */}
-              <div className="bg-white p-6 rounded-2xl border border-[#E5E7EB] flex flex-col items-center justify-between min-h-[220px] shadow-inner">
-                <span className="text-[9px] font-bold text-[#1E66F5] uppercase tracking-wider bg-blue-50 px-2 py-1 rounded-full">Principal / Colorida</span>
-                <div className="py-4">
-                  <SysEduLogo variant="full" size={48} />
-                </div>
-                <p className="text-[10px] text-[#6B7280] text-center leading-snug">Aplicação prioritária sobre fundo claro (#FFFFFF a #F8FAFC).</p>
-              </div>
-
-              {/* Versão Monocromática */}
-              <div className="bg-white p-6 rounded-2xl border border-[#E5E7EB] flex flex-col items-center justify-between min-h-[220px] shadow-inner">
-                <span className="text-[9px] font-bold text-gray-500 uppercase tracking-wider bg-gray-50 px-2 py-1 rounded-full">Monocromática / Escala Cinza</span>
-                <div className="py-4">
-                  <SysEduLogo variant="monochrome" size={48} />
-                </div>
-                <p className="text-[10px] text-[#6B7280] text-center leading-snug">Para relatórios impressos em preto e branco, fax ou carimbos de baixo custo.</p>
-              </div>
-
-              {/* Versão Negativa */}
-              <div className="bg-[#0D1B3D] p-6 rounded-2xl border border-[#0D1B3D] flex flex-col items-center justify-between min-h-[220px] text-white">
-                <span className="text-[9px] font-bold text-blue-200 uppercase tracking-wider bg-white/10 px-2 py-1 rounded-full">Versão Negativa (Inversa)</span>
-                <div className="py-4">
-                  <SysEduLogo variant="negative" size={48} />
-                </div>
-                <p className="text-[10px] text-indigo-200 text-center leading-snug">Exclusiva para aplicação sobre fundos azuis escuros sólidos, fardamentos escuros ou rodapés.</p>
-              </div>
-
-            </div>
-          </section>
-
-          {/* SECTION 6: APLICAÇÃO DIGITAL (MOCKUPS INTERATIVOS TEMA CLARO) */}
-          <section id="mockup-section" className="bg-white p-6 md:p-8 rounded-3xl border border-[#E5E7EB] shadow-sm space-y-8">
-            <div className="border-b border-[#E5E7EB] pb-4">
-              <span className="text-[10px] font-black text-[#1E66F5] uppercase tracking-wider font-mono">Seção 06</span>
-              <h2 className="text-xl md:text-2xl font-black text-[#0D1B3D]">Aplicação Digital e Telas (Mockups Tema Claro)</h2>
-            </div>
-
-            <p className="text-xs text-[#6B7280] leading-relaxed">
-              Confira abaixo a aplicação prática da nova identidade visual em três telas cruciais do sistema, todas reestruturadas para o <strong>Tema Claro consistente</strong> com fundos claros, sombras sutis e o logotipo do SysEdu inserido de forma imaculada.
-            </p>
-
-            {/* MOCKUP 1: DASHBOARD WEB */}
-            <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <Laptop className="w-5 h-5 text-[#1E66F5]" />
-                <h4 className="text-xs font-extrabold uppercase tracking-wider text-[#0D1B3D]">Mockup 01: Tela de Dashboard Executivo (Web Desktop)</h4>
-              </div>
-
-              <div className="bg-[#F8FAFC] p-4 rounded-2xl border border-[#E5E7EB] shadow-inner overflow-x-auto">
-                <div className="min-w-[650px] bg-white rounded-xl border border-slate-200 shadow-md flex h-[350px] overflow-hidden text-left">
-                  {/* Web Left Menu */}
-                  <div className="w-48 bg-white border-r border-slate-150 p-3.5 flex flex-col justify-between">
-                    <div className="space-y-4">
-                      <SysEduLogo variant="full" size={26} />
-                      
-                      <div className="space-y-1 pt-2">
-                        {[
-                          { label: 'Visão Geral', active: true, icon: <LayoutDashboard className="w-3.5 h-3.5" /> },
-                          { label: 'Estudantes', active: false, icon: <GraduationCap className="w-3.5 h-3.5" /> },
-                          { label: 'Docentes', active: false, icon: <Users className="w-3.5 h-3.5" /> },
-                          { label: 'Turmas & Disciplinas', active: false, icon: <FolderGit className="w-3.5 h-3.5" /> },
-                          { label: 'Financeiro', active: false, icon: <DollarSign className="w-3.5 h-3.5" /> }
-                        ].map((mi) => (
-                          <div 
-                            key={mi.label}
-                            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[10px] font-extrabold transition-colors ${
-                              mi.active 
-                                ? 'bg-blue-50 text-[#1E66F5]' 
-                                : 'text-slate-500 hover:bg-slate-50'
-                            }`}
-                          >
-                            {mi.icon}
-                            <span>{mi.label}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="text-[9px] text-[#6B7280] border-t border-slate-100 pt-2 flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                      <span>Portal Maputo Central</span>
-                    </div>
+                {/* Vertical */}
+                <div className="bg-slate-950 rounded-2xl p-6 border border-slate-800 text-white shadow-sm flex flex-col justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-4 block">Versão Vertical</span>
+                  <div className="py-2 flex items-center justify-center">
+                    <SysEduLogo variant="vertical" size={36} />
                   </div>
+                  <span className="text-[11px] text-slate-400 text-center">Crachás / Banners</span>
+                </div>
 
-                  {/* Web Dashboard Content */}
-                  <div className="flex-1 bg-[#F8FAFC] p-4 flex flex-col justify-between overflow-y-auto">
-                    {/* Header */}
-                    <div className="flex justify-between items-center pb-2.5 border-b border-slate-150">
-                      <div>
-                        <h4 className="text-xs font-bold text-[#0D1B3D]">Painel da Direção</h4>
-                        <p className="text-[9px] text-[#6B7280]">Indicadores consolidados em tempo real</p>
-                      </div>
-                      <span className="bg-emerald-500/10 text-[#10B981] text-[9px] font-extrabold px-2 py-0.5 rounded-full">Ativo</span>
-                    </div>
+                {/* Monocromática */}
+                <div className="bg-slate-100 rounded-2xl p-6 border border-slate-200 text-slate-800 shadow-sm flex flex-col justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-4 block">Monocromática</span>
+                  <div className="py-4 flex items-center justify-center">
+                    <SysEduLogo variant="monochrome" size={36} />
+                  </div>
+                  <span className="text-[11px] text-slate-500 text-center">Impressão / Preto e Branco</span>
+                </div>
+              </div>
 
-                    {/* Stats Grid */}
-                    <div className="grid grid-cols-4 gap-2 pt-2.5">
-                      {[
-                        { title: 'Estudantes', value: '1.248', rate: '+12%', color: 'border-l-4 border-blue-500' },
-                        { title: 'Docentes', value: '86', rate: 'Ativos', color: 'border-l-4 border-[#10B981]' },
-                        { title: 'Turmas', value: '48', rate: '9 Escolas', color: 'border-l-4 border-amber-500' },
-                        { title: 'Frequência Hoje', value: '92%', rate: 'Estável', color: 'border-l-4 border-[#7DB7FF]' }
-                      ].map((st) => (
-                        <div key={st.title} className={`bg-white p-2.5 rounded-lg border border-slate-200 ${st.color} shadow-sm`}>
-                          <p className="text-[9px] font-medium text-slate-500">{st.title}</p>
-                          <p className="text-sm font-black text-[#0D1B3D] mt-0.5">{st.value}</p>
-                          <p className="text-[8px] text-[#10B981] font-bold mt-0.5">{st.rate}</p>
+              {/* Color Palette Grid */}
+              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                  <h3 className="text-lg font-black text-white">Paleta Cromática Oficial</h3>
+                  <span className="text-xs text-slate-400">Clique para copiar o HEX</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {colors.map((col, idx) => (
+                    <div
+                      key={idx}
+                      onClick={() => handleCopyColor(col.hex)}
+                      className="bg-slate-900 border border-slate-800/90 rounded-2xl p-4 hover:border-slate-700 transition-all cursor-pointer group"
+                    >
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className={`w-10 h-10 rounded-xl ${col.bgClass} shadow-md shrink-0 flex items-center justify-center font-bold text-xs`}>
                         </div>
-                      ))}
-                    </div>
-
-                    {/* Two-Column Graphs */}
-                    <div className="grid grid-cols-3 gap-3.5 pt-3.5 flex-1">
-                      {/* Weekly frequency line graph mockup */}
-                      <div className="col-span-2 bg-white p-2.5 rounded-lg border border-slate-200 shadow-sm flex flex-col justify-between">
-                        <p className="text-[9px] font-bold text-[#0D1B3D]">Gráfico de Frequência Semanal (%)</p>
-                        <div className="h-20 flex items-end justify-between px-2 pt-2 border-b border-l border-slate-100">
-                          {[
-                            { day: 'Seg', val: 30, h: 'h-[82%]' },
-                            { day: 'Ter', val: 40, h: 'h-[91%]' },
-                            { day: 'Qua', val: 35, h: 'h-[95%]' },
-                            { day: 'Qui', val: 60, h: 'h-[89%]' },
-                            { day: 'Sex', val: 55, h: 'h-[92%]' }
-                          ].map((b) => (
-                            <div key={b.day} className="flex flex-col items-center flex-1 space-y-1">
-                              <div className={`w-2.5 bg-[#1E66F5] rounded-t-sm ${b.h} transition-all`}></div>
-                              <span className="text-[7px] text-slate-500">{b.day}</span>
-                            </div>
-                          ))}
+                        <div>
+                          <h4 className="font-bold text-xs text-white leading-tight">{col.name}</h4>
+                          <span className="text-[11px] font-mono text-slate-400">{col.hex}</span>
                         </div>
                       </div>
-
-                      {/* Assessments donut mockup */}
-                      <div className="col-span-1 bg-white p-2.5 rounded-lg border border-slate-200 shadow-sm flex flex-col justify-between items-center text-center">
-                        <p className="text-[8px] font-bold text-[#0D1B3D] leading-tight">Status de Avaliações</p>
-                        
-                        {/* Interactive Rosca Donut Circle representation */}
-                        <div className="relative w-12 h-12 flex items-center justify-center my-1">
-                          <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
-                            <path
-                              className="text-slate-100"
-                              strokeWidth="4"
-                              stroke="currentColor"
-                              fill="none"
-                              d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                            />
-                            <path
-                              className="text-[#10B981]"
-                              strokeWidth="4"
-                              strokeDasharray="60, 100"
-                              strokeLinecap="round"
-                              stroke="currentColor"
-                              fill="none"
-                              d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                            />
-                            <path
-                              className="text-[#1E66F5]"
-                              strokeWidth="4"
-                              strokeDasharray="25, 100"
-                              strokeDashoffset="-60"
-                              strokeLinecap="round"
-                              stroke="currentColor"
-                              fill="none"
-                              d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                            />
-                          </svg>
-                          <span className="absolute text-[8px] font-extrabold text-[#0D1B3D]">85%</span>
-                        </div>
-
-                        <div className="flex gap-1.5 justify-center text-[7px] text-slate-500">
-                          <span className="flex items-center gap-0.5"><span className="w-1.5 h-1.5 bg-[#10B981] rounded-full"></span> Verde</span>
-                          <span className="flex items-center gap-0.5"><span className="w-1.5 h-1.5 bg-[#1E66F5] rounded-full"></span> Azul</span>
-                        </div>
+                      <p className="text-[11px] text-slate-400 leading-normal">{col.use}</p>
+                      <div className="mt-2 text-right">
+                        <span className="text-[10px] font-semibold text-blue-400 group-hover:underline inline-flex items-center gap-1">
+                          {copiedColor === col.hex ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                          {copiedColor === col.hex ? 'Copiado!' : 'Copiar HEX'}
+                        </span>
                       </div>
                     </div>
-                  </div>
+                  ))}
                 </div>
               </div>
-            </div>
+            </section>
+          )}
 
-            {/* MOCKUP 2: LOGIN VIEW */}
-            <div className="space-y-3 pt-4">
-              <div className="flex items-center gap-2">
-                <Lock className="w-5 h-5 text-[#1E66F5]" />
-                <h4 className="text-xs font-extrabold uppercase tracking-wider text-[#0D1B3D]">Mockup 02: Tela de Acesso e Autenticação (Login)</h4>
-              </div>
-
-              <div className="bg-[#F8FAFC] p-4 rounded-2xl border border-[#E5E7EB] shadow-inner flex justify-center">
-                <div className="bg-white rounded-xl border border-slate-200 shadow-md p-6 max-w-sm w-full text-center space-y-4 text-left">
-                  
-                  {/* Centralized SysEdu Logo */}
-                  <div className="flex justify-center py-2">
-                    <SysEduLogo variant="vertical" size={54} showSlogan={false} />
-                  </div>
-
-                  <div className="space-y-1 text-center">
-                    <h5 className="text-xs font-black text-[#0D1B3D]">Faça Login na Sua Conta</h5>
-                    <p className="text-[10px] text-slate-400">Insira as credenciais unificadas abaixo</p>
-                  </div>
-
-                  <div className="space-y-2.5">
-                    <div>
-                      <label className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">E-mail</label>
-                      <input 
-                        type="text" 
-                        readOnly
-                        value="direcao@maputocentral.edu"
-                        className="w-full bg-[#F8FAFC] border border-slate-200 rounded-lg p-2 text-[10px] text-slate-600 focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Senha</label>
-                      <input 
-                        type="password" 
-                        readOnly
-                        value="••••••••••••"
-                        className="w-full bg-[#F8FAFC] border border-slate-200 rounded-lg p-2 text-[10px] text-slate-600 focus:outline-none"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2 pt-1.5">
-                    <button className="w-full bg-[#1E66F5] text-white font-bold text-[10px] py-2 rounded-lg text-center cursor-default">
-                      Entrar no Sistema
-                    </button>
-                    
-                    <button className="w-full bg-white border border-slate-200 text-slate-700 font-bold text-[10px] py-2 rounded-lg flex items-center justify-center gap-1.5 cursor-default">
-                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
-                        <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v3.92h6.61a5.66 5.66 0 0 1-2.45 3.71v3.08h3.97c2.32-2.14 3.61-5.3 3.61-8.64z"/>
-                        <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.97-3.08c-1.1.74-2.51 1.18-3.96 1.18-3.05 0-5.63-2.06-6.55-4.83H1.38v3.18A12 12 0 0 0 12 24z"/>
-                        <path fill="#FBBC05" d="M5.45 14.36A7.2 7.2 0 0 1 5 12c0-.82.14-1.63.4-2.36V6.46H1.38A11.97 11.97 0 0 0 0 12c0 1.98.48 3.85 1.38 5.54l4.07-3.18z"/>
-                        <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42A11.92 11.92 0 0 0 12 0 12 12 0 0 0 1.38 6.46l4.07 3.18c.92-2.77 3.5-4.89 6.55-4.89z"/>
-                      </svg>
-                      Entrar com o Google
-                    </button>
-                  </div>
-
-                </div>
-              </div>
-            </div>
-
-            {/* MOCKUP 3: MOBILE INTERFACE */}
-            <div className="space-y-3 pt-4">
-              <div className="flex items-center gap-2">
-                <Smartphone className="w-5 h-5 text-[#1E66F5]" />
-                <h4 className="text-xs font-extrabold uppercase tracking-wider text-[#0D1B3D]">Mockup 03: Tela de Aplicativo do Aluno/Docente (App Mobile)</h4>
-              </div>
-
-              <div className="bg-[#F8FAFC] p-4 rounded-2xl border border-[#E5E7EB] shadow-inner flex justify-center">
-                <div className="w-[240px] h-[450px] bg-white rounded-[32px] border-4 border-[#0D1B3D] shadow-2xl overflow-hidden flex flex-col justify-between text-left font-poppins relative">
-                  
-                  {/* Speaker Notch */}
-                  <div className="absolute top-0 left-1/2 transform -translate-x-1/2 w-20 h-4 bg-[#0D1B3D] rounded-b-xl z-20"></div>
-                  
-                  {/* Mobile Header */}
-                  <div className="bg-[#1E66F5] text-white pt-6 pb-4 px-3 space-y-2 rounded-b-2xl">
-                    <div className="flex justify-between items-center text-[8px] pt-1 opacity-80">
-                      <span>12:30</span>
-                      <span>LTE 100%</span>
-                    </div>
-                    
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <p className="text-[9px] opacity-80 font-medium">Olá, Nelton</p>
-                        <h5 className="text-[11px] font-black tracking-tight leading-none">Administrador SGE</h5>
-                      </div>
-                      <div className="w-7 h-7 rounded-full bg-white/20 border border-white/35 flex items-center justify-center text-[10px] font-bold">NB</div>
-                    </div>
-                  </div>
-
-                  {/* Mobile Body scrollable content */}
-                  <div className="flex-1 bg-slate-50 p-2.5 overflow-y-auto space-y-3 text-[10px]">
-                    
-                    {/* Summary bento-like micro cards */}
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
-                        <span className="text-[8px] text-slate-400 font-extrabold block">Alunos</span>
-                        <span className="text-xs font-black text-[#0D1B3D]">1.248</span>
-                      </div>
-                      <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
-                        <span className="text-[8px] text-slate-400 font-extrabold block">Presença</span>
-                        <span className="text-xs font-black text-[#10B981]">92%</span>
-                      </div>
-                      <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
-                        <span className="text-[8px] text-slate-400 font-extrabold block">Avisos</span>
-                        <span className="text-xs font-black text-amber-500">3 Novos</span>
-                      </div>
-                      <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
-                        <span className="text-[8px] text-slate-400 font-extrabold block">Mensagens</span>
-                        <span className="text-xs font-black text-[#1E66F5]">7 Recebidas</span>
-                      </div>
-                    </div>
-
-                    {/* Notice Section */}
-                    <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-sm space-y-1">
-                      <p className="text-[8px] font-extrabold text-[#1E66F5] uppercase tracking-wider">Aviso da Direção Escolar</p>
-                      <p className="text-[9px] font-extrabold text-[#0D1B3D]">Conselho Pedagógico Amanhã</p>
-                      <p className="text-[8px] text-[#6B7280]">Reunião geral às 14h com todos os docentes no distrito sede.</p>
-                    </div>
-                  </div>
-
-                  {/* Mobile Bottom Nav Bar */}
-                  <div className="bg-white border-t border-slate-150 py-1.5 px-3 flex justify-between items-center text-[8px] text-[#6B7280]">
-                    <div className="flex flex-col items-center text-[#1E66F5] font-extrabold">
-                      <LayoutDashboard className="w-4.5 h-4.5 mb-0.5" />
-                      <span>Início</span>
-                    </div>
-                    <div className="flex flex-col items-center font-medium">
-                      <GraduationCap className="w-4.5 h-4.5 mb-0.5" />
-                      <span>Alunos</span>
-                    </div>
-                    <div className="flex flex-col items-center font-medium">
-                      <Users className="w-4.5 h-4.5 mb-0.5" />
-                      <span>Turmas</span>
-                    </div>
-                    <div className="flex flex-col items-center font-medium">
-                      <Settings className="w-4.5 h-4.5 mb-0.5" />
-                      <span>Ajustes</span>
-                    </div>
-                  </div>
-
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* SECTION 7: APLICAÇÕES FÍSICAS */}
-          <section id="physical-section" className="bg-white p-6 md:p-8 rounded-3xl border border-[#E5E7EB] shadow-sm space-y-6">
-            <div className="border-b border-[#E5E7EB] pb-4">
-              <span className="text-[10px] font-black text-[#1E66F5] uppercase tracking-wider font-mono">Seção 07</span>
-              <h2 className="text-xl md:text-2xl font-black text-[#0D1B3D]">Aplicações Físicas e Merchandising</h2>
-            </div>
-
-            <p className="text-xs text-[#6B7280] leading-relaxed">
-              Consistência de marca expandida para além das telas. Veja abaixo os mockups renderizados com CSS estilizado de materiais institucionais físicos com o logotipo oficial aplicado de forma uniforme:
-            </p>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              
-              {/* Caderno Escolar */}
-              <div className="bg-slate-50 p-6 rounded-2xl border border-[#E5E7EB] flex flex-col items-center space-y-4">
-                <span className="text-[9px] font-bold text-[#6B7280] uppercase tracking-wider block">Caderno / Agenda Corporativa</span>
-                <div className="relative w-36 h-48 bg-white rounded-r-xl shadow-lg border-y border-r border-slate-200 overflow-hidden flex flex-col justify-between p-4 text-left">
-                  {/* Spiral representation on the left */}
-                  <div className="absolute left-0 top-0 bottom-0 w-2.5 bg-gradient-to-r from-slate-400 to-slate-200 flex flex-col justify-between py-2">
-                    {[...Array(12)].map((_, i) => (
-                      <div key={i} className="w-4 h-1 bg-slate-500 rounded-full -ml-1"></div>
-                    ))}
-                  </div>
-                  <div></div>
-                  <div className="flex flex-col items-center space-y-2">
-                    <SysEduLogo variant="icon" size={40} />
-                    <p className="text-[13px] font-black text-[#0D1B3D] tracking-tight text-center leading-none">Caderno Oficial</p>
-                    <p className="text-[8px] text-slate-400 tracking-wide uppercase">SGE SÉRIE PREMIUM</p>
-                  </div>
-                  <div></div>
-                </div>
-                <p className="text-[10px] text-[#6B7280] leading-snug text-center">Capa branca de alta gramatura com logotipo centralizado e detalhes foscos.</p>
-              </div>
-
-              {/* Caneta Institucional */}
-              <div className="bg-slate-50 p-6 rounded-2xl border border-[#E5E7EB] flex flex-col items-center space-y-4 justify-between">
-                <span className="text-[9px] font-bold text-[#6B7280] uppercase tracking-wider block">Caneta Esferográfica</span>
-                <div className="w-full max-w-xs h-10 bg-white rounded-full shadow-md border border-slate-200 flex items-center justify-between px-3 relative overflow-hidden">
-                  <div className="w-4 h-full bg-[#1E66F5] -ml-3 rounded-l-full shrink-0"></div>
-                  <div className="flex items-center gap-1.5">
-                    <SysEduLogo variant="icon" size={16} />
-                    <span className="text-[10px] font-black text-[#0D1B3D]">SysEdu</span>
-                  </div>
-                  <div className="w-12 h-1 bg-[#10B981] rounded-full shrink-0"></div>
-                </div>
-                <p className="text-[10px] text-[#6B7280] leading-snug text-center">Caneta branca com detalhes em azul primário, clip metálico e gravação a laser.</p>
-              </div>
-
-              {/* Cartão de Visita */}
-              <div className="bg-slate-50 p-6 rounded-2xl border border-[#E5E7EB] flex flex-col items-center space-y-4">
-                <span className="text-[9px] font-bold text-[#6B7280] uppercase tracking-wider block">Cartão de Visita Executivo</span>
-                <div className="w-56 h-32 bg-white rounded-lg shadow-lg border border-slate-200 p-4 flex flex-col justify-between relative overflow-hidden text-left">
-                  {/* Diagonal detailing line */}
-                  <div className="absolute right-0 top-0 bottom-0 w-2 bg-[#10B981]"></div>
-                  <div className="absolute right-2 top-0 bottom-0 w-1.5 bg-[#1E66F5]"></div>
-                  
-                  <SysEduLogo variant="full" size={26} />
-                  
-                  <div className="space-y-0.5 pt-2">
-                    <p className="text-[10px] font-extrabold text-[#0D1B3D] leading-none">Nelton Benedito</p>
-                    <p className="text-[7px] text-[#1E66F5] uppercase tracking-wider font-extrabold">Diretor Geral de Expansão</p>
-                    <p className="text-[6px] text-slate-400 font-mono mt-1">suporte@sysedu.com | www.sysedu.com</p>
-                  </div>
-                </div>
-                <p className="text-[10px] text-[#6B7280] leading-snug text-center">Fundo branco off-white premium com grafismos sutis em azul e verde-água.</p>
-              </div>
-
-              {/* Papel Timbrado Oficial */}
-              <div className="bg-slate-50 p-6 rounded-2xl border border-[#E5E7EB] flex flex-col items-center space-y-4">
-                <span className="text-[9px] font-bold text-[#6B7280] uppercase tracking-wider block">Papel Timbrado de Ofício</span>
-                <div className="w-36 h-48 bg-white rounded-sm shadow-md border border-slate-200 p-2.5 flex flex-col justify-between relative text-left">
-                  <div className="border-b border-slate-100 pb-1.5">
-                    <SysEduLogo variant="full" size={18} />
-                  </div>
-                  <div className="space-y-1 flex-1 py-2">
-                    <div className="h-1.5 w-16 bg-slate-100 rounded-full"></div>
-                    <div className="h-1.5 w-24 bg-slate-100 rounded-full"></div>
-                    <div className="h-1.5 w-20 bg-slate-100 rounded-full"></div>
-                  </div>
-                  <div className="border-t border-slate-100 pt-1 flex justify-between text-[5px] text-slate-400 font-mono">
-                    <span>Av. Karl Marx, Maputo</span>
-                    <span>contato@sysedu.com</span>
-                  </div>
-                </div>
-                <p className="text-[10px] text-[#6B7280] leading-snug text-center">Papel Sulfite A4 90g com cabeçalho colorido e rodapé institucional padronizado.</p>
-              </div>
-
-              {/* Pasta de Arquivos */}
-              <div className="bg-slate-50 p-6 rounded-2xl border border-[#E5E7EB] flex flex-col items-center space-y-4">
-                <span className="text-[9px] font-bold text-[#6B7280] uppercase tracking-wider block">Pasta Escolar / Portfólio</span>
-                <div className="w-48 h-36 bg-white rounded-r-2xl shadow-lg border-y border-r border-slate-200 overflow-hidden relative flex flex-col justify-between p-4 text-left">
-                  {/* Left flap fold line */}
-                  <div className="absolute left-0 top-0 bottom-0 w-3 bg-slate-100 border-r border-slate-200"></div>
-                  <div className="absolute left-2.5 top-0 bottom-0 w-1 bg-[#1E66F5]"></div>
-                  <div></div>
-                  <div className="flex items-center gap-2">
-                    <SysEduLogo variant="icon" size={32} />
-                    <div>
-                      <p className="text-xs font-black text-[#0D1B3D] leading-none">Pasta de Registros</p>
-                      <p className="text-[7px] text-slate-400 uppercase tracking-widest mt-0.5">SysEdu Enterprise</p>
-                    </div>
-                  </div>
-                  <div></div>
-                </div>
-                <p className="text-[10px] text-[#6B7280] leading-snug text-center">Acabamento refinado de pasta de papéis com o logotipo aplicado de forma consistente.</p>
-              </div>
-
-              {/* Crachá do Colaborador */}
-              <div className="bg-slate-50 p-6 rounded-2xl border border-[#E5E7EB] flex flex-col items-center space-y-4">
-                <span className="text-[9px] font-bold text-[#6B7280] uppercase tracking-wider block">Crachá de Identificação</span>
-                <div className="w-32 h-48 bg-white rounded-xl shadow-lg border border-slate-200 flex flex-col justify-between items-center p-3 text-center relative overflow-hidden">
-                  
-                  {/* Lanyard Attachment Hole */}
-                  <div className="w-4 h-1.5 bg-slate-400 rounded-full my-0.5"></div>
-                  
-                  <div className="border-b border-slate-100 pb-1 w-full flex justify-center">
-                    <SysEduLogo variant="icon" size={18} />
-                  </div>
-
-                  <div className="space-y-1 my-1">
-                    {/* Placeholder image of user */}
-                    <div className="w-12 h-12 bg-slate-100 border border-slate-200 rounded-full mx-auto flex items-center justify-center text-slate-400 overflow-hidden">
-                      <User className="w-6 h-6" />
-                    </div>
-                    <div className="space-y-0.5">
-                      <p className="text-[8px] font-black text-[#0D1B3D] leading-none">Nelton Benedito</p>
-                      <p className="text-[6px] text-[#1E66F5] font-extrabold uppercase">Administrador</p>
-                    </div>
-                  </div>
-
-                  {/* Barcode representation */}
-                  <div className="space-y-0.5 w-full">
-                    <div className="h-4 bg-slate-250 flex items-center justify-between px-1.5 py-0.5 rounded border border-slate-200 overflow-hidden">
-                      {[...Array(24)].map((_, i) => (
-                        <div key={i} className={`h-full bg-slate-800 ${i % 3 === 0 ? 'w-[1.5px]' : i % 5 === 0 ? 'w-[2px]' : 'w-[0.5px]'}`}></div>
-                      ))}
-                    </div>
-                    <span className="text-[5px] text-slate-400 font-mono">CODE: *SGE-NELTON-2026*</span>
-                  </div>
-
-                </div>
-                <p className="text-[10px] text-[#6B7280] leading-snug text-center">Crachá de identificação PVC com foto, cargo em azul e código de barras inferior.</p>
-              </div>
-
-            </div>
-          </section>
-
-          {/* SECTION 8: ATRIBUTOS DA MARCA */}
-          <section id="attributes-section" className="bg-white p-6 md:p-8 rounded-3xl border border-[#E5E7EB] shadow-sm space-y-6">
-            <div className="border-b border-[#E5E7EB] pb-4">
-              <span className="text-[10px] font-black text-[#1E66F5] uppercase tracking-wider font-mono">Seção 08</span>
-              <h2 className="text-xl md:text-2xl font-black text-[#0D1B3D]">Atributos da Identidade SysEdu</h2>
-            </div>
-
-            <p className="text-xs text-[#6B7280] leading-relaxed">
-              Os cinco valores nucleares que guiam cada decisão de design, engenharia de software e suporte do ecossistema SysEdu:
-            </p>
-
-            <div className="grid grid-cols-1 sm:grid-cols-5 gap-4">
-              {brandAttributes.map((attr) => (
-                <div key={attr.title} className="bg-slate-50 p-4 rounded-xl border border-[#E5E7EB] space-y-2.5 hover:shadow-md transition-all text-left">
-                  <div className="w-9 h-9 rounded-full bg-white shadow-sm flex items-center justify-center border border-slate-100">
-                    {attr.icon}
-                  </div>
-                  <div>
-                    <h5 className="text-xs font-black text-[#0D1B3D]">{attr.title}</h5>
-                    <p className="text-[10px] text-[#6B7280] leading-relaxed mt-1">{attr.desc}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-        </main>
-      </div>
-    </div>
+        </div>
+      )}
+    </main>
   );
 }
