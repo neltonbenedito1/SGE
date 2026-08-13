@@ -27,6 +27,7 @@ export interface AtividadesModuleProps {
   pautas?: Pauta[];
   processos?: ProcessoAluno[];
   faturas?: FaturaEstudante[];
+  globalCategories?: any[];
   onRefreshData: () => void;
   showNotification?: (msg: string, type: 'sucesso' | 'erro' | 'info') => void;
 }
@@ -46,6 +47,7 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
   pautas = [],
   processos = [],
   faturas = [],
+  globalCategories = [],
   onRefreshData,
   showNotification
 }) => {
@@ -1263,15 +1265,25 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
               <select
                 value={categoryFilter}
                 onChange={e => setCategoryFilter(e.target.value)}
-                className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
               >
                 <option value="todos">Todas as Categorias</option>
-                <option value="Professores">Professores / Docentes</option>
-                <option value="Directores">Directores Escolares</option>
-                <option value="Estudantes">Estudantes / Alunos</option>
-                <option value="Encarregados">Encarregados de Educação</option>
-                <option value="Administradores">Administradores</option>
                 <option value="Todos">Escopo Geral (Todos)</option>
+                {globalCategories && globalCategories.length > 0 ? (
+                  globalCategories.map((cat: any) => (
+                    <option key={cat.id || cat.codigo} value={cat.nome || cat.codigo}>
+                      {cat.nome} ({cat.codigo || cat.id})
+                    </option>
+                  ))
+                ) : (
+                  <>
+                    <option value="Professores">Professores / Docentes</option>
+                    <option value="Directores">Directores Escolares</option>
+                    <option value="Estudantes">Estudantes / Alunos</option>
+                    <option value="Encarregados">Encarregados de Educação</option>
+                    <option value="Administradores">Administradores</option>
+                  </>
+                )}
               </select>
             </div>
 
@@ -2003,14 +2015,24 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
                   <select
                     value={formCategoria}
                     onChange={e => setFormCategoria(e.target.value as CategoriaAtribuicaoActividade)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none cursor-pointer"
                   >
-                    <option value="Todos">Todos os Perfis</option>
-                    <option value="Professores">Professores / Docentes</option>
-                    <option value="Directores">Directores Escolares</option>
-                    <option value="Estudantes">Estudantes</option>
-                    <option value="Encarregados">Encarregados de Educação</option>
-                    <option value="Administradores">Administradores</option>
+                    <option value="Todos">Todos os Perfis (Escopo Geral)</option>
+                    {globalCategories && globalCategories.length > 0 ? (
+                      globalCategories.map((cat: any) => (
+                        <option key={cat.id || cat.codigo} value={cat.nome || cat.codigo}>
+                          {cat.nome} ({cat.codigo || cat.id})
+                        </option>
+                      ))
+                    ) : (
+                      <>
+                        <option value="Professores">Professores / Docentes</option>
+                        <option value="Directores">Directores Escolares</option>
+                        <option value="Estudantes">Estudantes</option>
+                        <option value="Encarregados">Encarregados de Educação</option>
+                        <option value="Administradores">Administradores</option>
+                      </>
+                    )}
                   </select>
                 </div>
               </div>
@@ -2027,20 +2049,28 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
                     const nameResolved = resolveUserName(e.target.value);
                     setFormResponsavelNome(nameResolved);
                   }}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none cursor-pointer"
                 >
                   <option value="">Minha Conta ({currentUserName})</option>
-                  {tenantUsers.map(u => (
-                    <option key={u.id || u.user_id} value={u.id || u.user_id}>
-                      {u.nome || u.name || u.email} ({u.tipo || u.role || 'Utilizador'})
-                    </option>
-                  ))}
-                  {teachers.map(t => (
+                  {tenantUsers
+                    .filter(u => {
+                      if (!formCategoria || formCategoria === 'Todos') return true;
+                      const catObj = globalCategories.find((c: any) => c.nome === formCategoria || c.codigo === formCategoria || c.id === formCategoria);
+                      const catCode = catObj?.codigo || catObj?.id || formCategoria.toLowerCase();
+                      const userRole = (u.tipo || u.role || '').toLowerCase();
+                      return userRole.includes(catCode.toLowerCase()) || catCode.toLowerCase().includes(userRole) || (u.cargo || '').toLowerCase().includes(formCategoria.toLowerCase());
+                    })
+                    .map(u => (
+                      <option key={u.id || u.user_id} value={u.id || u.user_id}>
+                        {u.nome || u.name || u.email} ({u.tipo || u.role || 'Utilizador'})
+                      </option>
+                    ))}
+                  {(formCategoria === 'Todos' || formCategoria === 'Professores' || formCategoria.toLowerCase().includes('docent') || formCategoria.toLowerCase().includes('prof')) && teachers.map(t => (
                     <option key={t.id} value={t.user_id || t.id}>
                       Docente: {t.nome}
                     </option>
                   ))}
-                  {students.map(s => (
+                  {(formCategoria === 'Todos' || formCategoria === 'Estudantes' || formCategoria.toLowerCase().includes('estudant') || formCategoria.toLowerCase().includes('alun')) && students.map(s => (
                     <option key={s.id} value={s.user_id || s.id}>
                       Estudante: {s.nome}
                     </option>

@@ -75,6 +75,7 @@ import {
   getCookie,
   saveSettingIfAllowed
 } from '../lib/cookies';
+import { CookiePolicyModal } from './CookiePolicyModal';
 
 function getSavedFormDraft<T>(key: string, defaultValue: T): T {
   const saved = getCookie(key);
@@ -117,6 +118,7 @@ export default function SuperAdminPortal({
   systemLang = 'pt',
   onChangeLanguage
 }: SuperAdminPortalProps) {
+  const [isCookiePolicyOpen, setIsCookiePolicyOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'tenants' | 'plans' | 'payments' | 'logs' | 'smtp'>(() => {
     const saved = getCookie('last_module');
     if (saved === 'dashboard' || saved === 'tenants' || saved === 'plans' || saved === 'payments' || saved === 'logs' || saved === 'smtp') {
@@ -2222,6 +2224,26 @@ export default function SuperAdminPortal({
             </div>
           )}
           
+          {isExpanded ? (
+            <button
+              type="button"
+              onClick={() => setIsCookiePolicyOpen(true)}
+              className="w-full bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200 py-1.5 px-3 rounded-xl font-bold text-center text-[10px] transition-colors cursor-pointer flex items-center justify-center gap-1.5 shrink-0 border border-slate-800"
+              title="Abrir Política de Cookies e Privacidade"
+            >
+              🛡️ Cookies & Privacidade
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setIsCookiePolicyOpen(true)}
+              className="p-2 bg-slate-900/80 hover:bg-slate-800 text-indigo-400 rounded-xl transition-colors cursor-pointer shrink-0 border border-slate-800"
+              title="Política de Cookies"
+            >
+              🛡️
+            </button>
+          )}
+
           {onLogout && (
             isExpanded ? (
               <button 
@@ -5474,6 +5496,10 @@ export default function SuperAdminPortal({
             </div>
           </div>
         </div>
+      )}
+
+      {isCookiePolicyOpen && (
+        <CookiePolicyModal onClose={() => setIsCookiePolicyOpen(false)} />
       )}
     </div>
   );

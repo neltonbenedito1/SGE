@@ -139,6 +139,7 @@ export interface Docente {
   especialidade: string;
   numero_registro: string;
   data_contratacao: string;
+  data_admissao?: string;
   turmas_atribuidas?: string[];
 }
 
@@ -153,6 +154,7 @@ export interface Estudante {
   genero: 'Masculino' | 'Feminino';
   turma_id: string;
   pai_id: string;
+  data_admissao?: string;
   foto_url?: string;
   ativo?: boolean;
   motivo_desativacao?: string;
@@ -288,7 +290,7 @@ export interface Pauta {
   criado_em?: string;
 }
 
-export type ProcessoTipo = 'Matrícula' | 'Transferência' | 'Suspensão' | 'Conclusão' | 'Desistência';
+export type ProcessoTipo = 'Matrícula' | 'Transferência' | 'Suspensão' | 'Conclusão' | 'Desistência' | 'Justificativa de Ausência' | string;
 export type ProcessoStatus = 'Solicitação' | 'Análise' | 'Aprovado' | 'Rejeitado' | 'Concluído';
 
 export interface ProcessoAluno {
@@ -297,7 +299,7 @@ export interface ProcessoAluno {
   estudante_id: string;
   tipo: ProcessoTipo;
   data: string;
-  documentos: string[]; // list of file names
+  documentos: string[]; // list of file names or URLs
   status: ProcessoStatus;
   criador_nome: string;
   observacao?: string;
@@ -308,7 +310,7 @@ export interface ProcessoAluno {
 
 export type SeveridadeActividade = 'Baixo' | 'Médio' | 'Crítico';
 export type StatusActividade = 'Pendente' | 'Em Progresso' | 'Finalizada' | 'Suspensa';
-export type CategoriaAtribuicaoActividade = 'Todos' | 'Administradores' | 'Directores' | 'Professores' | 'Estudantes' | 'Encarregados';
+export type CategoriaAtribuicaoActividade = 'Todos' | 'Administradores' | 'Directores' | 'Professores' | 'Estudantes' | 'Encarregados' | string;
 
 export interface ActividadePendente {
   id: string;

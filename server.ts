@@ -4,9 +4,37 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import nodemailer from "nodemailer";
 import Stripe from "stripe";
+import cookieParser from "cookie-parser";
+import crypto from "crypto";
 
 const app = express();
 const PORT = 3000;
+
+app.use(cookieParser());
+
+// Server-side session store with 30-minute inactivity expiration and token rotation
+interface ServerSession {
+  userId: string;
+  role: string;
+  tenantId: string;
+  email: string;
+  createdAt: number;
+  lastActivity: number;
+}
+
+const serverSessions = new Map<string, ServerSession>();
+const SESSION_INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes inactivity timeout for student/minor data protection
+
+// Cleanup expired sessions periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [sessionId, session] of serverSessions.entries()) {
+    if (now - session.lastActivity > SESSION_INACTIVITY_TIMEOUT_MS) {
+      serverSessions.delete(sessionId);
+      console.log(`[Server Session Cleanup] Expired inactive session: ${sessionId.substring(0, 16)}...`);
+    }
+  }
+}, 5 * 60 * 1000);
 
 // Lazy Initialization of Stripe SDK
 let stripeClient: Stripe | null = null;
@@ -99,6 +127,132 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
 
 // Standard JSON Body Parser for all other endpoints
 app.use(express.json());
+
+// ============================================================================
+// AUTH & SESSION COOKIE API ENDPOINTS (HttpOnly, Secure, SameSite=Strict)
+// ============================================================================
+
+// 1. Create or rotate HTTP-Only Session Cookie
+app.post("/api/auth/session/create", (req, res) => {
+  try {
+    const { userId, role, tenantId, email } = req.body;
+
+    if (!userId || !role) {
+      return res.status(400).json({ error: "userId e role são obrigatórios." });
+    }
+
+    // Generate cryptographic tokens (never store sensitive personal data in raw cookie value)
+    const sessionId = "sysedu_sess_" + crypto.randomUUID();
+    const csrfToken = "csrf_" + crypto.randomBytes(16).toString("hex");
+    const isHttps = req.secure || req.headers["x-forwarded-proto"] === "https" || process.env.NODE_ENV === "production";
+
+    // Store opaque token session mapping on server
+    const now = Date.now();
+    serverSessions.set(sessionId, {
+      userId,
+      role,
+      tenantId: tenantId || "default",
+      email: email || "",
+      createdAt: now,
+      lastActivity: now
+    });
+
+    // Set Essential HTTP-Only Session Cookie
+    res.cookie("sysedu_session_id", sessionId, {
+      httpOnly: true,
+      secure: isHttps,
+      sameSite: "strict",
+      path: "/",
+      maxAge: 24 * 60 * 60 * 1000 // 24 hours max lifetime
+    });
+
+    // Set CSRF Token Cookie
+    res.cookie("sysedu_csrf_token", csrfToken, {
+      httpOnly: true,
+      secure: isHttps,
+      sameSite: "strict",
+      path: "/",
+      maxAge: 24 * 60 * 60 * 1000
+    });
+
+    console.log(`[Session API] Created HttpOnly session for user ${userId} (${role})`);
+
+    return res.json({
+      success: true,
+      csrfToken,
+      session: {
+        userId,
+        role,
+        tenantId: tenantId || "default",
+        email: email || "",
+        inactivityTimeoutMinutes: 30
+      }
+    });
+  } catch (error: any) {
+    console.error("Error creating session cookie:", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// 2. Verify Session Validity & Inactivity Timeout (30 min inactivity rule)
+app.get("/api/auth/session/verify", (req, res) => {
+  try {
+    const sessionId = req.cookies?.sysedu_session_id;
+
+    if (!sessionId || !serverSessions.has(sessionId)) {
+      return res.status(401).json({ authenticated: false, reason: "session_not_found" });
+    }
+
+    const session = serverSessions.get(sessionId)!;
+    const now = Date.now();
+    const elapsedMinutes = (now - session.lastActivity) / (1000 * 60);
+
+    // Inactivity timeout check (30 minutes)
+    if (elapsedMinutes > 30) {
+      serverSessions.delete(sessionId);
+      res.clearCookie("sysedu_session_id", { path: "/" });
+      res.clearCookie("sysedu_csrf_token", { path: "/" });
+      console.log(`[Session API] Session expired due to ${elapsedMinutes.toFixed(1)} mins of inactivity`);
+      return res.status(401).json({ authenticated: false, reason: "inactivity_timeout", timeoutMinutes: 30 });
+    }
+
+    // Update last activity timestamp (rolling activity window)
+    session.lastActivity = now;
+
+    return res.json({
+      authenticated: true,
+      user: {
+        userId: session.userId,
+        role: session.role,
+        tenantId: session.tenantId,
+        email: session.email
+      },
+      lastActivity: new Date(session.lastActivity).toISOString()
+    });
+  } catch (error: any) {
+    console.error("Error verifying session:", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// 3. Logout & Rotate Session Token (Destroys HttpOnly Cookie)
+app.post("/api/auth/session/logout", (req, res) => {
+  try {
+    const sessionId = req.cookies?.sysedu_session_id;
+    if (sessionId) {
+      serverSessions.delete(sessionId);
+    }
+
+    res.clearCookie("sysedu_session_id", { path: "/" });
+    res.clearCookie("sysedu_csrf_token", { path: "/" });
+
+    console.log("[Session API] HttpOnly session cookies cleared on logout.");
+    return res.json({ success: true, message: "Sessão encerrada e cookies limpos com sucesso." });
+  } catch (error: any) {
+    console.error("Error logging out session:", error);
+    return res.status(500).json({ error: error.message });
+  }
+});
 
 // Initialize Gemini SDK client on the server side
 const apiKey = process.env.GEMINI_API_KEY;

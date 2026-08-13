@@ -72,6 +72,7 @@ import {
   Save, 
   UserPlus, 
   CheckCircle, 
+  CheckCircle2,
   XCircle, 
   AlertCircle, 
   Clock, 
@@ -294,6 +295,7 @@ import {
   saveSettingIfAllowed,
   getUserSessionCookie
 } from '../lib/cookies';
+import { CookiePolicyModal } from './CookiePolicyModal';
 import { SessionStateService, useDebouncedScroll } from '../lib/userState';
 import { useUnsavedChangesGuard } from '../lib/useUnsavedChangesGuard';
 import { User as UserIcon } from 'lucide-react';
@@ -356,6 +358,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [activeTab, setActiveTab] = useState<string>(() => getLastModule() || 'dashboard');
   const [calendarSubTab, setCalendarSubTab] = useState<'grade' | 'ferias' | 'feriados'>('grade');
   const [isFormDirty, setIsFormDirty] = useState(false);
+  const [isCookiePolicyOpen, setIsCookiePolicyOpen] = useState(false);
 
   // Unsaved changes navigation guard hook
   const { showConfirmModal, guardAction, confirmLeave, cancelLeave } = useUnsavedChangesGuard(isFormDirty);
@@ -2877,8 +2880,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   // Dynamic Forms State
   const [provinciaForm, setProvinciaForm] = useState(() => getSavedFormDraft('draft_provincia', { nome: '', codigo: '' }));
   const [escolaForm, setEscolaForm] = useState(() => getSavedFormDraft('draft_escola', { nome: '', provincia_id: '', endereco: '', telefone: '', email: '', diretor_id: '', ativo: true, latitude: '', longitude: '', logo_url: '', controlar_assiduidade: false, tolerancia_manha: '07:15', tolerancia_tarde: '12:15', tolerancia_noite: '18:15' }));
-  const [teacherForm, setTeacherForm] = useState(() => getSavedFormDraft('draft_teacher', { nome: '', email: '', especialidade: '', numero_registro: '', escola_id: '' }));
-  const [studentForm, setStudentForm] = useState(() => getSavedFormDraft('draft_student', { nome: '', email: '', escola_id: '', turma_id: '', numero_matricula: '', data_nascimento: '', genero: 'Masculino' as 'Masculino' | 'Feminino', pai_id: '', faturado: false, periodo_facturacao: 'Mensal' as 'Mensal' | 'Semestral' | 'Anual', foto_url: '', usuario_sistema: false, senha_temporaria: '' }));
+  const [teacherForm, setTeacherForm] = useState(() => getSavedFormDraft('draft_teacher', { nome: '', email: '', especialidade: '', numero_registro: '', escola_id: '', data_admissao: new Date().toISOString().split('T')[0] }));
+  const [studentForm, setStudentForm] = useState(() => getSavedFormDraft('draft_student', { nome: '', email: '', escola_id: '', turma_id: '', numero_matricula: '', data_nascimento: '', data_admissao: new Date().toISOString().split('T')[0], genero: 'Masculino' as 'Masculino' | 'Feminino', pai_id: '', faturado: false, periodo_facturacao: 'Mensal' as 'Mensal' | 'Semestral' | 'Anual', foto_url: '', usuario_sistema: false, senha_temporaria: '' }));
   const [turmaForm, setTurmaForm] = useState(() => getSavedFormDraft('draft_turma', { nome: '', escola_id: '', ano_letivo: '2026', nivel: 'Primário', docente_id: '', capacidade_max: 30, classe_escolar_id: '' }));
   const [classeForm, setClasseForm] = useState<any>(() => getSavedFormDraft('draft_classe', { nome: '', turma_id: '', docente_id: '', horario: '', sala: '', data: new Date().toISOString().split('T')[0], dia_semana: getDiaSemanaFromDate(new Date().toISOString().split('T')[0]), codigo: '', escola_id: '', classe_escolar_id: '', professores_responsaveis: [] }));
   const [pautaForm, setPautaForm] = useState<any>(() => getSavedFormDraft('draft_pauta', { escola_id: '', estudante_id: '', classe_id: '', trimestre: '1º Trimestre', nota_prova: '', nota_trabalho: '', nota_participacao: '', nota_exame: '', nota_reavaliacao: '', observacao: '', num_avaliacoes: 3, avaliacao_1: '', avaliacao_2: '', avaliacao_3: '', status_estudante: 'Admitido', status: 'publicado' }));
@@ -2936,6 +2939,23 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [scannerScanning, setScannerScanning] = useState(false);
   const [scanFlashActive, setScanFlashActive] = useState(false);
   const [lastScannedResult, setLastScannedResult] = useState<string | null>(null);
+
+  // ATTENDANCE JUSTIFICATION STATES
+  const [isJustificativaModalOpen, setIsJustificativaModalOpen] = useState(false);
+  const [justificativaForm, setJustificativaForm] = useState({
+    registro_id: '',
+    tipo: 'estudante' as 'estudante' | 'docente',
+    nome: '',
+    turma_nome: '',
+    data_falta: '',
+    periodo: 'manha',
+    detalhes: '',
+    comprovante_data: '',
+    comprovante_nome: '',
+    log_id: ''
+  });
+  const [isJustificativaDrawerOpen, setIsJustificativaDrawerOpen] = useState(false);
+  const [selectedJustificativa, setSelectedJustificativa] = useState<any>(null);
 
   // BULK IMPORT STATES
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -3842,8 +3862,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
       } else if (importModule === 'disciplinas') {
         const limitMax = plan?.limits.max_disciplinas ?? 9999;
-        if (classes.length + jsonData.length > limitMax) {
-          errors.push(`Limite do Plano Excedido: O seu plano atual limita a ${limitMax} disciplinas cadastradas (Atualmente possui ${classes.length}).`);
+        const baseDiscCount = classes.filter(isBaseDiscipline).length;
+        if (baseDiscCount + jsonData.length > limitMax) {
+          errors.push(`Limite do Plano Excedido: O seu plano atual limita a ${limitMax} disciplinas cadastradas (Atualmente possui ${baseDiscCount}).`);
         }
 
         const validRows: any[] = [];
@@ -4177,18 +4198,6 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
       const salasList: Sala[] = [];
       salasSnap.forEach(d => salasList.push({ ...d.data() as Sala, id: d.id }));
-      if (salasList.length === 0) {
-        const defaultSalas = [
-          { nome: 'Sala A-101', capacidade: 35, tipo: 'Normal', tenant_id: currentTenantId, descricao: 'Sala de aula geral equipada com projetor.' },
-          { nome: 'Sala B-102', capacidade: 30, tipo: 'Normal', tenant_id: currentTenantId, descricao: 'Sala de aula geral com quadro branco.' },
-          { nome: 'Laboratório de Informática', capacidade: 25, tipo: 'Laboratório', tenant_id: currentTenantId, descricao: 'Laboratório com 25 computadores funcionais.' },
-          { nome: 'Anfiteatro Principal', capacidade: 80, tipo: 'Anfiteatro', tenant_id: currentTenantId, descricao: 'Espaço para grandes palestras e apresentações.' }
-        ];
-        for (const defaultS of defaultSalas) {
-          const docRef = await addDoc(collection(db, 'salas'), defaultS);
-          salasList.push({ ...defaultS, id: docRef.id });
-        }
-      }
       setSalas(salasList);
 
       const pauList: Pauta[] = [];
@@ -5595,7 +5604,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           await setDoc(teacherDoc, {
             escola_id: teacherForm.escola_id,
             especialidade: teacherForm.especialidade,
-            numero_registro: teacherForm.numero_registro
+            numero_registro: teacherForm.numero_registro,
+            data_admissao: teacherForm.data_admissao || new Date().toISOString().split('T')[0]
           }, { merge: true });
           if (editingItem.user_id) {
             await setDoc(doc(db, 'users', editingItem.user_id), {
@@ -5640,7 +5650,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             escola_id: teacherForm.escola_id,
             especialidade: teacherForm.especialidade,
             numero_registro: teacherForm.numero_registro,
-            data_contratacao: new Date().toISOString().split('T')[0]
+            data_contratacao: teacherForm.data_admissao || new Date().toISOString().split('T')[0],
+            data_admissao: teacherForm.data_admissao || new Date().toISOString().split('T')[0]
           };
           await setDoc(doc(db, 'docentes', docGenId), newDocente);
           if (teacherEmail) {
@@ -5706,6 +5717,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             turma_id: studentForm.turma_id || '',
             numero_matricula: studentForm.numero_matricula || '',
             data_nascimento: studentForm.data_nascimento || '',
+            data_admissao: studentForm.data_admissao || new Date().toISOString().split('T')[0],
             genero: studentForm.genero || 'Masculino',
             pai_id: studentForm.pai_id || '',
             faturado: !!studentForm.faturado,
@@ -5757,6 +5769,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             escola_id: studentForm.escola_id,
             numero_matricula: studentForm.numero_matricula,
             data_nascimento: studentForm.data_nascimento,
+            data_admissao: studentForm.data_admissao || new Date().toISOString().split('T')[0],
             genero: studentForm.genero,
             turma_id: studentForm.turma_id,
             pai_id: studentForm.pai_id,
@@ -5989,7 +6002,6 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
         if (editingItem) {
           await updateDoc(doc(db, 'ferias', editingItem.id), feriasForm);
-          showSystemNotification("Férias atualizadas com sucesso!", "sucesso");
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'todos',
@@ -6001,7 +6013,6 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           });
         } else {
           await addDoc(collection(db, 'ferias'), { ...feriasForm, ...qParams });
-          showSystemNotification("Férias cadastradas com sucesso!", "sucesso");
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'todos',
@@ -6073,16 +6084,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         if (editingItem) {
           await updateDoc(doc(db, 'classes', editingItem.id), payload);
           setClasses(prev => prev.map(c => c.id === editingItem.id ? { ...c, ...payload } : c));
-          showSystemNotification("Horário de aula atualizado com sucesso!", "sucesso");
         } else {
           const docRef = await addDoc(collection(db, 'classes'), payload);
           setClasses(prev => [{ ...payload, id: docRef.id }, ...prev]);
-          showSystemNotification(
-            isWeekendOrHoliday 
-              ? "Horário de aula agendado e enviado para aprovação!" 
-              : "Horário de aula agendado com sucesso!", 
-            "sucesso"
-          );
         }
       }
 
@@ -6117,11 +6121,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         if (editingItem) {
           await updateDoc(doc(db, 'feriados', editingItem.id), payload);
           setFeriados(prev => prev.map(f => f.id === editingItem.id ? { ...f, ...payload } : f));
-          showSystemNotification("Feriado atualizado com sucesso!", "sucesso");
         } else {
           const docRef = await addDoc(collection(db, 'feriados'), payload);
           setFeriados(prev => [{ ...payload, id: docRef.id }, ...prev]);
-          showSystemNotification("Feriado cadastrado com sucesso no calendário!", "sucesso");
         }
       } 
       
@@ -6877,7 +6879,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           {hasPermission('docentes') && renderMenuItem('docentes', 'Docentes', <Users className="w-4.5 h-4.5" />)}
           {hasPermission('estudantes') && renderMenuItem('estudantes', 'Estudantes', <GraduationCap className="w-4.5 h-4.5" />)}
           {hasPermission('turmas') && renderMenuItem('turmas', 'Turmas', <BookOpen className="w-4.5 h-4.5" />)}
-          {hasPermission('disciplinas') && renderMenuItem('disciplinas', `Disciplinas (${classes.length})`, <BookMarked className="w-4.5 h-4.5" />)}
+          {hasPermission('disciplinas') && renderMenuItem('disciplinas', `Disciplinas (${classes.filter(isBaseDiscipline).length})`, <BookMarked className="w-4.5 h-4.5" />)}
           {hasPermission('classes') && renderMenuItem('classes_escolares', `Classes (${classesEscolares.length})`, <List className="w-4.5 h-4.5" />)}
           {hasPermission('calendario') && renderMenuItem('calendario', 'Calendário & Horários', <Calendar className="w-4.5 h-4.5" />)}
           {hasPermission('pautas') && renderMenuItem('pauta_geral', 'Pauta Geral', <Award className="w-4.5 h-4.5" />)}
@@ -6915,6 +6917,26 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             </div>
           )}
           
+          {isExpanded ? (
+            <button
+              type="button"
+              onClick={() => setIsCookiePolicyOpen(true)}
+              className="w-full bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200 py-1.5 px-3 rounded-xl font-bold text-center text-[10px] transition-colors cursor-pointer flex items-center justify-center gap-1.5 shrink-0 border border-slate-800"
+              title="Abrir Política de Cookies e Privacidade"
+            >
+              <UserIcon className="w-3.5 h-3.5 text-indigo-400" /> Cookies & Privacidade
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setIsCookiePolicyOpen(true)}
+              className="p-2 bg-slate-900/80 hover:bg-slate-800 text-indigo-400 rounded-xl transition-colors cursor-pointer shrink-0 border border-slate-800"
+              title="Política de Cookies"
+            >
+              <UserIcon className="w-3.5 h-3.5" />
+            </button>
+          )}
+
           {onLogout && (
             isExpanded ? (
               <button 
@@ -7298,7 +7320,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   <div className="bg-white p-5 rounded-2xl border border-slate-200/60 shadow-xs">
                     <BookMarked className="w-5 h-5 text-blue-600 mb-2.5" />
                     <p className="text-slate-400 text-xs font-bold uppercase tracking-wider">Disciplinas Ministradas</p>
-                    <h3 className="text-2xl font-black font-sans text-slate-900 mt-1">{classes.length}</h3>
+                    <h3 className="text-2xl font-black font-sans text-slate-900 mt-1">{classes.filter(isBaseDiscipline).length}</h3>
                   </div>
                 </div>
 
@@ -7788,6 +7810,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   pautas={rawPautas}
                   processos={rawProcessos}
                   faturas={studentFaturas}
+                  globalCategories={globalCategories}
                   onRefreshData={() => loadTenantContext()}
                   showNotification={showSystemNotification}
                 />
@@ -12186,8 +12209,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 // Filter scheduled classes/lessons based on active filters
                 const activeClassesForAssiduidade = rawClasses.filter(c => {
                   // Day of week check
-                  const classDay = c.dia_semana || getDiaSemanaFromDate(c.data || '') || '';
-                  if (classDay.toLowerCase() !== activeDayOfWeek.toLowerCase()) return false;
+                  const classDay = (c.dia_semana || (c.data ? getDiaSemanaFromDate(c.data) : '') || '').toLowerCase();
+                  const actDay = activeDayOfWeek.toLowerCase();
+                  const dayMatches = !classDay || classDay.includes(actDay) || actDay.includes(classDay) || (c.data && c.data === assiduidadeDateStart);
+                  if (!dayMatches) return false;
                   
                   // Period/shift check
                   const classShift = getShiftForSlot(c.horario);
@@ -12195,24 +12220,27 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   
                   // School filter (by mapping turma -> school)
                   const assocTurma = rawTurmas.find(t => t.id === c.turma_id);
-                  const schoolId = assocTurma?.escola_id || '';
-                  if (assiduidadeEscolaFilter !== 'todos' && schoolId !== assiduidadeEscolaFilter) return false;
+                  const schoolId = assocTurma?.escola_id || c.escola_id || '';
+                  if (assiduidadeEscolaFilter !== 'todos' && schoolId && schoolId !== assiduidadeEscolaFilter) return false;
                   
                   return true;
                 });
 
-                const activeTurmaIdsForAssiduidade = Array.from(new Set(activeClassesForAssiduidade.map(c => c.turma_id)));
-                const activeTeacherIdsForAssiduidade = Array.from(new Set(activeClassesForAssiduidade.map(c => c.docente_id)));
+                const activeTurmaIdsForAssiduidade = Array.from(new Set(activeClassesForAssiduidade.map(c => c.turma_id).filter(Boolean)));
+                const activeTeacherIdsForAssiduidade = Array.from(new Set(activeClassesForAssiduidade.map(c => c.docente_id).filter(Boolean)));
 
                 // Get scheduled Students
                 const scheduledStudents = rawStudents.filter(s => {
-                  if (!s.ativo) return false;
+                  if (s.ativo === false) return false;
                   
-                  // Must belong to scheduled turmas for the period
-                  if (!activeTurmaIdsForAssiduidade.includes(s.turma_id || '')) return false;
+                  // Must belong to scheduled turmas if schedule exists for this period
+                  if (activeClassesForAssiduidade.length > 0 && activeTurmaIdsForAssiduidade.length > 0) {
+                    if (!activeTurmaIdsForAssiduidade.includes(s.turma_id || '')) return false;
+                  }
                   
-                  // School filter
-                  if (assiduidadeEscolaFilter !== 'todos' && s.escola_id !== assiduidadeEscolaFilter) return false;
+                  // School filter (check student's school or student's turma school)
+                  const studentSchool = s.escola_id || rawTurmas.find(t => t.id === s.turma_id)?.escola_id || '';
+                  if (assiduidadeEscolaFilter !== 'todos' && studentSchool && studentSchool !== assiduidadeEscolaFilter) return false;
                   
                   // Search query
                   if (assiduidadeSearchQuery.trim()) {
@@ -12225,11 +12253,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                 // Get scheduled Teachers
                 const scheduledTeachers = rawTeachers.filter(t => {
-                  // Must be scheduled in this period
-                  if (!activeTeacherIdsForAssiduidade.includes(t.id)) return false;
+                  if (activeClassesForAssiduidade.length > 0 && activeTeacherIdsForAssiduidade.length > 0) {
+                    if (!activeTeacherIdsForAssiduidade.includes(t.id)) return false;
+                  }
                   
                   // School filter
-                  if (assiduidadeEscolaFilter !== 'todos' && t.escola_id !== assiduidadeEscolaFilter) return false;
+                  const teacherSchool = t.escola_id || '';
+                  if (assiduidadeEscolaFilter !== 'todos' && teacherSchool && teacherSchool !== assiduidadeEscolaFilter) return false;
                   
                   // Search query
                   if (assiduidadeSearchQuery.trim()) {
@@ -12243,69 +12273,126 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 // Filter attendance logs matching selected criteria
                 const filteredAssiduidadeLogs = assiduidadeLogs.filter(log => {
                   // Date range
-                  const logDate = log.timestamp?.split('T')[0] || '';
-                  if (logDate < assiduidadeDateStart || logDate > assiduidadeDateEnd) return false;
+                  const logDate = log.timestamp?.split('T')[0] || log.data || '';
+                  if (logDate && (logDate < assiduidadeDateStart || logDate > assiduidadeDateEnd)) return false;
                   
                   // Time range
-                  const dateObj = new Date(log.timestamp);
-                  const hh = String(dateObj.getHours()).padStart(2, '0');
-                  const mm = String(dateObj.getMinutes()).padStart(2, '0');
-                  const logTimeStr = `${hh}:${mm}`;
-                  if (logTimeStr < assiduidadeTimeStart || logTimeStr > assiduidadeTimeEnd) return false;
+                  if (log.timestamp) {
+                    const dateObj = new Date(log.timestamp);
+                    if (!isNaN(dateObj.getTime())) {
+                      const hh = String(dateObj.getHours()).padStart(2, '0');
+                      const mm = String(dateObj.getMinutes()).padStart(2, '0');
+                      const logTimeStr = `${hh}:${mm}`;
+                      if (logTimeStr < assiduidadeTimeStart || logTimeStr > assiduidadeTimeEnd) return false;
+                    }
+                  }
                   
                   // Period/shift
-                  if (assiduidadePeriodFilter !== 'todos' && log.periodo !== assiduidadePeriodFilter) return false;
+                  if (assiduidadePeriodFilter !== 'todos' && log.periodo && log.periodo !== assiduidadePeriodFilter) return false;
                   
                   // School
-                  if (assiduidadeEscolaFilter !== 'todos' && log.escola_id !== assiduidadeEscolaFilter) return false;
+                  if (assiduidadeEscolaFilter !== 'todos' && log.escola_id && log.escola_id !== assiduidadeEscolaFilter) return false;
                   
                   // Search query
                   if (assiduidadeSearchQuery.trim()) {
                     const q = assiduidadeSearchQuery.toLowerCase();
-                    return (log.nome || '').toLowerCase().includes(q) || (log.numero_identificacao || '').toLowerCase().includes(q) || log.registro_id.toLowerCase().includes(q);
+                    return (log.nome || '').toLowerCase().includes(q) || (log.numero_identificacao || '').toLowerCase().includes(q) || (log.registro_id || '').toLowerCase().includes(q);
                   }
                   return true;
                 });
 
                 // Compute list of Faltosos (Absent list)
                 const absentStudentsList = scheduledStudents.filter(student => {
-                  const hasRecord = filteredAssiduidadeLogs.some(l => l.tipo === 'estudante' && l.registro_id === student.id && l.status !== 'falta');
-                  return !hasRecord;
+                  const hasPresentOrLateRecord = filteredAssiduidadeLogs.some(l => 
+                    l.tipo === 'estudante' && 
+                    l.registro_id === student.id && 
+                    (l.status === 'presente' || l.status === 'atrasado')
+                  );
+                  return !hasPresentOrLateRecord;
                 });
 
                 const absentTeachersList = scheduledTeachers.filter(teacher => {
-                  const hasRecord = filteredAssiduidadeLogs.some(l => l.tipo === 'docente' && l.registro_id === teacher.id && l.status !== 'falta');
-                  return !hasRecord;
+                  const hasPresentOrLateRecord = filteredAssiduidadeLogs.some(l => 
+                    l.tipo === 'docente' && 
+                    l.registro_id === teacher.id && 
+                    (l.status === 'presente' || l.status === 'atrasado')
+                  );
+                  return !hasPresentOrLateRecord;
                 });
 
-                const combinedAbsentees = [
-                  ...absentStudentsList.map(s => ({
+                const absenteesObj: Record<string, any> = {};
+
+                // 1. Students without presence/late record
+                absentStudentsList.forEach(s => {
+                  const studentLog = filteredAssiduidadeLogs.find(l => l.tipo === 'estudante' && l.registro_id === s.id);
+                  const assocTurma = rawTurmas.find(t => t.id === s.turma_id);
+                  const assocSchool = rawSchools.find(sc => sc.id === (s.escola_id || assocTurma?.escola_id));
+                  const assocClass = activeClassesForAssiduidade.find(c => c.turma_id === s.turma_id);
+
+                  absenteesObj[`estudante-${s.id}`] = {
                     id: `absent-student-${s.id}`,
                     registro_id: s.id,
                     tipo: 'estudante',
                     nome: s.nome || tenantUsers.find(u => u.id === s.user_id)?.nome || 'Estudante Sem Nome',
                     identificacao: s.numero_matricula || 'N/D',
-                    escola_id: s.escola_id || '',
-                    escola_nome: rawSchools.find(sc => sc.id === s.escola_id)?.nome || 'N/D',
-                    detalhe: `Turma: ${rawTurmas.find(t => t.id === s.turma_id)?.nome || 'N/D'}`,
-                    aula: activeClassesForAssiduidade.find(c => c.turma_id === s.turma_id)?.nome || 'N/D',
-                    horario: activeClassesForAssiduidade.find(c => c.turma_id === s.turma_id)?.horario || 'N/D',
-                    rawItem: s
-                  })),
-                  ...absentTeachersList.map(t => ({
+                    escola_id: s.escola_id || assocTurma?.escola_id || '',
+                    escola_nome: assocSchool?.nome || 'Polo Geral',
+                    detalhe: `Turma: ${assocTurma?.nome || 'Geral'}`,
+                    aula: assocClass?.nome || 'Aula Programada',
+                    horario: assocClass?.horario || 'Turno Regular',
+                    rawItem: s,
+                    itemLog: studentLog
+                  };
+                });
+
+                // 2. Teachers without presence/late record
+                absentTeachersList.forEach(t => {
+                  const teacherLog = filteredAssiduidadeLogs.find(l => l.tipo === 'docente' && l.registro_id === t.id);
+                  const assocClass = activeClassesForAssiduidade.find(c => c.docente_id === t.id);
+
+                  absenteesObj[`docente-${t.id}`] = {
                     id: `absent-teacher-${t.id}`,
                     registro_id: t.id,
                     tipo: 'docente',
                     nome: t.nome || tenantUsers.find(u => u.id === t.user_id)?.nome || 'Docente Sem Nome',
                     identificacao: t.numero_registro || 'N/D',
                     escola_id: t.escola_id || '',
-                    escola_nome: rawSchools.find(sc => sc.id === t.escola_id)?.nome || 'N/D',
-                    detalhe: `Docente de ${t.especialidade || 'N/D'}`,
-                    aula: activeClassesForAssiduidade.find(c => c.docente_id === t.id)?.nome || 'N/D',
-                    horario: activeClassesForAssiduidade.find(c => c.docente_id === t.id)?.horario || 'N/D',
-                    rawItem: t
-                  }))
-                ];
+                    escola_nome: rawSchools.find(sc => sc.id === t.escola_id)?.nome || 'Polo Geral',
+                    detalhe: `Docente de ${t.especialidade || 'Geral'}`,
+                    aula: assocClass?.nome || 'Aula Programada',
+                    horario: assocClass?.horario || 'Turno Regular',
+                    rawItem: t,
+                    itemLog: teacherLog
+                  };
+                });
+
+                // 3. Explicit falta or justificado logs from filteredAssiduidadeLogs
+                filteredAssiduidadeLogs.filter(l => l.status === 'falta' || l.status === 'justificado').forEach(log => {
+                  const key = `${log.tipo || 'estudante'}-${log.registro_id}`;
+                  if (!absenteesObj[key]) {
+                    const rawStudent = rawStudents.find(s => s.id === log.registro_id);
+                    const rawTeacher = rawTeachers.find(t => t.id === log.registro_id);
+                    const assocTurma = rawTurmas.find(t => t.id === (log.turma_id || rawStudent?.turma_id));
+                    const schoolId = log.escola_id || rawStudent?.escola_id || rawTeacher?.escola_id || assocTurma?.escola_id || '';
+
+                    absenteesObj[key] = {
+                      id: `explicit-log-${log.id}`,
+                      registro_id: log.registro_id,
+                      tipo: log.tipo || 'estudante',
+                      nome: log.nome || rawStudent?.nome || rawTeacher?.nome || 'Utilizador',
+                      identificacao: log.numero_identificacao || rawStudent?.numero_matricula || rawTeacher?.numero_registro || 'N/D',
+                      escola_id: schoolId,
+                      escola_nome: rawSchools.find(sc => sc.id === schoolId)?.nome || 'Polo Geral',
+                      detalhe: log.turma_nome ? `Turma: ${log.turma_nome}` : (assocTurma ? `Turma: ${assocTurma.nome}` : 'Ausência Registrada'),
+                      aula: 'Aula Registrada',
+                      horario: log.timestamp ? new Date(log.timestamp).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' }) : 'Dia Todo',
+                      rawItem: rawStudent || rawTeacher || log,
+                      itemLog: log
+                    };
+                  }
+                });
+
+                const combinedAbsentees: any[] = Object.values(absenteesObj);
 
                 // Play synth beep function
                 const playBeep = () => {
@@ -12483,7 +12570,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   setLastScannedResult(null);
 
                   setTimeout(async () => {
-                    const matchedAbsent = combinedAbsentees.find(a => a.registro_id === selectedSimulatorUser);
+                    const matchedAbsent = combinedAbsentees.find((a: any) => a.registro_id === selectedSimulatorUser);
                     if (matchedAbsent) {
                       setScanFlashActive(true);
                       await registerCheckIn(matchedAbsent.tipo as 'estudante' | 'docente', matchedAbsent.rawItem);
@@ -12543,6 +12630,111 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     loadTenantContext();
                   } catch (e) {
                     showSystemNotification("Erro ao salvar observação.", "erro");
+                  }
+                };
+
+                const handleSaveJustificativa = async () => {
+                  if (!justificativaForm.detalhes.trim()) {
+                    showSystemNotification("Por favor, descreva o motivo da justificativa.", "erro");
+                    return;
+                  }
+                  try {
+                    let targetLogId = justificativaForm.log_id;
+                    if (!targetLogId) {
+                      const newLogRef = await addDoc(collection(db, 'assiduidade_logs'), {
+                        tenant_id: currentTenantId,
+                        registro_id: justificativaForm.registro_id,
+                        tipo: justificativaForm.tipo,
+                        status: 'falta',
+                        observacao: justificativaForm.detalhes,
+                        timestamp: new Date().toISOString(),
+                        data: justificativaForm.data_falta || new Date().toISOString().split('T')[0],
+                        justificativa: {
+                          detalhes: justificativaForm.detalhes,
+                          comprovante_data: justificativaForm.comprovante_data,
+                          comprovante_nome: justificativaForm.comprovante_nome,
+                          data_envio: new Date().toISOString(),
+                          status: 'pendente'
+                        }
+                      });
+                      targetLogId = newLogRef.id;
+                    } else {
+                      await updateDoc(doc(db, 'assiduidade_logs', targetLogId), {
+                        justificativa: {
+                          detalhes: justificativaForm.detalhes,
+                          comprovante_data: justificativaForm.comprovante_data,
+                          comprovante_nome: justificativaForm.comprovante_nome,
+                          data_envio: new Date().toISOString(),
+                          status: 'pendente'
+                        }
+                      });
+                    }
+
+                    if (justificativaForm.tipo === 'estudante' && justificativaForm.registro_id) {
+                      await addDoc(collection(db, 'processos_aluno'), {
+                        tenant_id: currentTenantId,
+                        estudante_id: justificativaForm.registro_id,
+                        tipo: 'Justificativa de Ausência',
+                        data: justificativaForm.data_falta || new Date().toISOString().split('T')[0],
+                        documentos: justificativaForm.comprovante_nome ? [justificativaForm.comprovante_nome] : [],
+                        status: 'Análise',
+                        criador_nome: currentUserEmail?.split('@')[0] || 'Sistema',
+                        observacao: justificativaForm.detalhes,
+                        detalhes: `Justificativa de Falta (${justificativaForm.data_falta || 'Hoje'}): ${justificativaForm.detalhes}`,
+                        criado_em: new Date().toISOString()
+                      });
+                    }
+
+                    showSystemNotification("Justificativa submetida com sucesso! Registrada no processo do estudante.", "sucesso");
+                    setIsJustificativaModalOpen(false);
+                    loadTenantContext();
+                  } catch (e: any) {
+                    showSystemNotification("Erro ao salvar justificativa: " + e.message, "erro");
+                  }
+                };
+
+                const handleEvaluateJustification = async (targetLog: any, action: 'validada' | 'rejeitada') => {
+                  if (!targetLog) return;
+                  try {
+                    const newStatus = action === 'validada' ? 'justificado' : 'falta';
+                    const justObject = {
+                      ...(targetLog.justificativa || {}),
+                      status: action,
+                      avaliado_por: currentUserEmail?.split('@')[0] || 'Administrador',
+                      avaliado_em: new Date().toISOString()
+                    };
+
+                    await updateDoc(doc(db, 'assiduidade_logs', targetLog.id), {
+                      status: newStatus,
+                      justificativa: justObject
+                    });
+
+                    if (targetLog.registro_id && (targetLog.tipo === 'estudante' || !targetLog.tipo)) {
+                      const procQuery = query(
+                        collection(db, 'processos_aluno'),
+                        where('tenant_id', '==', currentTenantId),
+                        where('estudante_id', '==', targetLog.registro_id),
+                        where('tipo', '==', 'Justificativa de Ausência')
+                      );
+                      const procSnap = await getDocs(procQuery);
+                      procSnap.forEach(async (pDoc) => {
+                        await updateDoc(doc(db, 'processos_aluno', pDoc.id), {
+                          status: action === 'validada' ? 'Aprovado' : 'Rejeitado',
+                          observacao: action === 'validada' ? 'Justificativa Aprovada - Falta Retirada' : 'Justificativa Rejeitada - Falta Mantida'
+                        });
+                      });
+                    }
+
+                    if (action === 'validada') {
+                      showSystemNotification("Justificativa validada! A falta foi retirada e o status alterado para Justificado.", "sucesso");
+                    } else {
+                      showSystemNotification("Justificativa rejeitada! A falta foi mantida.", "info");
+                    }
+                    setIsJustificativaDrawerOpen(false);
+                    setSelectedJustificativa(null);
+                    loadTenantContext();
+                  } catch (e: any) {
+                    showSystemNotification("Erro ao avaliar justificativa: " + e.message, "erro");
                   }
                 };
 
@@ -12855,45 +13047,130 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     </td>
                                   </tr>
                                 ) : (
-                                  paginatedAbsentees.map((item) => (
-                                    <tr key={item.id} className="hover:bg-slate-50/60 transition-colors">
-                                      <td className="px-5 py-3">
-                                        <div className="flex items-center gap-2">
-                                          <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold uppercase ${
-                                            item.tipo === 'estudante' ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : 'bg-sky-50 text-sky-600 border border-sky-100'
-                                          }`}>
-                                            {item.tipo}
-                                          </span>
-                                          <div>
-                                            <span className="font-bold text-slate-800 block">{item.nome}</span>
-                                            <span className="text-[10px] text-slate-400 font-mono">{item.detalhe}</span>
+                                  paginatedAbsentees.map((item: any) => {
+                                    const itemLog = filteredAssiduidadeLogs.find(l => l.tipo === item.tipo && l.registro_id === item.registro_id);
+                                    const hasJustification = Boolean(itemLog?.justificativa?.detalhes || itemLog?.justificativa?.status);
+                                    const justStatus = itemLog?.justificativa?.status || 'pendente';
+
+                                    const logTime = itemLog?.timestamp ? new Date(itemLog.timestamp).getTime() : new Date().getTime();
+                                    const hoursElapsed = (Date.now() - logTime) / (1000 * 60 * 60);
+                                    const isWithin72h = hoursElapsed <= 72;
+
+                                    return (
+                                      <tr key={item.id} className="hover:bg-slate-50/60 transition-colors">
+                                        <td className="px-5 py-3">
+                                          <div className="flex items-center gap-2">
+                                            <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold uppercase ${
+                                              item.tipo === 'estudante' ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : 'bg-sky-50 text-sky-600 border border-sky-100'
+                                            }`}>
+                                              {item.tipo}
+                                            </span>
+                                            <div>
+                                              <span className="font-bold text-slate-800 block">{item.nome}</span>
+                                              <span className="text-[10px] text-slate-400 font-mono">{item.detalhe}</span>
+                                            </div>
                                           </div>
-                                        </div>
-                                      </td>
-                                      <td className="px-5 py-3 font-mono">{item.identificacao}</td>
-                                      <td className="px-5 py-3 text-slate-500">{item.escola_nome}</td>
-                                      <td className="px-5 py-3 font-medium text-slate-800">{item.aula}</td>
-                                      <td className="px-5 py-3">
-                                        <span className="bg-slate-100 px-2 py-0.5 rounded font-mono font-medium text-slate-600">
-                                          {item.horario}
-                                        </span>
-                                      </td>
-                                      <td className="px-5 py-3">
-                                        <span className="px-2.5 py-0.5 bg-rose-50 text-rose-600 font-bold uppercase text-[9px] tracking-wider rounded-full border border-rose-100 inline-flex items-center gap-1">
-                                          <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                                          Faltoso
-                                        </span>
-                                      </td>
-                                      <td className="px-5 py-3 text-right sticky right-0 bg-white dark:bg-slate-900 z-10 shadow-[-4px_0_12px_rgba(0,0,0,0.06)]">
-                                        <button
-                                          onClick={() => registerCheckIn(item.tipo as any, item.rawItem)}
-                                          className="text-[11px] font-bold text-white bg-indigo-600 hover:bg-indigo-700 cursor-pointer px-3 py-1 rounded-lg transition-colors shadow-xs"
-                                        >
-                                          Registrar Presença
-                                        </button>
-                                      </td>
-                                    </tr>
-                                  ))
+                                        </td>
+                                        <td className="px-5 py-3 font-mono">{item.identificacao}</td>
+                                        <td className="px-5 py-3 text-slate-500">{item.escola_nome}</td>
+                                        <td className="px-5 py-3 font-medium text-slate-800">{item.aula}</td>
+                                        <td className="px-5 py-3">
+                                          <span className="bg-slate-100 px-2 py-0.5 rounded font-mono font-medium text-slate-600">
+                                            {item.horario}
+                                          </span>
+                                        </td>
+                                        <td className="px-5 py-3">
+                                          {hasJustification ? (
+                                            <span className={`px-2.5 py-0.5 font-bold uppercase text-[9px] tracking-wider rounded-full border inline-flex items-center gap-1 ${
+                                              justStatus === 'validada' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
+                                              justStatus === 'rejeitada' ? 'bg-rose-50 text-rose-600 border-rose-100' :
+                                              'bg-amber-50 text-amber-600 border-amber-100'
+                                            }`}>
+                                              <span className={`w-1.5 h-1.5 rounded-full ${
+                                                justStatus === 'validada' ? 'bg-emerald-500' :
+                                                justStatus === 'rejeitada' ? 'bg-rose-500' : 'bg-amber-500'
+                                              }`}></span>
+                                              {justStatus === 'validada' ? 'Justificativa Validada' :
+                                               justStatus === 'rejeitada' ? 'Justificativa Rejeitada' : 'Justificativa Pendente'}
+                                            </span>
+                                          ) : (
+                                            <span className="px-2.5 py-0.5 bg-rose-50 text-rose-600 font-bold uppercase text-[9px] tracking-wider rounded-full border border-rose-100 inline-flex items-center gap-1">
+                                              <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                                              Faltoso
+                                            </span>
+                                          )}
+                                        </td>
+                                        <td className="px-5 py-3 text-right sticky right-0 bg-white dark:bg-slate-900 z-10 shadow-[-4px_0_12px_rgba(0,0,0,0.06)]">
+                                          <div className="flex items-center justify-end gap-1.5">
+                                            {(() => {
+                                              const selSchool = rawSchools.find(s => s.id === item.escola_id) || rawSchools[0];
+                                              const todayStr = new Date().toISOString().split('T')[0];
+                                              const isPastDate = assiduidadeDateStart < todayStr;
+                                              const isFutureDate = assiduidadeDateStart > todayStr;
+                                              const pTolStr = assiduidadePeriodFilter === 'tarde' 
+                                                ? (selSchool?.tolerancia_tarde || '12:15') 
+                                                : (assiduidadePeriodFilter === 'noite' ? (selSchool?.tolerancia_noite || '18:15') : (selSchool?.tolerancia_manha || '07:15'));
+                                              const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+                                              const tolMinutes = timeToMinutes(pTolStr);
+                                              const isToleranceExpired = isPastDate || (!isFutureDate && nowMinutes > tolMinutes);
+
+                                              if (!isToleranceExpired) {
+                                                return (
+                                                  <button
+                                                    onClick={() => registerCheckIn(item.tipo as any, item.rawItem)}
+                                                    className="text-[11px] font-bold text-white bg-indigo-600 hover:bg-indigo-700 cursor-pointer px-2.5 py-1 rounded-lg transition-colors shadow-2xs"
+                                                    title="Validar Presença no Horário Agendado"
+                                                  >
+                                                    Validar Presença
+                                                  </button>
+                                                );
+                                              }
+                                              return null;
+                                            })()}
+
+                                            {hasJustification ? (
+                                              <button
+                                                onClick={() => {
+                                                  setSelectedJustificativa(itemLog || { ...item, justificativa: { detalhes: itemLog?.observacao || 'Justificativa apresentada', status: 'pendente' } });
+                                                  setIsJustificativaDrawerOpen(true);
+                                                }}
+                                                className="text-[11px] font-bold text-amber-800 bg-amber-100 hover:bg-amber-200 cursor-pointer px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1"
+                                                title="Ver Justificativa de Ausência (Painel Lateral)"
+                                              >
+                                                <Eye className="w-3.5 h-3.5" />
+                                                Ver Justificativa
+                                              </button>
+                                            ) : isWithin72h ? (
+                                              <button
+                                                onClick={() => {
+                                                  setJustificativaForm({
+                                                    registro_id: item.registro_id,
+                                                    tipo: item.tipo as any,
+                                                    nome: item.nome,
+                                                    turma_nome: item.aula,
+                                                    data_falta: assiduidadeDateStart,
+                                                    periodo: 'manha',
+                                                    detalhes: '',
+                                                    comprovante_data: '',
+                                                    comprovante_nome: '',
+                                                    log_id: itemLog?.id || ''
+                                                  });
+                                                  setIsJustificativaModalOpen(true);
+                                                }}
+                                                className="text-[11px] font-bold text-rose-700 bg-rose-100 hover:bg-rose-200 cursor-pointer px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1"
+                                                title="Justificar Ausência (Até 72h)"
+                                              >
+                                                <FileText className="w-3.5 h-3.5" />
+                                                Justificar Ausência
+                                              </button>
+                                            ) : (
+                                              <span className="text-[10px] text-slate-400 font-semibold italic">Prazo 72h Expirado</span>
+                                            )}
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })
                                 )}
                               </tbody>
                             </table>
@@ -13176,6 +13453,254 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           await registerCheckIn(tipo, person);
                         }}
                       />
+
+                      {/* MODAL JUSTIFICAR AUSÊNCIA */}
+                      {isJustificativaModalOpen && (
+                        <div className="fixed inset-0 z-[9990] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+                          <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+                            <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-950/50">
+                              <h3 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+                                <FileText className="w-4 h-4 text-rose-500" />
+                                Formulário de Justificativa de Ausência
+                              </h3>
+                              <button
+                                onClick={() => setIsJustificativaModalOpen(false)}
+                                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                              >
+                                <X className="w-5 h-5" />
+                              </button>
+                            </div>
+
+                            <div className="p-6 space-y-4">
+                              <div className="bg-slate-50 dark:bg-slate-800/50 p-3.5 rounded-xl border border-slate-200/80 dark:border-slate-800">
+                                <div className="text-[10px] font-bold text-slate-400 uppercase">Pessoa Faltosa</div>
+                                <div className="text-sm font-black text-slate-800 dark:text-slate-100">{justificativaForm.nome || 'Estudante Selecionado'}</div>
+                                {justificativaForm.turma_nome && (
+                                  <div className="text-xs text-slate-500 mt-0.5">Turma/Aula: {justificativaForm.turma_nome}</div>
+                                )}
+                              </div>
+
+                              <div>
+                                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                                  Data da Falta
+                                </label>
+                                <input
+                                  type="date"
+                                  value={justificativaForm.data_falta}
+                                  onChange={e => setJustificativaForm({ ...justificativaForm, data_falta: e.target.value })}
+                                  className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                                  Detalhes / Motivo da Falta <span className="text-rose-500">*</span>
+                                </label>
+                                <textarea
+                                  rows={4}
+                                  placeholder="Descreva detalhadamente o motivo da ausência (ex: Atestado médico, consulta, imprevisto de força maior)..."
+                                  value={justificativaForm.detalhes}
+                                  onChange={e => setJustificativaForm({ ...justificativaForm, detalhes: e.target.value })}
+                                  className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                                  Anexar Comprovante (Imagem ou PDF)
+                                </label>
+                                <input
+                                  type="file"
+                                  accept="image/*,application/pdf"
+                                  onChange={e => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
+                                      const reader = new FileReader();
+                                      reader.onloadend = () => {
+                                        setJustificativaForm({
+                                          ...justificativaForm,
+                                          comprovante_data: reader.result as string,
+                                          comprovante_nome: file.name
+                                        });
+                                      };
+                                      reader.readAsDataURL(file);
+                                    }
+                                  }}
+                                  className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white cursor-pointer"
+                                />
+                                {justificativaForm.comprovante_nome && (
+                                  <div className="mt-1 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1">
+                                    <FileText className="w-3.5 h-3.5" /> Anexado: {justificativaForm.comprovante_nome}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/50 flex items-center justify-end gap-2">
+                              <button
+                                onClick={() => setIsJustificativaModalOpen(false)}
+                                className="px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl cursor-pointer"
+                              >
+                                Cancelar
+                              </button>
+                              <button
+                                onClick={handleSaveJustificativa}
+                                className="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5"
+                              >
+                                <CheckCircle2 className="w-4 h-4" /> Submeter Justificativa
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* PAINEL LATERAL DESLIZANTE DA ESQUERDA PARA A DIREITA - ANALISAR JUSTIFICATIVA */}
+                      {isJustificativaDrawerOpen && selectedJustificativa && (
+                        <div className="fixed inset-0 z-[9990] bg-slate-900/60 backdrop-blur-xs flex animate-fadeIn">
+                          <div className="bg-white dark:bg-slate-900 w-full max-w-lg h-full shadow-2xl border-r border-slate-200 dark:border-slate-800 flex flex-col transform transition-all duration-300 animate-in slide-in-from-left">
+                            {/* Header */}
+                            <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-950">
+                              <div className="flex items-center gap-2">
+                                <FileText className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">Análise de Justificativa de Ausência</h3>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  setIsJustificativaDrawerOpen(false);
+                                  setSelectedJustificativa(null);
+                                }}
+                                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                              >
+                                <X className="w-5 h-5" />
+                              </button>
+                            </div>
+
+                            {/* Content */}
+                            <div className="p-6 overflow-y-auto flex-1 space-y-6">
+                              <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-200/80 dark:border-slate-800 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-bold text-slate-500">Registo de Ausência</span>
+                                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
+                                    selectedJustificativa.tipo === 'estudante' ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : 'bg-sky-50 text-sky-600 border border-sky-100'
+                                  }`}>
+                                    {selectedJustificativa.tipo || 'Estudante'}
+                                  </span>
+                                </div>
+                                <p className="text-base font-extrabold text-slate-900 dark:text-white">
+                                  {selectedJustificativa.nome || 'Estudante / Docente'}
+                                </p>
+                                <p className="text-xs text-slate-500 font-mono">
+                                  Data da Falta: {selectedJustificativa.data || selectedJustificativa.justificativa?.data_envio?.split('T')[0] || assiduidadeDateStart}
+                                </p>
+                              </div>
+
+                              {/* Details */}
+                              <div className="space-y-2">
+                                <label className="text-xs font-extrabold text-slate-500 uppercase tracking-wider block">
+                                  Motivo Apresentado
+                                </label>
+                                <div className="p-4 bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 rounded-xl text-slate-800 dark:text-slate-200 text-xs leading-relaxed font-medium">
+                                  {selectedJustificativa.justificativa?.detalhes || selectedJustificativa.observacao || 'Nenhum detalhe adicional fornecido.'}
+                                </div>
+                              </div>
+
+                              {/* Comprovante / Attachment */}
+                              {selectedJustificativa.justificativa?.comprovante_data ? (
+                                <div className="space-y-2">
+                                  <label className="text-xs font-extrabold text-slate-500 uppercase tracking-wider block flex items-center justify-between">
+                                    <span>Comprovante Anexo</span>
+                                    <span className="text-[10px] text-slate-400 font-mono">
+                                      {selectedJustificativa.justificativa?.comprovante_nome || 'Arquivo'}
+                                    </span>
+                                  </label>
+                                  <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 flex flex-col items-center justify-center gap-3">
+                                    {selectedJustificativa.justificativa?.comprovante_data.startsWith('data:image') ? (
+                                      <img
+                                        src={selectedJustificativa.justificativa?.comprovante_data}
+                                        alt="Comprovante"
+                                        className="max-h-60 w-auto rounded-lg border border-slate-200 dark:border-slate-700 object-contain"
+                                      />
+                                    ) : (
+                                      <div className="flex items-center gap-3 w-full justify-between p-2">
+                                        <span className="text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2">
+                                          <FileText className="w-5 h-5 text-indigo-500" />
+                                          {selectedJustificativa.justificativa?.comprovante_nome || 'Documento PDF'}
+                                        </span>
+                                        <a
+                                          href={selectedJustificativa.justificativa?.comprovante_data}
+                                          download={selectedJustificativa.justificativa?.comprovante_nome || 'comprovante.pdf'}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer"
+                                        >
+                                          <Download className="w-3.5 h-3.5" /> Descarregar
+                                        </a>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800 text-xs text-slate-400 italic text-center">
+                                  Nenhum comprovante em ficheiro anexado.
+                                </div>
+                              )}
+
+                              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs">
+                                <span className="text-slate-500 font-medium">Estado do Pedido:</span>
+                                <span className={`px-3 py-1 rounded-full font-black uppercase text-[10px] ${
+                                  selectedJustificativa.justificativa?.status === 'validada' || selectedJustificativa.status === 'justificado' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300' :
+                                  selectedJustificativa.justificativa?.status === 'rejeitada' ? 'bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-300' :
+                                  'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300'
+                                }`}>
+                                  {selectedJustificativa.justificativa?.status ? selectedJustificativa.justificativa.status.toUpperCase() : 'PENDENTE'}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Drawer Footer Actions */}
+                            <div className="p-5 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/50">
+                              {((selectedJustificativa.justificativa?.status === 'validada' || selectedJustificativa.status === 'justificado') || selectedJustificativa.justificativa?.status === 'rejeitada') ? (
+                                <div className={`p-3 rounded-xl border text-center font-bold text-xs flex items-center justify-center gap-2 ${
+                                  (selectedJustificativa.justificativa?.status === 'validada' || selectedJustificativa.status === 'justificado')
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : 'bg-rose-50 text-rose-700 border-rose-200'
+                                }`}>
+                                  {(selectedJustificativa.justificativa?.status === 'validada' || selectedJustificativa.status === 'justificado') ? (
+                                    <>
+                                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                                      <span>Justificativa Validada — Falta Retirada</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <XCircle className="w-4 h-4 text-rose-600" />
+                                      <span>Justificativa Rejeitada — Falta Mantida</span>
+                                    </>
+                                  )}
+                                </div>
+                              ) : (currentUserRole === 'admin' || currentUserRole === 'director' || loggedInUser?.tipo === 'admin' || loggedInUser?.tipo === 'director') ? (
+                                <div className="grid grid-cols-2 gap-3">
+                                  <button
+                                    onClick={() => handleEvaluateJustification(selectedJustificativa, 'validada')}
+                                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-sm"
+                                  >
+                                    <CheckCircle2 className="w-4 h-4" /> Validar (Aprovar)
+                                  </button>
+                                  <button
+                                    onClick={() => handleEvaluateJustification(selectedJustificativa, 'rejeitada')}
+                                    className="w-full bg-rose-600 hover:bg-rose-500 text-white font-black py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-sm"
+                                  >
+                                    <XCircle className="w-4 h-4" /> Rejeitar (Manter Falta)
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="p-3 bg-amber-50 text-amber-800 border border-amber-200 rounded-xl text-xs font-medium text-center">
+                                  Apenas diretores e administradores superiores podem validar ou rejeitar esta justificativa.
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -16486,16 +17011,30 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     </div>
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">Escola de Alocação</label>
-                    <select 
-                      value={teacherForm.escola_id}
-                      onChange={(e) => setTeacherForm({ ...teacherForm, escola_id: e.target.value })}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
-                    >
-                      {schools.map(s => (
-                        <option key={s.id} value={s.id}>{s.nome}</option>
-                      ))}
-                    </select>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1">Escola de Alocação</label>
+                        <select 
+                          value={teacherForm.escola_id}
+                          onChange={(e) => setTeacherForm({ ...teacherForm, escola_id: e.target.value })}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
+                        >
+                          {schools.map(s => (
+                            <option key={s.id} value={s.id}>{s.nome}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1">Data de Admissão</label>
+                        <input 
+                          type="date"
+                          required
+                          value={teacherForm.data_admissao || new Date().toISOString().split('T')[0]}
+                          onChange={(e) => setTeacherForm({ ...teacherForm, data_admissao: e.target.value })}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm text-slate-700"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </>
               )}
@@ -16619,6 +17158,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         required
                         value={studentForm.data_nascimento || ''}
                         onChange={(e) => setStudentForm({ ...studentForm, data_nascimento: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm text-slate-700"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Data de Admissão</label>
+                      <input 
+                        type="date"
+                        required
+                        value={studentForm.data_admissao || new Date().toISOString().split('T')[0]}
+                        onChange={(e) => setStudentForm({ ...studentForm, data_admissao: e.target.value })}
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm text-slate-700"
                       />
                     </div>
@@ -17365,7 +17914,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         const schId = e.target.value;
                         setSelectedPautaSchoolId(schId);
                         // Auto-select first student and class of this school
-                        const filteredStuds = students.filter(s => !schId || s.escola_id === schId);
+                        const filteredStuds = rawStudents.filter(s => {
+                          const studSchool = s.escola_id || rawTurmas.find(t => t.id === s.turma_id)?.escola_id || '';
+                          return !schId || studSchool === schId;
+                        });
                         const filteredClasses = classes.filter(c => {
                           const t = turmas.find(tu => tu.id === c.turma_id);
                           return !schId || (t && t.escola_id === schId);
@@ -17376,7 +17928,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           classe_id: filteredClasses[0]?.id || ''
                         });
                       }}
-                      className="w-full bg-white border border-slate-200 rounded-lg p-2.5 text-xs font-bold text-slate-700"
+                      className="w-full bg-white border border-slate-200 rounded-lg p-2.5 text-xs font-bold text-slate-700 cursor-pointer"
                     >
                       <option value="">✨ Todas as Escolas</option>
                       {schools.map(sch => (
@@ -17391,15 +17943,23 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       <select 
                         value={pautaForm.estudante_id}
                         onChange={(e) => setPautaForm({ ...pautaForm, estudante_id: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 cursor-pointer font-medium"
                       >
                         <option value="">Selecione Estudante...</option>
-                        {students
-                          .filter(s => !selectedPautaSchoolId || s.escola_id === selectedPautaSchoolId)
+                        {rawStudents
+                          .filter(s => {
+                            if (s.ativo === false) return false;
+                            const studSchool = s.escola_id || rawTurmas.find(t => t.id === s.turma_id)?.escola_id || '';
+                            return !selectedPautaSchoolId || studSchool === selectedPautaSchoolId;
+                          })
                           .map(s => {
                             const usr = tenantUsers.find(u => u.id === s.user_id);
+                            const studName = usr?.nome || s.nome || `Estudante #${s.numero_matricula || s.id}`;
+                            const turmaObj = rawTurmas.find(t => t.id === s.turma_id);
                             return (
-                              <option key={s.id} value={s.id}>{usr?.nome || s.nome}</option>
+                              <option key={s.id} value={s.id}>
+                                {studName} {turmaObj ? `(${turmaObj.nome})` : ''}
+                              </option>
                             );
                           })}
                       </select>
@@ -18609,6 +19169,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             </div>
           </div>
         </div>
+      )}
+
+      {isCookiePolicyOpen && (
+        <CookiePolicyModal onClose={() => setIsCookiePolicyOpen(false)} />
       )}
     </div>
   );
