@@ -526,6 +526,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false);
   const [showQuickHelp, setShowQuickHelp] = useState(false);
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
 
   const showSystemNotification = useCallback((message: string, type: 'sucesso' | 'erro' | 'info' | 'config' | 'cadastro' = 'info') => {
     const popup = document.createElement('div');
@@ -560,6 +561,43 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       setTimeout(() => popup.remove(), 300);
     }, 6000);
   }, []);
+
+  const handleManualRefresh = useCallback(async (moduleTitle?: string) => {
+    setIsManualRefreshing(true);
+    try {
+      await loadTenantContext();
+      window.dispatchEvent(new CustomEvent('sge-module-refresh', { detail: { module: activeTab, timestamp: Date.now() } }));
+      showSystemNotification(moduleTitle ? `Módulo "${moduleTitle}" atualizado em tempo real.` : "Dados atualizados em tempo real.", "sucesso");
+    } catch (e: any) {
+      showSystemNotification("Erro ao atualizar dados em tempo real.", "erro");
+    } finally {
+      setTimeout(() => {
+        setIsManualRefreshing(false);
+      }, 400);
+    }
+  }, [currentTenantId, activeTab, showSystemNotification]);
+
+  // Periodic automatic real-time data sync in background every 40s
+  useEffect(() => {
+    if (!currentTenantId) return;
+    const autoSyncInterval = setInterval(() => {
+      loadTenantContext();
+    }, 40000);
+    return () => clearInterval(autoSyncInterval);
+  }, [currentTenantId]);
+
+  const renderModuleRefreshButton = (moduleTitle: string, extraClasses: string = '') => (
+    <button
+      type="button"
+      onClick={() => handleManualRefresh(moduleTitle)}
+      title={`Atualizar ${moduleTitle} em tempo real`}
+      aria-label={`Atualizar ${moduleTitle}`}
+      disabled={isManualRefreshing}
+      className={`p-2 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-indigo-300 dark:hover:border-indigo-500/50 rounded-xl shadow-2xs hover:shadow-xs transition-all flex items-center justify-center cursor-pointer disabled:opacity-50 ${extraClasses}`}
+    >
+      <RefreshCw className={`w-4 h-4 ${isManualRefreshing ? 'animate-spin text-indigo-600 dark:text-indigo-400' : ''}`} />
+    </button>
+  );
 
   // Find logged-in user inside TenantPortal with comprehensive fallback & profile resolution
   const loggedInUser = useMemo(() => {
@@ -7017,6 +7055,18 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   </button>
                 </div>
 
+                {/* Real-time Refresh Button (Icon-only, no text) */}
+                <button
+                  type="button"
+                  onClick={() => handleManualRefresh(activeTab)}
+                  title="Atualizar informações do módulo em tempo real"
+                  aria-label="Atualizar módulo"
+                  disabled={isManualRefreshing}
+                  className="p-2 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-indigo-600 rounded-xl relative cursor-pointer transition-all flex items-center justify-center shadow-3xs active:scale-95 disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isManualRefreshing ? 'animate-spin text-indigo-600 dark:text-indigo-400' : ''}`} />
+                </button>
+
                 {/* Notification Bell Dropdown */}
                 <div className="relative">
                   <button
@@ -7483,6 +7533,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         <option value="3º Trimestre">3º Trimestre</option>
                       </select>
                     </div>
+
+                    {renderModuleRefreshButton('Dashboard')}
                   </div>
                 </div>
 
@@ -8295,7 +8347,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               !hasPermission('provincias') ? renderRestrictedAccess('Distritos / Províncias') : (
                 <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-6">
                   <div className="flex justify-between items-center">
-                    <h3 className="font-bold text-slate-800">Províncias Educacionais</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-slate-800">Províncias Educacionais</h3>
+                      {renderModuleRefreshButton('Províncias')}
+                    </div>
                     {hasPermission('provincias', 'criar') && (
                       <button 
                         onClick={() => {
@@ -8345,9 +8400,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               !hasPermission('escolas') ? renderRestrictedAccess('Gestão de Salas de Aula') : (
                 <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-6">
                   <div className="flex justify-between items-center">
-                    <div>
-                      <h3 className="font-bold text-slate-800 text-lg">Salas de Aula</h3>
-                      <p className="text-xs text-slate-400 mt-0.5">Gerenciamento de espaços físicos e laboratórios para agendamento.</p>
+                    <div className="flex items-center gap-2">
+                      <div>
+                        <h3 className="font-bold text-slate-800 text-lg">Salas de Aula</h3>
+                        <p className="text-xs text-slate-400 mt-0.5">Gerenciamento de espaços físicos e laboratórios para agendamento.</p>
+                      </div>
+                      {renderModuleRefreshButton('Salas')}
                     </div>
                     {hasPermission('escolas', 'criar') && (
                       <button 
@@ -8515,7 +8573,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   )}
 
                   <div className="flex justify-between items-center">
-                    <h3 className="font-bold text-slate-800">Instituições Escolares Vinculadas</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-slate-800">Instituições Escolares Vinculadas</h3>
+                      {renderModuleRefreshButton('Escolas')}
+                    </div>
                     {isLimitReached('max_escolas', schools.length) ? (
                       <button 
                         onClick={() => openUpgradeModal('max_escolas', schools.length)}
@@ -8892,7 +8953,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               !hasPermission('docentes') ? renderRestrictedAccess('Gestão de Docentes') : (
                 <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-6">
                   <div className="flex justify-between items-center">
-                    <h3 className="font-bold text-slate-800">Corpo Docente</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-slate-800">Corpo Docente</h3>
+                      {renderModuleRefreshButton('Docentes')}
+                    </div>
                     {isLimitReached('max_docentes', teachers.length) ? (
                       <button 
                         onClick={() => openUpgradeModal('max_docentes', teachers.length)}
@@ -9177,19 +9241,22 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-6">
                   {/* Premium Segmented Sub-Tab Bar */}
                   <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
-                    <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-xl">
-                      <button
-                        onClick={() => setStudentSubTab('lista')}
-                        className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${studentSubTab === 'lista' ? 'bg-white shadow-sm text-indigo-600 font-extrabold' : 'text-slate-600 hover:text-slate-900'}`}
-                      >
-                        <GraduationCap className="w-4 h-4" /> Lista de Estudantes
-                      </button>
-                      <button
-                        onClick={() => setStudentSubTab('faturas')}
-                        className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${studentSubTab === 'faturas' ? 'bg-white shadow-sm text-indigo-600 font-extrabold' : 'text-slate-600 hover:text-slate-900'}`}
-                      >
-                        <DollarSign className="w-4 h-4" /> Facturação & Mensalidades
-                      </button>
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-xl">
+                        <button
+                          onClick={() => setStudentSubTab('lista')}
+                          className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${studentSubTab === 'lista' ? 'bg-white shadow-sm text-indigo-600 font-extrabold' : 'text-slate-600 hover:text-slate-900'}`}
+                        >
+                          <GraduationCap className="w-4 h-4" /> Lista de Estudantes
+                        </button>
+                        <button
+                          onClick={() => setStudentSubTab('faturas')}
+                          className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${studentSubTab === 'faturas' ? 'bg-white shadow-sm text-indigo-600 font-extrabold' : 'text-slate-600 hover:text-slate-900'}`}
+                        >
+                          <DollarSign className="w-4 h-4" /> Facturação & Mensalidades
+                        </button>
+                      </div>
+                      {renderModuleRefreshButton('Estudantes')}
                     </div>
 
                     {studentSubTab === 'lista' && (
@@ -9814,7 +9881,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 <div className="space-y-8 animate-fadeIn">
                   <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-6">
                     <div className="flex justify-between items-center">
-                      <h3 className="font-bold text-slate-800">Turmas Homologadas</h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-bold text-slate-800">Turmas Homologadas</h3>
+                        {renderModuleRefreshButton('Turmas')}
+                      </div>
                       {isLimitReached('max_turmas', turmas.length) ? (
                         <button 
                           onClick={() => openUpgradeModal('max_turmas', turmas.length)}
@@ -9936,11 +10006,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-4">
                     {/* Header */}
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                      <div>
-                        <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
-                          <BookMarked className="w-5 h-5 text-indigo-600" /> Cadastro de Disciplinas
-                        </h3>
-                        <p className="text-xs text-slate-400">Consulte e gerencie as disciplinas cadastradas no sistema com filtros por escola e docente.</p>
+                      <div className="flex items-center gap-2">
+                        <div>
+                          <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                            <BookMarked className="w-5 h-5 text-indigo-600" /> Cadastro de Disciplinas
+                          </h3>
+                          <p className="text-xs text-slate-400">Consulte e gerencie as disciplinas cadastradas no sistema com filtros por escola e docente.</p>
+                        </div>
+                        {renderModuleRefreshButton('Disciplinas')}
                       </div>
                       {isLimitReached('max_disciplinas', classes.filter(isBaseDiscipline).length) ? (
                         <button 
@@ -10366,9 +10439,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 <div className="space-y-6 animate-fadeIn">
                   <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-4">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                      <div>
-                        <h3 className="font-bold text-slate-800 text-lg">Classes Escolares (Anos Académicos)</h3>
-                        <p className="text-xs text-slate-400">Configure as classes letivas oficiais autorizadas para o seu plano (e.g. 7ª Classe, 10ª Classe).</p>
+                      <div className="flex items-center gap-2">
+                        <div>
+                          <h3 className="font-bold text-slate-800 text-lg">Classes Escolares (Anos Académicos)</h3>
+                          <p className="text-xs text-slate-400">Configure as classes letivas oficiais autorizadas para o seu plano (e.g. 7ª Classe, 10ª Classe).</p>
+                        </div>
+                        {renderModuleRefreshButton('Classes Escolares')}
                       </div>
                       {isLimitReached('max_classes', classesEscolares.length) ? (
                         <button 
@@ -10514,9 +10590,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-4">
                       {/* Sub-tab Switcher Header */}
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
-                        <div>
-                          <h3 className="font-extrabold text-slate-850 text-lg">Calendário, Horários & Férias</h3>
-                          <p className="text-xs text-slate-400 font-sans">Gerencie a grade horária semanal e o registro de férias das turmas.</p>
+                        <div className="flex items-center gap-2">
+                          <div>
+                            <h3 className="font-extrabold text-slate-850 text-lg">Calendário, Horários & Férias</h3>
+                            <p className="text-xs text-slate-400 font-sans">Gerencie a grade horária semanal e o registro de férias das turmas.</p>
+                          </div>
+                          {renderModuleRefreshButton('Calendário')}
                         </div>
                         <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/50 shadow-inner overflow-x-auto">
                           <button
@@ -11597,9 +11676,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         {/* FILTERS PANEL */}
                         <div className="bg-white p-5 rounded-2xl border border-slate-200/60 shadow-xs space-y-4">
                           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                            <div>
-                              <h3 className="font-extrabold text-slate-800 text-sm">Filtros da Pauta Geral</h3>
-                              <p className="text-[10px] text-slate-400">Filtre as notas consolidadas de todas as escolas do sistema em tempo real.</p>
+                            <div className="flex items-center gap-2">
+                              <div>
+                                <h3 className="font-extrabold text-slate-800 text-sm">Filtros da Pauta Geral</h3>
+                                <p className="text-[10px] text-slate-400">Filtre as notas consolidadas de todas as escolas do sistema em tempo real.</p>
+                              </div>
+                              {renderModuleRefreshButton('Pauta Geral')}
                             </div>
                             <button
                               onClick={() => {
@@ -11789,9 +11871,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               !hasPermission('pautas') ? renderRestrictedAccess('Lançamento de Pautas') : (
                 <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-6 animate-fadeIn">
                   <div className="flex justify-between items-center">
-                    <div>
-                      <h3 className="font-bold text-slate-800">Lançamento de Pauta Trimestral</h3>
-                      <p className="text-xs text-slate-400">Calculador de média automática integrado e fechamento de notas por trimestre.</p>
+                    <div className="flex items-center gap-2">
+                      <div>
+                        <h3 className="font-bold text-slate-800">Lançamento de Pauta Trimestral</h3>
+                        <p className="text-xs text-slate-400">Calculador de média automática integrado e fechamento de notas por trimestre.</p>
+                      </div>
+                      {renderModuleRefreshButton('Pautas')}
                     </div>
                     <div className="flex gap-2">
                       {hasPermission('pautas', 'criar') && (
@@ -11956,9 +12041,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               !hasPermission('processos') ? renderRestrictedAccess('Processos Escolares') : (
                 <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-6 animate-fadeIn">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
-                    <div>
-                      <h3 className="font-bold text-slate-800 text-lg">Processo Individual do Aluno</h3>
-                      <p className="text-xs text-slate-400">Conselho de dossiers individuais, históricos de ocorrências e ficha académica.</p>
+                    <div className="flex items-center gap-2">
+                      <div>
+                        <h3 className="font-bold text-slate-800 text-lg">Processo Individual do Aluno</h3>
+                        <p className="text-xs text-slate-400">Conselho de dossiers individuais, históricos de ocorrências e ficha académica.</p>
+                      </div>
+                      {renderModuleRefreshButton('Processos')}
                     </div>
 
                     <div className="flex gap-2">
@@ -12882,10 +12970,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       {/* FILTER GROUP */}
                       <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 space-y-4">
                         <div className="flex items-center justify-between">
-                          <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                            <Sliders className="w-4 h-4 text-indigo-500" />
-                            Painel de Filtros e Busca de Horários
-                          </h4>
+                          <div className="flex items-center gap-2">
+                            <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                              <Sliders className="w-4 h-4 text-indigo-500" />
+                              Painel de Filtros e Busca de Horários
+                            </h4>
+                            {renderModuleRefreshButton('Assiduidade')}
+                          </div>
                           <span className="text-[11px] font-bold text-indigo-600 font-mono bg-indigo-50 px-2.5 py-0.5 rounded-full">
                             {activeDayOfWeek}
                           </span>
@@ -13734,6 +13825,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             {activeTab === 'biblioteca' && (
               !hasPermission('biblioteca') ? renderRestrictedAccess('Biblioteca Digital') : (
                 <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-6 animate-fadeIn">
+                  <div className="flex justify-end">
+                    {renderModuleRefreshButton('Biblioteca')}
+                  </div>
                   <BibliotecaModule
                     currentUserRole={currentUserRole}
                     currentUserId={currentUserEmail}
@@ -13750,16 +13844,19 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               !hasPermission('utilizadores') ? renderRestrictedAccess('Utilizadores e Acessos') : (
                 <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-6 animate-fadeIn">
                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-bold text-slate-800">Utilizadores e Acessos</h3>
-                        <span className="bg-emerald-50 text-emerald-700 border border-emerald-200/60 px-2 py-0.5 rounded-full text-[10px] font-semibold flex items-center gap-1">
-                          <ShieldCheck className="w-3 h-3 text-emerald-600" /> Firebase Auth Ativo
-                        </span>
+                    <div className="flex items-center gap-2">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-bold text-slate-800">Utilizadores e Acessos</h3>
+                          <span className="bg-emerald-50 text-emerald-700 border border-emerald-200/60 px-2 py-0.5 rounded-full text-[10px] font-semibold flex items-center gap-1">
+                            <ShieldCheck className="w-3 h-3 text-emerald-600" /> Firebase Auth Ativo
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          Todas as contas de utilizadores são cadastradas e sincronizadas no Firebase Authentication.
+                        </p>
                       </div>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        Todas as contas de utilizadores são cadastradas e sincronizadas no Firebase Authentication.
-                      </p>
+                      {renderModuleRefreshButton('Utilizadores')}
                     </div>
                     <div className="flex items-center gap-2 flex-wrap">
                       <button
@@ -14300,9 +14397,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             {activeTab === 'notificacoes' && (
               <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-6 animate-fadeIn text-slate-800">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
-                  <div>
-                    <h3 className="font-bold text-slate-800 text-lg">Central de Notificações</h3>
-                    <p className="text-xs text-slate-400">Acompanhe alertas importantes, faturas pendentes, e atualizações académicas em tempo real.</p>
+                  <div className="flex items-center gap-2">
+                    <div>
+                      <h3 className="font-bold text-slate-800 text-lg">Central de Notificações</h3>
+                      <p className="text-xs text-slate-400">Acompanhe alertas importantes, faturas pendentes, e atualizações académicas em tempo real.</p>
+                    </div>
+                    {renderModuleRefreshButton('Notificações')}
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
@@ -14447,9 +14547,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               !hasPermission('configuracoes') ? renderRestrictedAccess('Configurações Académicas') : (
                 <form onSubmit={handleSettingsSubmit} className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-6 animate-fadeIn">
                 <div className="flex justify-between items-center pb-4 border-b border-slate-150">
-                  <div>
-                    <h3 className="font-bold text-slate-800">Configurações Gerais da Unidade</h3>
-                    <p className="text-xs text-slate-400">Dados cadastrais acadêmicos e escalas de notas.</p>
+                  <div className="flex items-center gap-2">
+                    <div>
+                      <h3 className="font-bold text-slate-800">Configurações Gerais da Unidade</h3>
+                      <p className="text-xs text-slate-400">Dados cadastrais acadêmicos e escalas de notas.</p>
+                    </div>
+                    {renderModuleRefreshButton('Configurações')}
                   </div>
                   <div className="flex gap-2">
                     <button 

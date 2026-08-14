@@ -75,6 +75,8 @@ import {
   saveLastModule,
   getCookie,
   setCookie,
+  saveCurrentView,
+  getCurrentView,
   DEFAULT_PREFERENCES,
   CookiePreferences
 } from './lib/cookies';
@@ -84,17 +86,38 @@ import { SessionStateService } from './lib/userState';
 import { localDb } from './lib/localDb';
 
 export default function App() {
-  const [currentView, setCurrentView] = useState<'landing' | 'superadmin' | 'tenant' | 'brandbook'>('brandbook');
-  const [selectedTenantId, setSelectedTenantId] = useState<string>('tenant-maputo');
-  const [selectedRole, setSelectedRole] = useState<'admin' | 'director' | 'docente' | 'pai' | 'estudante'>('admin');
+  const initialSession = getUserSessionCookie();
+  const getInitialView = (): 'landing' | 'superadmin' | 'tenant' | 'brandbook' => {
+    if (initialSession) {
+      return initialSession.tipo === 'super_admin' ? 'superadmin' : 'tenant';
+    }
+    const saved = getCurrentView();
+    if (saved === 'brandbook' || saved === 'landing' || saved === 'superadmin' || saved === 'tenant') {
+      return saved as any;
+    }
+    return 'landing';
+  };
+
+  const [currentView, setCurrentView] = useState<'landing' | 'superadmin' | 'tenant' | 'brandbook'>(getInitialView);
+  const [selectedTenantId, setSelectedTenantId] = useState<string>(initialSession?.tenant_id || 'tenant-maputo');
+  const [selectedRole, setSelectedRole] = useState<'admin' | 'director' | 'docente' | 'pai' | 'estudante'>(
+    (initialSession?.tipo as any) || 'admin'
+  );
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [plans, setPlans] = useState<Plano[]>([]);
   const [loading, setLoading] = useState(false);
-  const [activeTheme, setActiveTheme] = useState<string>('theme-slate');
+  const [activeTheme, setActiveTheme] = useState<string>(getThemePreference());
   const [isThemeDropdownOpen, setIsThemeDropdownOpen] = useState(false);
   const [systemLang, setSystemLang] = useState<string>(getSystemLanguage());
   const [isLangDropdownOpen, setIsLangDropdownOpen] = useState(false);
   const [isCookiePolicyOpen, setIsCookiePolicyOpen] = useState(false);
+
+  // Sync currentView changes to persistent storage
+  useEffect(() => {
+    if (currentView) {
+      saveCurrentView(currentView);
+    }
+  }, [currentView]);
 
   // Logout handler that clears client session cookies and calls server logout endpoint
   const handleLogout = async () => {
@@ -104,6 +127,7 @@ export default function App() {
       console.warn('[Logout] Server session logout failed or offline:', e);
     }
     deleteCookie('user_session');
+    saveCurrentView('landing');
     setCurrentView('landing');
   };
 
@@ -750,9 +774,8 @@ const clientSideCache: Record<string, any> = {
   planos: null,
 };
 
-  // Initialize and Seed Database
+  // Initialize and Seed Database in background
   async function initApp() {
-    setLoading(true);
     try {
       await seedDatabaseIfEmpty();
       
@@ -787,7 +810,7 @@ const clientSideCache: Record<string, any> = {
         setPlans(plansList);
       }
 
-      // Restore session from cookie if available
+      // Restore session from cookie/localStorage if available
       const session = getUserSessionCookie();
       if (session) {
         if (session.tipo === 'super_admin') {
@@ -797,6 +820,7 @@ const clientSideCache: Record<string, any> = {
           const activeTenant = tenantsList.find(t => t.id === session.tenant_id);
           if (tenantsList.length > 0 && (!activeTenant || activeTenant.status === 'cancelado')) {
             deleteCookie('user_session');
+            saveCurrentView('landing');
             setCurrentView('landing');
             showNotification("Acesso Revogado: A conta da sua instituição foi excluída do sistema. O seu acesso foi revogado.", "erro");
           } else {
@@ -835,8 +859,6 @@ const clientSideCache: Record<string, any> = {
       } catch (localErr) {
         console.warn("Local DB fallback check note:", localErr);
       }
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -1265,50 +1287,6 @@ const clientSideCache: Record<string, any> = {
       </header>
     );
   };
-
-  if (loading) {
-    return (
-      <div className="bg-[#0D1B3D] min-h-screen text-slate-100 flex flex-col items-center justify-center p-6 text-center animate-fadeIn duration-500">
-        <div className="flex flex-col items-center justify-center space-y-6">
-          {/* Logo do Sistema */}
-          <SysEduLogo variant="negative" size={96} showSlogan={false} />
-          
-          {/* Slogan */}
-          <div className="space-y-1.5 mt-2">
-            <h2 className="text-[10px] font-bold uppercase tracking-[0.25em] text-indigo-300 font-sans">
-              SysEdu SaaS
-            </h2>
-            <p className="text-xs text-indigo-100/60 font-serif italic max-w-xs">
-              "Organizar hoje, transformar o amanhã."
-            </p>
-          </div>
-
-          {/* Samsung One UI Style circular thin spinner */}
-          <div className="pt-8">
-            <svg className="w-8 h-8 animate-spin text-indigo-400" viewBox="0 0 50 50">
-              <circle 
-                className="opacity-20" 
-                cx="25" 
-                cy="25" 
-                r="20" 
-                stroke="currentColor" 
-                strokeWidth="2" 
-                fill="none" 
-              />
-              <path 
-                className="opacity-80" 
-                fill="none" 
-                stroke="currentColor" 
-                strokeWidth="2" 
-                strokeLinecap="round" 
-                d="M25,5 A20,20 0 0,1 45,25" 
-              />
-            </svg>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   const renderCmdIcon = (iconName: string) => {
     switch (iconName) {

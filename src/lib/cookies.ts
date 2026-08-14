@@ -214,6 +214,9 @@ export function getCookie(name: string): string | null {
  */
 export function deleteCookie(name: string, path: string = '/') {
   document.cookie = `${name}=; Path=${path}; Expires=Thu, 01 Jan 1970 00:00:01 GMT; SameSite=Lax`;
+  try {
+    localStorage.removeItem(name);
+  } catch (e) {}
 }
 
 /**
@@ -369,25 +372,75 @@ export function revokeAllNonEssentialCookies() {
 // --- Specific App Helpers ---
 
 export function saveUserSessionCookie(sessionObj: any) {
-  saveSettingIfAllowed('user_session', JSON.stringify(sessionObj), 'essential', 24);
+  try {
+    const raw = JSON.stringify(sessionObj);
+    localStorage.setItem('user_session', raw);
+    sessionStorage.setItem('user_session', raw);
+  } catch (e) {}
+  saveSettingIfAllowed('user_session', JSON.stringify(sessionObj), 'essential', 365 * 24);
 }
 
 export function getUserSessionCookie(): any | null {
-  const sessionStr = getCookie('user_session');
-  if (!sessionStr) return null;
   try {
-    return JSON.parse(sessionStr);
-  } catch (e) {
-    return null;
+    const local = localStorage.getItem('user_session');
+    if (local) {
+      const parsed = JSON.parse(local);
+      if (parsed && typeof parsed === 'object') return parsed;
+    }
+  } catch (e) {}
+  try {
+    const session = sessionStorage.getItem('user_session');
+    if (session) {
+      const parsed = JSON.parse(session);
+      if (parsed && typeof parsed === 'object') return parsed;
+    }
+  } catch (e) {}
+  const sessionStr = getCookie('user_session');
+  if (sessionStr) {
+    try {
+      return JSON.parse(sessionStr);
+    } catch (e) {}
   }
+  return null;
+}
+
+export function saveCurrentView(view: string) {
+  try {
+    localStorage.setItem('sysedu_current_view', view);
+    sessionStorage.setItem('sysedu_current_view', view);
+  } catch (e) {}
+  saveSettingIfAllowed('sysedu_current_view', view, 'functional', 30 * 24);
+}
+
+export function getCurrentView(): string | null {
+  try {
+    const local = localStorage.getItem('sysedu_current_view');
+    if (local) return local;
+  } catch (e) {}
+  try {
+    const session = sessionStorage.getItem('sysedu_current_view');
+    if (session) return session;
+  } catch (e) {}
+  const cookieView = getCookie('sysedu_current_view');
+  if (cookieView) return cookieView;
+  return null;
 }
 
 export function saveThemePreference(theme: string) {
   saveSettingIfAllowed('user_theme', theme, 'preferences', 60 * 24);
+  try {
+    localStorage.setItem('user_theme', theme);
+  } catch (e) {}
 }
 
 export function getThemePreference(): string {
-  return getCookie('user_theme') || 'theme-slate';
+  const cookieTheme = getCookie('user_theme');
+  if (cookieTheme) return cookieTheme;
+  try {
+    const localTheme = localStorage.getItem('user_theme');
+    if (localTheme) return localTheme;
+  } catch (e) {}
+  return 'theme-slate';
 }
 
 export function saveLastAction(action: string) {
@@ -396,10 +449,19 @@ export function saveLastAction(action: string) {
 
 export function saveLastModule(module: string) {
   saveSettingIfAllowed('last_module', module, 'functional', 30 * 24);
+  try {
+    localStorage.setItem('last_module', module);
+  } catch (e) {}
 }
 
 export function getLastModule(): string {
-  return getCookie('last_module') || 'dashboard';
+  const cookieModule = getCookie('last_module');
+  if (cookieModule) return cookieModule;
+  try {
+    const localModule = localStorage.getItem('last_module');
+    if (localModule) return localModule;
+  } catch (e) {}
+  return 'dashboard';
 }
 
 export function saveLastScrollPosition(scrollTop: number) {

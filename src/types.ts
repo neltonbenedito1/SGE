@@ -130,17 +130,52 @@ export interface Escola {
   contacto?: string;
 }
 
+export interface FormacaoAcademica {
+  id?: string;
+  grau: 'Licenciatura' | 'Mestrado' | 'Doutoramento' | 'Bacharelato' | 'Pós-Graduação' | 'Técnico Médio' | string;
+  curso: string;
+  instituicao: string;
+  ano_conclusao: number | string;
+  pais: string;
+}
+
 export interface Docente {
   id: string;
   tenant_id: string;
   user_id: string;
+  // 1.1 Informações Pessoais (Obrigatórias)
   nome?: string;
-  escola_id: string;
-  especialidade: string;
-  numero_registro: string;
-  data_contratacao: string;
+  data_nascimento?: string;
+  genero?: 'Masculino' | 'Feminino' | string;
+  nacionalidade?: string;
+  estado_civil?: 'Solteiro(a)' | 'Casado(a)' | 'Divorciado(a)' | 'Viúvo(a)' | 'União de Facto' | string;
+  documento_identificacao?: string;
+  nuit?: string;
+  telefone?: string;
+  email?: string;
+  endereco?: string;
+  cidade_provincia?: string;
+  foto_url?: string;
+  // 1.2 Informações Profissionais (Opcionais no cadastro)
+  codigo_docente?: string;
+  categoria_profissional?: string;
+  cargo?: string;
+  departamento?: string;
+  cursos_lecionados?: string[];
+  especialidade?: string;
+  numero_registro?: string;
+  data_contratacao?: string;
   data_admissao?: string;
+  tipo_vinculo?: 'Efetivo' | 'Contratado' | 'Colaborador' | 'Substituto' | 'Tempo Parcial' | string;
+  regime_trabalho?: 'Tempo Integral (Full-time)' | 'Tempo Parcial (Part-time)' | 'Horista' | string;
+  escola_id: string;
   turmas_atribuidas?: string[];
+  ativo?: boolean;
+  // 1.3 Formação Académica (Pelo menos uma obrigatória no cadastro)
+  formacoes_academicas?: FormacaoAcademica[];
+  dados_em_falta?: string[];
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface Estudante {
@@ -300,6 +335,23 @@ export interface ProcessoAluno {
   tipo: ProcessoTipo;
   data: string;
   documentos: string[]; // list of file names or URLs
+  status: ProcessoStatus;
+  criador_nome: string;
+  observacao?: string;
+  detalhes?: string;
+  criado_em?: string;
+  criado_por?: string;
+}
+
+export type ProcessoDocenteTipo = 'Admissão' | 'Progressão na Carreira' | 'Avaliação de Desempenho' | 'Licença / Dispensa' | 'Transferência de Escola' | 'Dossiê Individual' | 'Rescisão Contratual' | string;
+
+export interface ProcessoDocente {
+  id: string;
+  tenant_id: string;
+  docente_id: string;
+  tipo: ProcessoDocenteTipo;
+  data: string;
+  documentos: string[];
   status: ProcessoStatus;
   criador_nome: string;
   observacao?: string;
