@@ -14,6 +14,7 @@ import { db } from '../lib/firebase';
 import { collection, getDocs, addDoc, query, orderBy, getDoc, doc } from 'firebase/firestore';
 import { jsPDF } from 'jspdf';
 import { ActividadePendente } from '../types';
+import { PerformanceEvaluationModule } from './PerformanceEvaluationModule';
 
 // --- TS INTERFACES ---
 interface School {
@@ -82,6 +83,9 @@ interface AnalyticsModuleProps {
   currentTeacher?: Teacher | null;
   loggedInUser?: any;
   atividades?: ActividadePendente[];
+  assiduidadeLogs?: any[];
+  processosAluno?: any[];
+  tenantId?: string;
 }
 
 interface MonthlyReport {
@@ -122,11 +126,14 @@ export function AnalyticsModule({
   tenantUsers,
   currentTeacher,
   loggedInUser,
-  atividades = []
+  atividades = [],
+  assiduidadeLogs = [],
+  processosAluno = [],
+  tenantId = 'default'
 }: AnalyticsModuleProps) {
 
   // --- SUB-TABS STATE ---
-  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'academic' | 'efficiency' | 'atividades' | 'library' | 'reports' | 'audit'>('overview');
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'desempenho' | 'academic' | 'efficiency' | 'atividades' | 'library' | 'reports' | 'audit'>('overview');
 
   // --- FILTERS STATE ---
   const [selectedSchoolId, setSelectedSchoolId] = useState<string>('todos');
@@ -852,6 +859,12 @@ export function AnalyticsModule({
           <Activity className="w-4 h-4" /> Visão Geral & KPIs
         </button>
         <button
+          onClick={() => setActiveSubTab('desempenho')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${activeSubTab === 'desempenho' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+        >
+          <Award className="w-4 h-4 text-amber-400" /> Avaliação de Desempenho
+        </button>
+        <button
           onClick={() => setActiveSubTab('academic')}
           className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${activeSubTab === 'academic' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
         >
@@ -912,8 +925,8 @@ export function AnalyticsModule({
             className="p-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold focus:outline-hidden text-slate-800 dark:text-white disabled:opacity-75 disabled:cursor-not-allowed"
           >
             {isAdmin && <option value="todos">🌍 Todas as Escolas</option>}
-            {availableSchools.map(s => (
-              <option key={s.id} value={s.id}>🏫 {s.nome}</option>
+            {availableSchools.map((s, idx) => (
+              <option key={`analytics-sch-${s.id || idx}-${idx}`} value={s.id}>🏫 {s.nome}</option>
             ))}
           </select>
         </div>
@@ -931,8 +944,8 @@ export function AnalyticsModule({
             className="p-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold focus:outline-hidden text-slate-800 dark:text-white"
           >
             <option value="todos">👥 Todas as Turmas</option>
-            {availableTurmas.map(t => (
-              <option key={t.id} value={t.id}>📐 {t.nome}</option>
+            {availableTurmas.map((t, idx) => (
+              <option key={`analytics-turma-${t.id || idx}-${idx}`} value={t.id}>📐 {t.nome}</option>
             ))}
           </select>
         </div>
@@ -950,10 +963,10 @@ export function AnalyticsModule({
             className="p-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold focus:outline-hidden text-slate-800 dark:text-white disabled:opacity-75"
           >
             <option value="todos">🧑‍🏫 Todos Docentes</option>
-            {availableTeachers.map(t => {
+            {availableTeachers.map((t, idx) => {
               const u = tenantUsers.find(tu => tu.id === (t as any).user_id || tu.id === t.id);
               return (
-                <option key={t.id} value={t.id}>👤 {u?.nome || t.especialidade || t.id}</option>
+                <option key={`analytics-prof-${t.id || idx}-${idx}`} value={t.id}>👤 {u?.nome || t.especialidade || t.id}</option>
               );
             })}
           </select>
@@ -971,10 +984,10 @@ export function AnalyticsModule({
             className="p-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold focus:outline-hidden text-slate-800 dark:text-white"
           >
             <option value="todos">🎓 Todos os Estudantes</option>
-            {availableStudents.map(s => {
+            {availableStudents.map((s, idx) => {
               const u = tenantUsers.find(tu => tu.id === s.user_id || tu.id === s.id);
               return (
-                <option key={s.id} value={s.id}>👤 {u?.nome || s.numero_matricula || s.id}</option>
+                <option key={`analytics-stud-${s.id || idx}-${idx}`} value={s.id}>👤 {u?.nome || s.numero_matricula || s.id}</option>
               );
             })}
           </select>
@@ -1030,6 +1043,24 @@ export function AnalyticsModule({
           <RefreshCw className="w-4 h-4 text-slate-500" />
         </button>
       </div>
+
+      {/* --- SUB-TAB CONTENTS: AVALIAÇÃO DE DESEMPENHO --- */}
+      {activeSubTab === 'desempenho' && (
+        <PerformanceEvaluationModule
+          schools={schools}
+          teachers={teachers}
+          students={students}
+          turmas={turmas}
+          classes={classes}
+          pautas={pautas}
+          tenantUsers={tenantUsers}
+          assiduidadeLogs={assiduidadeLogs}
+          processosAluno={processosAluno}
+          currentUserRole={role}
+          loggedInUser={loggedInUser}
+          tenantId={tenantId}
+        />
+      )}
 
       {/* --- SUB-TAB CONTENTS: OVERVIEW & KPIS --- */}
       {activeSubTab === 'overview' && (
@@ -1688,7 +1719,7 @@ export function AnalyticsModule({
 
               <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
                 {libraryRanking.map((lr, idx) => (
-                  <div key={lr.id} className="p-3 bg-slate-50 dark:bg-slate-800/40 border border-slate-150 dark:border-slate-800 rounded-xl flex justify-between items-center">
+                  <div key={`lib-rank-${lr.id || idx}-${idx}`} className="p-3 bg-slate-50 dark:bg-slate-800/40 border border-slate-150 dark:border-slate-800 rounded-xl flex justify-between items-center">
                     <div>
                       <p className="font-bold text-slate-800 dark:text-white text-xs truncate max-w-[150px]">{lr.nome}</p>
                       <p className="text-[10px] text-indigo-600 dark:text-indigo-400 italic mt-0.5 truncate max-w-[150px]">{lr.material}</p>
@@ -1736,9 +1767,9 @@ export function AnalyticsModule({
               ) : monthlyReports.length === 0 ? (
                 <p className="text-xs text-slate-400 py-10 text-center">Nenhum relatório arquivado.</p>
               ) : (
-                monthlyReports.map((rep) => (
+                monthlyReports.map((rep, idx) => (
                   <div 
-                    key={rep.id} 
+                    key={`monthly-rep-${rep.id || idx}-${idx}`} 
                     onClick={() => {
                       setSelectedReport(rep);
                       logAnalyticsAction("Leitura Relatório", `Consultou relatório online de ${rep.mes} ${rep.ano}`);

@@ -7811,6 +7811,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     currentTeacher={currentTeacher}
                     loggedInUser={loggedInUser}
                     atividades={rawAtividades}
+                    assiduidadeLogs={assiduidadeLogs}
+                    processosAluno={rawProcessos}
+                    tenantId={tenant?.id}
                   />
                 </div>
               )
@@ -13069,7 +13072,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     </td>
                                   </tr>
                                 ) : (
-                                  paginatedAbsentees.map((item: any) => {
+                                  paginatedAbsentees.map((item: any, idx: number) => {
                                     const itemLog = filteredAssiduidadeLogs.find(l => l.tipo === item.tipo && l.registro_id === item.registro_id);
                                     const hasJustification = Boolean(itemLog?.justificativa?.detalhes || itemLog?.justificativa?.status);
                                     const justStatus = itemLog?.justificativa?.status || 'pendente';
@@ -13079,7 +13082,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     const isWithin72h = hoursElapsed <= 72;
 
                                     return (
-                                      <tr key={item.id} className="hover:bg-slate-50/60 transition-colors">
+                                      <tr key={`absentee-${item.id || item.registro_id || idx}-${idx}`} className="hover:bg-slate-50/60 transition-colors">
                                         <td className="px-5 py-3">
                                           <div className="flex items-center gap-2">
                                             <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold uppercase ${
@@ -13225,7 +13228,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     </td>
                                   </tr>
                                 ) : (
-                                  paginatedStudents.map((student) => {
+                                  paginatedStudents.map((student, idx) => {
                                     const assocTurma = rawTurmas.find(t => t.id === student.turma_id);
                                     const assocClass = activeClassesForAssiduidade.find(c => c.turma_id === student.turma_id);
                                     
@@ -13234,7 +13237,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     const activeLog = studentLogs[0]; // Active log if exists
 
                                     return (
-                                      <tr key={student.id} className="hover:bg-slate-50/60 transition-colors">
+                                      <tr key={`scheduled-student-${student.id || idx}-${idx}`} className="hover:bg-slate-50/60 transition-colors">
                                         <td className="px-5 py-3 font-bold text-slate-800">{student.nome}</td>
                                         <td className="px-5 py-3 font-mono">{student.numero_matricula || 'N/D'}</td>
                                         <td className="px-5 py-3 text-slate-500">{assocTurma?.nome || 'N/D'}</td>
@@ -13352,7 +13355,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     </td>
                                   </tr>
                                 ) : (
-                                  paginatedTeachers.map((teacher) => {
+                                  paginatedTeachers.map((teacher, idx) => {
                                     const assocClass = activeClassesForAssiduidade.find(c => c.docente_id === teacher.id);
                                     
                                     // Check check-in status
@@ -13360,7 +13363,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     const activeLog = teacherLogs[0]; // Active log if exists
 
                                     return (
-                                      <tr key={teacher.id} className="hover:bg-slate-50/60 transition-colors">
+                                      <tr key={`scheduled-teacher-${teacher.id || idx}-${idx}`} className="hover:bg-slate-50/60 transition-colors">
                                         <td className="px-5 py-3 font-bold text-slate-800">{teacher.nome}</td>
                                         <td className="px-5 py-3 font-mono">{teacher.numero_registro || 'N/D'}</td>
                                         <td className="px-5 py-3 text-slate-500">
