@@ -28,9 +28,10 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Livro, Edicao, PermissaoBiblioteca, HistoricoLeitura, Avaliacao, Escola } from '../types';
-import { collection, doc, setDoc, getDocs, addDoc } from 'firebase/firestore';
+import { collection, doc, setDoc, getDocs, addDoc, deleteDoc, query, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { InternalPdfViewer } from './InternalPdfViewer';
+import { compressImageFile } from '../lib/imageCompression';
 
 interface BibliotecaModuleProps {
   currentUserRole: string;
@@ -89,8 +90,7 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
     const saved = localStorage.getItem(`lib_livros_${tenantId}`);
     if (saved) {
       try {
-        const parsed = JSON.parse(saved);
-        return parsed.filter((l: any) => !l.id.startsWith('livro-'));
+        return JSON.parse(saved);
       } catch (e) {
         return [];
       }
@@ -102,8 +102,7 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
     const saved = localStorage.getItem(`lib_edicoes_${tenantId}`);
     if (saved) {
       try {
-        const parsed = JSON.parse(saved);
-        return parsed.filter((e: any) => !e.livro_id.startsWith('livro-'));
+        return JSON.parse(saved);
       } catch (err) {
         return [];
       }
@@ -125,6 +124,7 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
     const saved = localStorage.getItem(`lib_historico_${tenantId}`);
     return saved ? JSON.parse(saved) : [];
   });
+
 
   // UI State
   const [activeSubTab, setActiveSubTab] = useState<'catalogo' | 'historico'>('catalogo');
@@ -207,6 +207,61 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
     }
   }, [bookForm.numero_paginas, detectedPdfPages]);
 
+  // Carregar e sincronizar dados da biblioteca do Firestore
+  useEffect(() => {
+    let active = true;
+    const fetchBibliotecaFromFirestore = async () => {
+      if (!tenantId) return;
+      try {
+        // 1. Livros
+        const livrosCol = collection(db, 'livros');
+        const livrosSnapshot = await getDocs(livrosCol);
+        if (!active) return;
+        const fetchedLivros: Livro[] = [];
+        livrosSnapshot.forEach((d) => {
+          const data = d.data() as Livro;
+          if (!data.tenant_id || data.tenant_id === tenantId || tenantId === 'all') {
+            fetchedLivros.push({ id: d.id, ...data });
+          }
+        });
+        if (fetchedLivros.length > 0) {
+          setLivros(fetchedLivros);
+        }
+
+        // 2. Edicoes
+        const edicoesCol = collection(db, 'edicoes');
+        const edicoesSnapshot = await getDocs(edicoesCol);
+        if (!active) return;
+        const fetchedEdicoes: Edicao[] = [];
+        edicoesSnapshot.forEach((d) => {
+          fetchedEdicoes.push({ id: d.id, ...d.data() } as Edicao);
+        });
+        if (fetchedEdicoes.length > 0) {
+          setEdicoes(fetchedEdicoes);
+        }
+
+        // 3. Avaliacoes
+        const avaliacoesCol = collection(db, 'avaliacoes');
+        const avaliacoesSnapshot = await getDocs(avaliacoesCol);
+        if (!active) return;
+        const fetchedAvaliacoes: Avaliacao[] = [];
+        avaliacoesSnapshot.forEach((d) => {
+          fetchedAvaliacoes.push({ id: d.id, ...d.data() } as Avaliacao);
+        });
+        if (fetchedAvaliacoes.length > 0) {
+          setAvaliacoes(fetchedAvaliacoes);
+        }
+      } catch (error) {
+        console.error("Erro ao sincronizar acervo da biblioteca com Firestore:", error);
+      }
+    };
+
+    fetchBibliotecaFromFirestore();
+    return () => {
+      active = false;
+    };
+  }, [tenantId]);
+
   // Save state to localStorage on updates
   useEffect(() => {
     localStorage.setItem(`lib_livros_${tenantId}`, JSON.stringify(livros));
@@ -265,6 +320,9 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
   const isSuperAdmin = currentUserRole === 'superadmin';
 
   // Permission checking helpers
+  const userPermission = permissoes.find(p => p.utilizador_id === `todos_${currentUserRole}s` || p.utilizador_id === `todos_${currentUserRole}` || p.utilizador_id === currentUserId);
+  const canDeleteBook = isAdmin || Boolean(userPermission?.pode_excluir);
+
   const canReadBook = () => {
     if (isAdmin) return true;
     const perm = permissoes.find(p => p.utilizador_id === `todos_${currentUserRole}s` || p.utilizador_id === `todos_${currentUserRole}`);
@@ -470,10 +528,18 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
 
     setLivros([newBook, ...livros]);
 
+    // Persist book to Firestore
+    try {
+      setDoc(doc(db, 'livros', newBookId), newBook).catch(err => console.error("Erro ao salvar livro no Firestore:", err));
+    } catch (e) {
+      console.error(e);
+    }
+
     // If PDF was uploaded during book registration, automatically create and bind Edition 1
     if (uploadedPdfBase64) {
+      const newEditionId = `edicao-${Date.now()}`;
       const newEdition: Edicao = {
-        id: `edicao-${Date.now()}`,
+        id: newEditionId,
         livro_id: newBookId,
         numero_edicao: 1,
         pdf_url: uploadedPdfBase64,
@@ -484,6 +550,11 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
         ativa: true
       };
       setEdicoes(prev => [...prev, newEdition]);
+      try {
+        setDoc(doc(db, 'edicoes', newEditionId), newEdition).catch(err => console.error("Erro ao salvar edicao no Firestore:", err));
+      } catch (e) {
+        console.error(e);
+      }
     }
 
     setIsBookModalOpen(false);
@@ -504,14 +575,16 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
     setUploadedPdfFileName('');
     setUploadedPdfBase64('');
     setUploadedPdfSize(0);
+    showToast('Livro cadastrado e salvo com sucesso no acervo!');
   };
 
   const handleSaveEdition = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedLivro || !editionForm.pdf_url) return;
 
+    const newEditionId = `edicao-${Date.now()}`;
     const newEdition: Edicao = {
-      id: `edicao-${Date.now()}`,
+      id: newEditionId,
       livro_id: selectedLivro.id,
       numero_edicao: Number(editionForm.numero_edicao) || 1,
       pdf_url: editionForm.pdf_url,
@@ -523,6 +596,11 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
     };
 
     setEdicoes([...edicoes, newEdition]);
+    try {
+      setDoc(doc(db, 'edicoes', newEditionId), newEdition).catch(err => console.error("Erro ao salvar edicao no Firestore:", err));
+    } catch (e) {
+      console.error(e);
+    }
     setUploadedEditionFileName('');
     setIsEditionModalOpen(false);
     setEditionForm({
@@ -532,14 +610,16 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
       notas_da_edicao: '',
       ativa: true
     });
+    showToast('Nova edição em PDF vinculada com sucesso!');
   };
 
   const handleSaveReview = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedLivro) return;
 
+    const newReviewId = `av-${Date.now()}`;
     const newReview: Avaliacao = {
-      id: `av-${Date.now()}`,
+      id: newReviewId,
       utilizador_id: currentUserId,
       livro_id: selectedLivro.id,
       nota: reviewForm.nota,
@@ -548,11 +628,21 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
     };
 
     setAvaliacoes([newReview, ...avaliacoes]);
+    try {
+      setDoc(doc(db, 'avaliacoes', newReviewId), newReview).catch(err => console.error("Erro ao salvar avaliacao no Firestore:", err));
+    } catch (e) {
+      console.error(e);
+    }
     setIsReviewModalOpen(false);
     setReviewForm({ nota: 5, comentario: '' });
+    showToast('Sua avaliação foi registrada com sucesso!');
   };
 
   const handleDeleteBook = (id: string) => {
+    if (!canDeleteBook) {
+      showToast('Apenas administradores e utilizadores com permissão podem excluir livros do acervo.', 'erro');
+      return;
+    }
     const book = livros.find(l => l.id === id);
     if (!book) return;
     setConfirmDeleteData({
@@ -562,26 +652,35 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
     });
   };
 
-  // Drag and drop / base64 simulation
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, field: 'capa' | 'pdf') => {
+  // Drag and drop / base64 and automatic image compression
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, field: 'capa' | 'pdf') => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64String = reader.result as string;
-      if (field === 'capa') {
-        setBookForm(prev => ({ ...prev, capa_url: base64String }));
-      } else {
+    if (field === 'capa') {
+      try {
+        const compressedBase64 = await compressImageFile(file, { maxWidth: 600, maxHeight: 800, quality: 0.85 });
+        setBookForm(prev => ({ ...prev, capa_url: compressedBase64 }));
+      } catch (err) {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setBookForm(prev => ({ ...prev, capa_url: reader.result as string }));
+        };
+        reader.readAsDataURL(file);
+      }
+    } else {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64String = reader.result as string;
         setUploadedEditionFileName(file.name);
         setEditionForm(prev => ({ 
           ...prev, 
           pdf_url: base64String,
           tamanho_ficheiro: parseFloat((file.size / (1024 * 1024)).toFixed(2))
         }));
-      }
-    };
-    reader.readAsDataURL(file);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   // Reader Progress Tracker

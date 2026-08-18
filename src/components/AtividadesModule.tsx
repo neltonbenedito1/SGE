@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, addDoc, updateDoc, doc, getDocs, query, where, deleteDoc } from 'firebase/firestore';
+import { sendBrowserNotification } from '../lib/browserNotifications';
 import { 
   ActividadePendente, SeveridadeActividade, StatusActividade, 
   CategoriaAtribuicaoActividade, Docente, Estudante, Escola, Turma, 
@@ -401,7 +402,7 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
 
       const isMine = checkIsDirectlyResponsible(act);
 
-      if (act.status === 'Finalizada') {
+      if (act.status === 'Finalizada' || act.status === 'Concluída') {
         completed.push(act);
         if (isMine) {
           minhas.push(act);
@@ -747,10 +748,150 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
         }
       });
 
+      // 7. Scan Docentes with Missing Optional Information
+      teachers.forEach(docente => {
+        const dedupKey = `scan_docente_docs_${docente.id}`;
+        const hasMissingData = docente.dados_em_falta && docente.dados_em_falta.length > 0;
+        if (!existingDedupKeys.has(dedupKey) && hasMissingData) {
+          const respId = docente.user_id || docente.id;
+          newItemsToAdd.push({
+            tenant_id: tenantId,
+            titulo: `Pendente Cadastral do Docente: ${docente.nome || 'Docente'}`,
+            detalhes: `Informações complementares em falta no perfil do docente (${docente.dados_em_falta?.join(', ')}). Necessária regularização na gestão de docentes.`,
+            responsavel_id: respId,
+            responsavel_nome: docente.nome || 'Docente',
+            responsavel_cargo: 'Docente',
+            severidade: 'Baixo',
+            status: 'Pendente',
+            criado_por_id: 'sistema_scan',
+            criado_por_nome: 'Varredura Automática do Sistema',
+            categoria_atribuicao: 'Professores',
+            modulo_origem: 'Gestão de Docentes',
+            dedup_key: dedupKey,
+            data_criacao: new Date().toISOString()
+          });
+        }
+      });
+
+      // --- AUTOMATIC ACTIVITY COMPLETION ENGINE BASED ON REAL RECORD STATE ---
+      // Evaluates active/pending activities and marks them as 'Concluída' automatically when resolved in origin
+      const activePendingActivities = atividades.filter(a => a.status === 'Pendente' || a.status === 'Em Progresso');
+      for (const act of activePendingActivities) {
+        if (!act.dedup_key) continue;
+        let shouldAutoComplete = false;
+        let origemResolucao = '';
+        let detalheAuditoria = '';
+
+        // 1. Docente profile check
+        if (act.dedup_key.startsWith('scan_docente_docs_')) {
+          const docId = act.dedup_key.replace('scan_docente_docs_', '');
+          const docente = teachers.find(t => t.id === docId);
+          if (docente && (!docente.dados_em_falta || docente.dados_em_falta.length === 0)) {
+            shouldAutoComplete = true;
+            origemResolucao = 'Módulo de Docentes (Dossier Completo)';
+            detalheAuditoria = 'Todas as informações e pendências do docente foram integralmente preenchidas.';
+          }
+        }
+        // 2. Pauta check
+        else if (act.dedup_key.startsWith('scan_pauta_')) {
+          const pautaId = act.dedup_key.replace('scan_pauta_', '');
+          const pauta = pautas.find(p => p.id === pautaId);
+          if (pauta && pauta.situacao && pauta.situacao !== 'Pendente') {
+            shouldAutoComplete = true;
+            origemResolucao = 'Pautas & Avaliações (Lançamento Efetuado)';
+            detalheAuditoria = `Pauta finalizada com situação: ${pauta.situacao}.`;
+          }
+        }
+        // 3. Processo Aluno check
+        else if (act.dedup_key.startsWith('scan_processo_')) {
+          const procId = act.dedup_key.replace('scan_processo_', '');
+          const proc = processos.find(p => p.id === procId);
+          if (proc && proc.status !== 'Solicitação' && proc.status !== 'Análise') {
+            shouldAutoComplete = true;
+            origemResolucao = 'Processo do Aluno (Decisão Emitida)';
+            detalheAuditoria = `Processo ${proc.tipo} transitou para status ${proc.status}.`;
+          }
+        }
+        // 4. Turma docente check
+        else if (act.dedup_key.startsWith('scan_turma_docente_')) {
+          const turmaId = act.dedup_key.replace('scan_turma_docente_', '');
+          const turma = turmas.find(t => t.id === turmaId);
+          if (turma && turma.docente_id) {
+            shouldAutoComplete = true;
+            origemResolucao = 'Gestão de Turmas (Docente Atribuído)';
+            detalheAuditoria = `Professor titular formalmente atribuído à turma ${turma.nome}.`;
+          }
+        }
+        // 5. Escola director check
+        else if (act.dedup_key.startsWith('scan_escola_diretor_')) {
+          const escId = act.dedup_key.replace('scan_escola_diretor_', '');
+          const esc = schools.find(s => s.id === escId);
+          if (esc && esc.diretor_id) {
+            shouldAutoComplete = true;
+            origemResolucao = 'Gestão Escolar (Director Nomeado)';
+            detalheAuditoria = `Director escolar nomeado para a instituição ${esc.nome}.`;
+          }
+        }
+        // 6. Student missing docs check
+        else if (act.dedup_key.startsWith('scan_student_docs_')) {
+          const stuId = act.dedup_key.replace('scan_student_docs_', '');
+          const stu = students.find(s => s.id === stuId);
+          if (stu && (!stu.dados_em_falta || stu.dados_em_falta.length === 0)) {
+            shouldAutoComplete = true;
+            origemResolucao = 'Secretaria Escolar (Documentação Entregue)';
+            detalheAuditoria = 'Todos os documentos em falta do aluno foram devidamente regularizados.';
+          }
+        }
+        // 7. Fatura check
+        else if (act.dedup_key.startsWith('scan_fatura_')) {
+          const fatId = act.dedup_key.replace('scan_fatura_', '');
+          const fat = faturas.find(f => f.id === fatId);
+          if (fat && (fat.status === 'Pago' || (fat.status as any) === 'Liquidado')) {
+            shouldAutoComplete = true;
+            origemResolucao = 'Gestão de Faturação (Pagamento Liquidado)';
+            detalheAuditoria = `Fatura ${fat.descricao} liquidada com sucesso.`;
+          }
+        }
+
+        if (shouldAutoComplete) {
+          const actRef = doc(db, 'atividades', act.id);
+          const nowIso = new Date().toISOString();
+          const auditEntry = {
+            data: nowIso,
+            acao: 'Conclusão Automática por Estado Real',
+            autor_id: 'sistema_scan',
+            autor_nome: 'Validador de Estado Real do Sistema',
+            origem: origemResolucao,
+            detalhes: detalheAuditoria
+          };
+
+          await updateDoc(actRef, {
+            status: 'Concluída',
+            concluido_em: nowIso,
+            data_finalizacao: nowIso,
+            concluido_por_nome: 'Sistema (Auto-Resolução)',
+            resolvido_automaticamente: true,
+            origem_resolucao: origemResolucao,
+            historico_auditoria: [...(act.historico_auditoria || []), auditEntry]
+          });
+
+          sendBrowserNotification({
+            title: '✅ Actividade Concluída Automaticamente',
+            body: `A pendência "${act.titulo}" foi resolvida na origem (${origemResolucao}).`,
+            tag: `resolved_${act.id}`
+          });
+        }
+      }
+
       // Batch save new activities to Firestore
       if (newItemsToAdd.length > 0) {
         for (const item of newItemsToAdd) {
           await addDoc(collection(db, 'atividades'), item);
+          sendBrowserNotification({
+            title: '📋 Nova Actividade Pendente',
+            body: `${item.titulo} (${item.modulo_origem})`,
+            tag: item.dedup_key || `act_${Date.now()}`
+          });
         }
         onRefreshData();
       }

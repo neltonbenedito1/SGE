@@ -27,7 +27,7 @@ interface School {
 interface Teacher {
   id: string;
   escola_id: string;
-  especialidade: string;
+  especialidade?: string;
 }
 
 interface Student {

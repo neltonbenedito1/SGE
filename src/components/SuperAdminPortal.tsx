@@ -27,6 +27,7 @@ import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { Tenant, Plano, Pagamento, LogAdmin, SmtpConfig, Notificacao } from '../types';
 import { SuperAdminFinancePanel } from './SuperAdminFinancePanel';
 import { SysEduLogo } from './SysEduLogo';
+import { SamsungLoadingScreen } from './SamsungLoadingScreen';
 import { 
   Building2, 
   CreditCard, 
@@ -2000,6 +2001,16 @@ export default function SuperAdminPortal({
   };
 
   const isAnyModalOpen = !!(isSmtpModalOpen || isPasswordResetModalOpen || isSendNotifModalOpen || isTenantModalOpen || isPlanModalOpen || isPaymentModalOpen || isOtpModalOpen || criticalDeleteTenant);
+
+  if (!hasLoadedOnce) {
+    return (
+      <SamsungLoadingScreen 
+        title="Super Admin SysEdu" 
+        subtitle="A carregar métricas globais e base de dados..." 
+        fullScreen={true} 
+      />
+    );
+  }
 
   return (
     <div id="super_admin_portal" className="min-h-screen bg-slate-100 flex flex-col md:flex-row font-sans relative">

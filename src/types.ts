@@ -361,8 +361,17 @@ export interface ProcessoDocente {
 }
 
 export type SeveridadeActividade = 'Baixo' | 'Médio' | 'Crítico';
-export type StatusActividade = 'Pendente' | 'Em Progresso' | 'Finalizada' | 'Suspensa';
+export type StatusActividade = 'Pendente' | 'Em Progresso' | 'Finalizada' | 'Concluída' | 'Suspensa';
 export type CategoriaAtribuicaoActividade = 'Todos' | 'Administradores' | 'Directores' | 'Professores' | 'Estudantes' | 'Encarregados' | string;
+
+export interface ActividadeAuditoria {
+  data: string;
+  acao: string;
+  autor_id: string;
+  autor_nome: string;
+  origem: string;
+  detalhes?: string;
+}
 
 export interface ActividadePendente {
   id: string;
@@ -391,6 +400,9 @@ export interface ActividadePendente {
   categoria_atribuicao?: CategoriaAtribuicaoActividade;
   modulo_origem?: string;
   dedup_key?: string;
+  resolvido_automaticamente?: boolean;
+  origem_resolucao?: string;
+  historico_auditoria?: ActividadeAuditoria[];
 }
 
 export interface TenantConfig {
@@ -548,6 +560,35 @@ export interface Avaliacao {
   comentario?: string;
   criado_em: string;
 }
+
+export type TipoAgendamentoExame = 
+  | 'Exame Normal' 
+  | 'Exame Recurso' 
+  | 'Exame Extraordinário' 
+  | 'Avaliação Contínua' 
+  | 'Teste Escrito' 
+  | 'Trabalho Prático'
+  | 'Reavaliação';
+
+export interface AgendamentoExame {
+  id: string;
+  tenant_id: string;
+  turma_id: string;
+  disciplina_id?: string;
+  disciplina_nome: string;
+  docente_id?: string;
+  docente_nome?: string;
+  tipo: TipoAgendamentoExame;
+  data: string; // YYYY-MM-DD
+  hora_inicio: string; // HH:MM
+  hora_fim: string; // HH:MM
+  sala: string;
+  peso_nota?: number;
+  observacoes?: string;
+  escola_id?: string;
+  created_at?: string;
+}
+
 
 
 

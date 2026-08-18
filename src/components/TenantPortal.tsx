@@ -41,11 +41,16 @@ import {
   UserCategoryPermission,
   ModulePermissionConfig,
   Feriado,
-  ActividadePendente
+  ActividadePendente,
+  ProcessoDocente,
+  AgendamentoExame,
+  TipoAgendamentoExame
 } from '../types';
 import { ValidarPresencaModal } from './ValidarPresencaModal';
 import { StudentQrDisplay } from './StudentQrDisplay';
 import { generateStudentQrPayload, generateQrDataUrl } from '../utils/qrCodeHelper';
+import DocenteFormModal from './DocenteFormModal';
+import ProcessoIndividualModule from './ProcessoIndividualModule';
 import { 
   BookOpen, 
   Users, 
@@ -356,7 +361,7 @@ const DEFAULT_MODULO_ACESSOS: Record<string, { habilitado: boolean; funcionalida
 
 export default function TenantPortal({ currentTenantId, currentUserRole, currentUserEmail, onLogout, activeTheme, onChangeTheme, systemLang = 'pt', onChangeLanguage }: TenantPortalProps) {
   const [activeTab, setActiveTab] = useState<string>(() => getLastModule() || 'dashboard');
-  const [calendarSubTab, setCalendarSubTab] = useState<'grade' | 'ferias' | 'feriados'>('grade');
+  const [calendarSubTab, setCalendarSubTab] = useState<'grade' | 'ferias' | 'feriados' | 'exames'>('grade');
   const [isFormDirty, setIsFormDirty] = useState(false);
   const [isCookiePolicyOpen, setIsCookiePolicyOpen] = useState(false);
 
@@ -491,7 +496,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [rawClassesEscolares, setClassesEscolares] = useState<ClasseEscolar[]>([]);
   const [rawPautas, setPautas] = useState<Pauta[]>([]);
   const [rawProcessos, setProcessos] = useState<ProcessoAluno[]>([]);
+  const [rawProcessosDocentes, setProcessosDocentes] = useState<ProcessoDocente[]>([]);
   const [rawAtividades, setAtividades] = useState<ActividadePendente[]>([]);
+  const [rawExames, setExames] = useState<AgendamentoExame[]>([]);
+  const [isDocenteModalOpen, setIsDocenteModalOpen] = useState(false);
+  const [editingDocente, setEditingDocente] = useState<Docente | null>(null);
   const [tenantUsers, setTenantUsers] = useState<User[]>([]);
   const [pendingImports, setPendingImports] = useState<any[]>([]);
   const [config, setConfig] = useState<TenantConfig | null>(null);
@@ -529,7 +538,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
 
   const showSystemNotification = useCallback((message: string, type: 'sucesso' | 'erro' | 'info' | 'config' | 'cadastro' = 'info') => {
+    const existing = document.getElementById('system-toast-container-active');
+    if (existing) {
+      existing.remove();
+    }
+
     const popup = document.createElement('div');
+    popup.id = 'system-toast-container-active';
     let bgClass = 'bg-slate-900 text-white border-slate-700';
     let icon = '🔔';
     if (type === 'sucesso') {
@@ -558,8 +573,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     document.body.appendChild(popup);
     setTimeout(() => {
       popup.classList.add('animate-out', 'fade-out', 'slide-out-to-bottom-5', 'duration-300');
-      setTimeout(() => popup.remove(), 300);
-    }, 6000);
+      setTimeout(() => {
+        if (popup.parentElement) popup.remove();
+      }, 300);
+    }, 4500);
   }, []);
 
   const handleManualRefresh = useCallback(async (moduleTitle?: string) => {
@@ -1244,6 +1261,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     return 'noite';
   });
   const [userSelectedTurn, setUserSelectedTurn] = useState<'manha' | 'tarde' | 'noite' | null>(null);
+  const [exameTurmaFilter, setExameTurmaFilter] = useState('todos');
+  const [exameTipoFilter, setExameTipoFilter] = useState('todos');
+  const [exameSearchTerm, setExameSearchTerm] = useState('');
 
   // Helper functions for turn separation and schedule validation
   const parseTimeToMinutes = (timeStr: string): number => {
@@ -2975,6 +2995,21 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [feriasForm, setFeriasForm] = useState(() => getSavedFormDraft('draft_ferias', { descricao: '', turma_id: 'todas', data_inicio: new Date().toISOString().split('T')[0], data_fim: new Date().toISOString().split('T')[0] }));
   const [horarioForm, setHorarioForm] = useState(() => getSavedFormDraft('draft_horario', { turma_id: '', disciplina_id: '', disciplina_nome: '', docente_id: '', hora_inicio: '08:00', hora_fim: '09:30', sala: '', data: new Date().toISOString().split('T')[0], dia_semana: 'Segunda-feira', justificativa: '', escola_id: '' }));
   const [feriadoForm, setFeriadoForm] = useState(() => getSavedFormDraft('draft_feriado', { nome: '', data: new Date().toISOString().split('T')[0], pais: 'Moçambique', tipo: 'Nacional', descricao: '' }));
+  const [exameForm, setExameForm] = useState(() => getSavedFormDraft('draft_exame', {
+    turma_id: '',
+    disciplina_id: '',
+    disciplina_nome: '',
+    docente_id: '',
+    docente_nome: '',
+    tipo: 'Exame Normal' as TipoAgendamentoExame,
+    data: new Date().toISOString().split('T')[0],
+    hora_inicio: '08:00',
+    hora_fim: '10:00',
+    sala: 'Sala 01',
+    peso_nota: 100,
+    observacoes: '',
+    escola_id: ''
+  }));
 
   // PAGINATION STATES
   const [pageSchools, setPageSchools] = useState(1);
@@ -4188,6 +4223,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         assSnap,
         feriadosSnap,
         ativSnap,
+        prcDocSnap,
+        examesSnap,
       ] = await Promise.all([
         getDocs(query(collection(db, 'provincias'), ...qParams)),
         getDocs(query(collection(db, 'escolas'), ...qParams)),
@@ -4211,6 +4248,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         getDocs(query(collection(db, 'assiduidade_logs'), ...qParams)),
         getDocs(query(collection(db, 'feriados'), ...qParams)),
         getDocs(query(collection(db, 'atividades'), ...qParams)),
+        getDocs(query(collection(db, 'processos_docentes'), ...qParams)),
+        getDocs(query(collection(db, 'exames_agendamentos'), ...qParams)),
       ]);
 
       const provList: Provincia[] = [];
@@ -4268,11 +4307,23 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       prcSnap.forEach(d => prcList.push({ ...d.data() as ProcessoAluno, id: d.id }));
       setProcessos(prcList);
 
+      const prcDocList: ProcessoDocente[] = [];
+      if (prcDocSnap) {
+        prcDocSnap.forEach(d => prcDocList.push({ ...d.data() as ProcessoDocente, id: d.id }));
+      }
+      setProcessosDocentes(prcDocList);
+
       const ativList: ActividadePendente[] = [];
       if (ativSnap) {
         ativSnap.forEach(d => ativList.push({ ...d.data() as ActividadePendente, id: d.id }));
       }
       setAtividades(ativList);
+
+      const examesList: AgendamentoExame[] = [];
+      if (examesSnap) {
+        examesSnap.forEach(d => examesList.push({ ...d.data() as AgendamentoExame, id: d.id }));
+      }
+      setExames(examesList);
 
       if (!confSnap.empty) {
         setConfig({ ...confSnap.docs[0].data() as TenantConfig, id: confSnap.docs[0].id });
@@ -4357,6 +4408,158 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     }
   }
 
+  // Handler for Docente creation & updates from DocenteFormModal
+  const handleSaveDocente = async (docenteData: Partial<Docente>, extraUserData: { email: string; nome: string }) => {
+    setIsSaving(true);
+    try {
+      if (editingDocente) {
+        // Update existing teacher record
+        const docRef = doc(db, 'docentes', editingDocente.id);
+        await updateDoc(docRef, {
+          ...docenteData,
+          tenant_id: currentTenantId,
+          updated_at: new Date().toISOString()
+        });
+
+        // Update linked user if needed
+        if (editingDocente.user_id) {
+          const userRef = doc(db, 'users', editingDocente.user_id);
+          await updateDoc(userRef, {
+            nome: extraUserData.nome,
+            email: extraUserData.email,
+            updated_at: new Date().toISOString()
+          });
+        }
+
+        await tenantAuditLog('Atualizar Docente', 'Docente', editingDocente.id, `Docente "${extraUserData.nome}" atualizado com sucesso.`);
+        showSystemNotification(`Docente "${extraUserData.nome}" atualizado com sucesso!`, 'sucesso');
+      } else {
+        // Create new user account for teacher
+        const newUserRef = await addDoc(collection(db, 'users'), {
+          nome: extraUserData.nome,
+          email: extraUserData.email,
+          tipo: 'docente',
+          tenant_id: currentTenantId,
+          escola_id: docenteData.escola_id || schools[0]?.id || '',
+          senha_temporaria: '12345678',
+          created_at: new Date().toISOString()
+        });
+
+        // Try registering in Firebase Auth
+        if (extraUserData.email) {
+          try {
+            await registerUserInFirebaseAuth(extraUserData.email, '12345678');
+          } catch (e) {
+            console.warn('[Docente] Auth auto-register skipped:', e);
+          }
+        }
+
+        // Create docente record
+        const newDocRef = await addDoc(collection(db, 'docentes'), {
+          ...docenteData,
+          user_id: newUserRef.id,
+          tenant_id: currentTenantId,
+          escola_id: docenteData.escola_id || schools[0]?.id || '',
+          created_at: new Date().toISOString()
+        });
+
+        // If optional fields missing, auto-create activity
+        if (docenteData.dados_em_falta && docenteData.dados_em_falta.length > 0) {
+          try {
+            await addDoc(collection(db, 'atividades'), {
+              tenant_id: currentTenantId,
+              titulo: `Completar Cadastro do Docente: ${extraUserData.nome}`,
+              descricao: `O docente foi cadastrado com sucesso, mas possui dados pendentes: ${docenteData.dados_em_falta.join(', ')}.`,
+              modulo: 'docentes',
+              referencia_id: newDocRef.id,
+              prioridade: 'Média',
+              status: 'Pendente',
+              tipo: 'Cadastro Incompleto',
+              atribuido_a: 'Secretaria / RH',
+              data_criacao: new Date().toISOString()
+            });
+          } catch (e) {
+            console.warn('[Docente] Auto-activity creation error:', e);
+          }
+        }
+
+        await tenantAuditLog('Criar Docente', 'Docente', newDocRef.id, `Docente "${extraUserData.nome}" cadastrado com sucesso.`);
+        showSystemNotification(`Docente "${extraUserData.nome}" cadastrado com sucesso!`, 'sucesso');
+      }
+
+      await loadTenantContext();
+      setIsDocenteModalOpen(false);
+      setEditingDocente(null);
+    } catch (err: any) {
+      console.error('[handleSaveDocente] Error:', err);
+      showSystemNotification(`Erro ao salvar docente: ${err?.message || err}`, 'erro');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Handler for Docente Dossier updates
+  const handleUpdateDocenteDossier = async (docenteId: string, fields: Partial<Docente>) => {
+    try {
+      const docRef = doc(db, 'docentes', docenteId);
+      await updateDoc(docRef, {
+        ...fields,
+        updated_at: new Date().toISOString()
+      });
+      await tenantAuditLog('Atualizar Dossier Docente', 'Docente', docenteId, `Dossier do docente atualizado.`);
+      showSystemNotification('Dossier do docente atualizado com sucesso!', 'sucesso');
+      await loadTenantContext();
+    } catch (err: any) {
+      console.error('[handleUpdateDocenteDossier] Error:', err);
+      showSystemNotification(`Erro ao atualizar dossier do docente: ${err?.message || err}`, 'erro');
+    }
+  };
+
+  // Handler for Docente Process requests / workflows
+  const handleSaveProcessoDocente = async (procData: Partial<ProcessoDocente>, isEditing: boolean) => {
+    try {
+      if (isEditing && procData.id) {
+        const pRef = doc(db, 'processos_docentes', procData.id);
+        await updateDoc(pRef, {
+          ...procData,
+          updated_at: new Date().toISOString()
+        });
+        await tenantAuditLog('Atualizar Processo Docente', 'ProcessoDocente', procData.id, `Processo do docente "${procData.tipo}" atualizado.`);
+        showSystemNotification('Processo do docente atualizado com sucesso!', 'sucesso');
+      } else {
+        const newRef = await addDoc(collection(db, 'processos_docentes'), {
+          ...procData,
+          tenant_id: currentTenantId,
+          created_at: new Date().toISOString()
+        });
+        await tenantAuditLog('Criar Processo Docente', 'ProcessoDocente', newRef.id, `Novo processo do docente "${procData.tipo}" aberto.`);
+        showSystemNotification('Processo do docente aberto com sucesso!', 'sucesso');
+      }
+      await loadTenantContext();
+    } catch (err: any) {
+      console.error('[handleSaveProcessoDocente] Error:', err);
+      showSystemNotification(`Erro ao salvar processo do docente: ${err?.message || err}`, 'erro');
+    }
+  };
+
+  // Handler to notify teacher regarding missing data
+  const handleNotifyTeacherMissingData = async (teacher: Docente) => {
+    try {
+      const usr = tenantUsers.find(u => u.id === teacher.user_id);
+      const email = teacher.email || usr?.email;
+      if (email) {
+        await queueOrSendEmail(
+          email,
+          'Aviso: Atualização de Dados Cadastrais e Documentos Pendentes',
+          `Prezado(a) Docente ${teacher.nome || usr?.nome},\n\nConstatamos que existem dados ou documentos pendentes em seu cadastro institucional (${(teacher.dados_em_falta || []).join(', ') || 'Formação ou Documentação'}).\n\nPor favor, entre em contato com a Direção Pedagógica/Secretaria para regularizar o seu dossier.\n\nAtenciosamente,\nDireção da Escola`
+        );
+      }
+      showSystemNotification(`Notificação de pendência emitida com sucesso para "${teacher.nome || usr?.nome}".`, 'sucesso');
+    } catch (err: any) {
+      showSystemNotification(`Erro ao notificar docente: ${err?.message || err}`, 'erro');
+    }
+  };
+
   // Queue or send emails helper (Rule 6.1 & 6.2)
   async function queueOrSendEmail(to: string, subject: string, body: string) {
     const activeSmtp = (tenantSmtpConfig && tenantSmtpConfig.status === 'ativo') ? tenantSmtpConfig : (globalSmtpConfig && globalSmtpConfig.status === 'ativo' ? globalSmtpConfig : null);
@@ -4373,7 +4576,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     };
 
     try {
-      const emailRef = await addDoc(collection(db, 'pending_emails'), emailDoc);
+      await addDoc(collection(db, 'pending_emails'), emailDoc);
       
       if (!activeSmtp) {
         // Create notification for Super Admin
@@ -4397,13 +4600,6 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         });
 
         setSmtpWarningMsg(`O e-mail para ${to} está pendente na fila porque não há servidor SMTP configurado.`);
-        
-        // Trigger 6-second popup notification
-        const popup = document.createElement('div');
-        popup.className = 'fixed bottom-5 right-5 bg-amber-600 text-white font-bold text-xs px-4 py-3 rounded-xl shadow-2xl border border-amber-500 z-50 flex items-center gap-2 animate-bounce';
-        popup.innerHTML = `⚠️ E-mail ficou pendente (Servidor SMTP não configurado)`;
-        document.body.appendChild(popup);
-        setTimeout(() => popup.remove(), 6000);
       } else {
         // If SMTP is active, we simulate transmission and add it to the received emails list
         await addDoc(collection(db, 'received_emails'), {
@@ -4413,13 +4609,6 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           date: new Date().toLocaleTimeString('pt-BR'),
           created_at: new Date().toISOString()
         });
-
-        // Trigger 6-second popup notification (Rule 3)
-        const popup = document.createElement('div');
-        popup.className = 'fixed bottom-5 right-5 bg-emerald-600 text-white font-bold text-xs px-4 py-3 rounded-xl shadow-2xl border border-emerald-500 z-50 flex items-center gap-2 animate-bounce';
-        popup.innerHTML = `✅ E-mail enviado com sucesso!`;
-        document.body.appendChild(popup);
-        setTimeout(() => popup.remove(), 6000);
       }
       
       loadTenantContext();
@@ -4461,15 +4650,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         `Diretor de Turma notificado sobre dados cadastrais em falta para o aluno "${studentName}".`
       );
 
-      // Trigger 6-second popup notification (Rule 3)
-      const popup = document.createElement('div');
-      popup.className = 'fixed bottom-5 right-5 bg-indigo-600 text-white font-bold text-xs px-4 py-3 rounded-xl shadow-2xl border border-indigo-500 z-50 flex items-center gap-2 animate-bounce';
-      popup.innerHTML = `✅ Notificação enviada com sucesso para o Diretor de Turma!`;
-      document.body.appendChild(popup);
-      setTimeout(() => popup.remove(), 6000);
-
+      showSystemNotification(`Notificação emitida com sucesso para o Diretor de Turma (${studentName})!`, 'sucesso');
     } catch (err: any) {
-      alert("Erro ao enviar notificação: " + err.message);
+      showSystemNotification(`Erro ao notificar: ${err?.message || err}`, 'erro');
     }
   }
 
@@ -6185,6 +6368,46 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           const docRef = await addDoc(collection(db, 'feriados'), payload);
           setFeriados(prev => [{ ...payload, id: docRef.id }, ...prev]);
         }
+      }
+
+      else if (modalType === 'agendar_exame') {
+        if (!exameForm.turma_id || !exameForm.disciplina_nome || !exameForm.data || !exameForm.hora_inicio || !exameForm.hora_fim) {
+          showSystemNotification("Erro: Preencha a turma, disciplina, data e horários do exame/avaliação!", "erro");
+          setIsSaving(false);
+          return;
+        }
+
+        const selectedTurma = rawTurmas.find(t => t.id === exameForm.turma_id);
+        const selectedTeacher = rawTeachers.find(t => t.id === exameForm.docente_id);
+
+        const payload: any = {
+          turma_id: exameForm.turma_id,
+          turma_nome: selectedTurma?.nome || 'Turma Geral',
+          disciplina_id: exameForm.disciplina_id || '',
+          disciplina_nome: exameForm.disciplina_nome,
+          docente_id: exameForm.docente_id || '',
+          docente_nome: selectedTeacher?.nome || exameForm.docente_nome || '',
+          tipo: exameForm.tipo || 'Exame Normal',
+          data: exameForm.data,
+          hora_inicio: exameForm.hora_inicio,
+          hora_fim: exameForm.hora_fim,
+          sala: exameForm.sala || 'Sala 01',
+          peso_nota: Number(exameForm.peso_nota) || 100,
+          observacoes: exameForm.observacoes || '',
+          escola_id: exameForm.escola_id || rawSchools[0]?.id || '',
+          tenant_id: currentTenantId,
+          created_at: new Date().toISOString()
+        };
+
+        if (editingItem) {
+          await updateDoc(doc(db, 'exames_agendamentos', editingItem.id), payload);
+          setExames(prev => prev.map(e => e.id === editingItem.id ? { ...e, ...payload } : e));
+          showSystemNotification("Agendamento de exame/avaliação atualizado com sucesso!", "sucesso");
+        } else {
+          const docRef = await addDoc(collection(db, 'exames_agendamentos'), payload);
+          setExames(prev => [{ ...payload, id: docRef.id }, ...prev]);
+          showSystemNotification("Exame/Avaliação agendado(a) com sucesso!", "sucesso");
+        }
       } 
       
       else if (modalType === 'classe_escolar') {
@@ -6737,6 +6960,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     }
     return <div className="border-t border-slate-800/60 my-4 mx-3" />;
   };
+
+  if (!hasLoadedOnce) {
+    return (
+      <SamsungLoadingScreen 
+        title="SysEdu SaaS" 
+        subtitle="A carregar a base de dados institucional e utilizador..." 
+        fullScreen={true} 
+      />
+    );
+  }
 
   return (
     <div id="tenant_client_portal" className="bg-slate-50 min-h-screen flex flex-col md:flex-row relative">
@@ -8978,10 +9211,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           </button>
                           <button 
                             onClick={() => {
-                              setEditingItem(null);
-                              setTeacherForm({ nome: '', email: '', especialidade: '', numero_registro: '', escola_id: schools[0]?.id || '' });
-                              setModalType('teacher');
-                              setIsModalOpen(true);
+                              setEditingDocente(null);
+                              setIsDocenteModalOpen(true);
                             }}
                             className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1 cursor-pointer"
                           >
@@ -9087,16 +9318,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                   {hasPermission('docentes', 'editar') && (
                                     <button
                                       onClick={() => {
-                                        setEditingItem(t);
-                                        setTeacherForm({
-                                          nome: usr?.nome || '',
-                                          email: usr?.email || '',
-                                          especialidade: t.especialidade,
-                                          numero_registro: t.numero_registro,
-                                          escola_id: t.escola_id
-                                        });
-                                        setModalType('teacher');
-                                        setIsModalOpen(true);
+                                        setEditingDocente(t);
+                                        setIsDocenteModalOpen(true);
                                       }}
                                       className="p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
                                       title="Editar Docente"
@@ -9166,16 +9389,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             {hasPermission('docentes', 'editar') && (
                               <button
                                 onClick={() => {
-                                  setEditingItem(t);
-                                  setTeacherForm({
-                                    nome: usr?.nome || '',
-                                    email: usr?.email || '',
-                                    especialidade: t.especialidade,
-                                    numero_registro: t.numero_registro,
-                                    escola_id: t.escola_id
-                                  });
-                                  setModalType('teacher');
-                                  setIsModalOpen(true);
+                                  setEditingDocente(t);
+                                  setIsDocenteModalOpen(true);
                                 }}
                                 className="p-1.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 rounded-lg hover:bg-indigo-100 dark:hover:bg-indigo-900/40 text-xs font-semibold flex items-center gap-1 cursor-pointer"
                                 title="Visualizar Docente"
@@ -9188,16 +9403,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             {hasPermission('docentes', 'editar') && (
                               <button
                                 onClick={() => {
-                                  setEditingItem(t);
-                                  setTeacherForm({
-                                    nome: usr?.nome || '',
-                                    email: usr?.email || '',
-                                    especialidade: t.especialidade,
-                                    numero_registro: t.numero_registro,
-                                    escola_id: t.escola_id
-                                  });
-                                  setModalType('teacher');
-                                  setIsModalOpen(true);
+                                  setEditingDocente(t);
+                                  setIsDocenteModalOpen(true);
                                 }}
                                 className="p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer"
                                 title="Editar Docente"
@@ -10628,6 +10835,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           >
                             🚩 Feriados
                           </button>
+                          <button
+                            id="tab_exames_agendamentos"
+                            onClick={() => setCalendarSubTab('exames')}
+                            className={`px-3 py-1.5 rounded-lg font-bold text-xs tracking-wide transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+                              calendarSubTab === 'exames'
+                                ? 'bg-white text-indigo-600 shadow-3xs'
+                                : 'text-slate-500 hover:text-slate-750'
+                            }`}
+                          >
+                            📝 Exames & Avaliações
+                          </button>
                         </div>
                       </div>
 
@@ -10636,7 +10854,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                             <div>
                               <h4 className="font-bold text-slate-700 text-sm">Visualização Semanal</h4>
-                              <p className="text-[11px] text-slate-400">Filtre por turma para consultar ou agendar as disciplinas.</p>
+                              <p className="text-[11px] text-slate-400">Filtre por turma para consultar ou agendar as disciplinas e exames.</p>
                             </div>
                             <div className="flex items-center gap-3 flex-wrap self-start sm:self-center">
                               {turmas.length > 0 && (
@@ -10740,31 +10958,62 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               )}
 
                               {hasPermission('disciplinas', 'criar') && (
-                                <button
-                                  id="btn_agendar_aula"
-                                  onClick={() => {
-                                    setEditingItem(null);
-                                    const activeFilterId = selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter;
-                                    setHorarioForm({ 
-                                      turma_id: activeFilterId || (turmas[0]?.id || ''),
-                                      disciplina_id: '',
-                                      disciplina_nome: '',
-                                      docente_id: teachers[0]?.id || '', 
-                                      hora_inicio: '08:00',
-                                      hora_fim: '09:30', 
-                                      sala: rawSalas[0]?.nome || 'Sala 01',
-                                      data: new Date().toISOString().split('T')[0],
-                                      dia_semana: getDiaSemanaFromDate(new Date().toISOString().split('T')[0]),
-                                      justificativa: '',
-                                      escola_id: schools[0]?.id || ''
-                                    });
-                                    setModalType('horario_aula');
-                                    setIsModalOpen(true);
-                                  }}
-                                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
-                                >
-                                  <Plus className="w-3.5 h-3.5" /> Agendar Aula
-                                </button>
+                                <>
+                                  <button
+                                    id="btn_agendar_aula"
+                                    onClick={() => {
+                                      setEditingItem(null);
+                                      const activeFilterId = selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter;
+                                      setHorarioForm({ 
+                                        turma_id: activeFilterId || (turmas[0]?.id || ''),
+                                        disciplina_id: '',
+                                        disciplina_nome: '',
+                                        docente_id: teachers[0]?.id || '', 
+                                        hora_inicio: '08:00',
+                                        hora_fim: '09:30', 
+                                        sala: rawSalas[0]?.nome || 'Sala 01',
+                                        data: new Date().toISOString().split('T')[0],
+                                        dia_semana: getDiaSemanaFromDate(new Date().toISOString().split('T')[0]),
+                                        justificativa: '',
+                                        escola_id: schools[0]?.id || ''
+                                      });
+                                      setModalType('horario_aula');
+                                      setIsModalOpen(true);
+                                    }}
+                                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                                  >
+                                    <Plus className="w-3.5 h-3.5" /> Agendar Aula
+                                  </button>
+                                  
+                                  <button
+                                    id="btn_agendar_exame_grade"
+                                    onClick={() => {
+                                      setEditingItem(null);
+                                      const activeFilterId = selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter;
+                                      const selTurma = turmas.find(t => t.id === activeFilterId);
+                                      setExameForm({
+                                        turma_id: activeFilterId || (turmas[0]?.id || ''),
+                                        disciplina_id: '',
+                                        disciplina_nome: '',
+                                        docente_id: teachers[0]?.id || '',
+                                        docente_nome: teachers[0]?.nome || '',
+                                        tipo: 'Exame Normal',
+                                        data: new Date().toISOString().split('T')[0],
+                                        hora_inicio: '08:00',
+                                        hora_fim: '10:00',
+                                        sala: rawSalas[0]?.nome || 'Sala 01',
+                                        peso_nota: 100,
+                                        observacoes: '',
+                                        escola_id: selTurma?.escola_id || schools[0]?.id || ''
+                                      });
+                                      setModalType('agendar_exame');
+                                      setIsModalOpen(true);
+                                    }}
+                                    className="bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                                  >
+                                    <Plus className="w-3.5 h-3.5" /> Agendar Exame / Avaliação
+                                  </button>
+                                </>
                               )}
                             </div>
                           </div>
@@ -12036,230 +12285,60 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               )
             )}
 
-            {/* TAB: PROCESSO DO ALUNO */}
+            {/* TAB: PROCESSO INDIVIDUAL (ALUNO & DOCENTE) */}
             {activeTab === 'processos' && (
-              !hasPermission('processos') ? renderRestrictedAccess('Processos Escolares') : (
-                <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-6 animate-fadeIn">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
-                    <div className="flex items-center gap-2">
-                      <div>
-                        <h3 className="font-bold text-slate-800 text-lg">Processo Individual do Aluno</h3>
-                        <p className="text-xs text-slate-400">Conselho de dossiers individuais, históricos de ocorrências e ficha académica.</p>
-                      </div>
-                      {renderModuleRefreshButton('Processos')}
-                    </div>
-
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => setProcessTabSegment('dossiers')}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                          processTabSegment === 'dossiers'
-                            ? 'bg-indigo-50 text-indigo-600 font-extrabold'
-                            : 'text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        📂 Dossiers e Fichas ({students.length})
-                      </button>
-                      <button
-                        onClick={() => setProcessTabSegment('workflow')}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                          processTabSegment === 'workflow'
-                            ? 'bg-indigo-50 text-indigo-600 font-extrabold'
-                            : 'text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        ⏱️ Workflow de Processos ({processos.length})
-                      </button>
-                    </div>
-                  </div>
-
-                  {processTabSegment === 'dossiers' && (
-                    <div className="space-y-4">
-                      <div className="overflow-x-auto rounded-2xl border border-slate-100 dark:border-slate-800">
-                        <table className="w-full text-left text-xs min-w-[800px]">
-                          <thead className="bg-slate-50 dark:bg-slate-900 text-slate-500 uppercase font-black text-[10px]">
-                            <tr className="border-b border-slate-100 dark:border-slate-800">
-                              <th className="px-6 py-4">Estudante / Matrícula</th>
-                              <th className="px-6 py-4">Turma / Escola</th>
-                              <th className="px-6 py-4">Filiação e Morada</th>
-                              <th className="px-6 py-4 text-center">Estado do Dossier</th>
-                              <th className="px-6 py-4 text-right sticky right-0 bg-slate-50 dark:bg-slate-900 z-10">Ações</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-150 text-slate-700">
-                            {students.map((s) => {
-                              const usr = tenantUsers.find((u) => u.id === s.user_id);
-                              const trm = turmas.find((t) => t.id === s.turma_id);
-                              const esc = schools.find((sc) => sc.id === s.escola_id);
-
-                              // Check dossier completeness (BI / ID document, Parents, Address)
-                              const hasBI = !!s.documento_identificacao;
-                              const hasPai = !!s.nome_pai;
-                              const hasMae = !!s.nome_mae;
-                              const hasMorada = !!s.morada;
-                              const isComplete = hasBI && hasPai && hasMae && hasMorada;
-
-                              return (
-                                <tr key={s.id} className="hover:bg-slate-50/40 transition-colors">
-                                  <td className="px-6 py-4">
-                                    <p className="font-extrabold text-slate-900">{usr?.nome || 'Aluno Sem Nome'}</p>
-                                    <p className="text-[10px] text-slate-400 font-mono mt-0.5">Matrícula: {s.numero_matricula}</p>
-                                  </td>
-                                  <td className="px-6 py-4">
-                                    <p className="font-semibold text-slate-800">{trm?.nome || 'Não Alocado'}</p>
-                                    <p className="text-[10px] text-slate-400 mt-0.5">{esc?.nome || 'Escola Geral'}</p>
-                                  </td>
-                                  <td className="px-6 py-4 max-w-xs">
-                                    <p className="text-slate-600 truncate">
-                                      <span className="font-bold">Filiação: </span>
-                                      {s.nome_pai || '—'} / {s.nome_mae || '—'}
-                                    </p>
-                                    <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                                      <span className="font-semibold">Morada: </span>
-                                      {s.morada || 'Não informada'}
-                                    </p>
-                                  </td>
-                                  <td className="px-6 py-4 text-center">
-                                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-black ${
-                                      isComplete 
-                                        ? 'bg-emerald-50 text-emerald-700' 
-                                        : 'bg-rose-50 text-rose-700 animate-pulse'
-                                    }`}>
-                                      {isComplete ? '✅ Completo' : '⚠️ Dados em Falta'}
-                                    </span>
-                                  </td>
-                                  <td className="px-6 py-4 text-right sticky right-0 bg-white dark:bg-slate-900 z-10">
-                                    <div className="flex gap-2 justify-end">
-                                      {!isComplete && (
-                                        <button
-                                          onClick={() => handleNotifyMissingData(s)}
-                                          className="bg-amber-50 hover:bg-amber-100 text-amber-700 font-bold text-[10px] px-2.5 py-1.5 rounded-lg flex items-center gap-1 cursor-pointer border border-amber-200 transition-all"
-                                          title="Enviar notificação do sistema para o Diretor de Turma solicitando atualização cadastral"
-                                        >
-                                          <Bell className="w-3.5 h-3.5" /> Notificar DT
-                                        </button>
-                                      )}
-                                      <button
-                                        onClick={() => {
-                                          setSelectedProcessStudent(s);
-                                          setDossierForm({
-                                            documento_identificacao: s.documento_identificacao || '',
-                                            nome_pai: s.nome_pai || '',
-                                            nome_mae: s.nome_mae || '',
-                                            morada: s.morada || ''
-                                          });
-                                          setIsProcessPanelOpen(true);
-                                        }}
-                                        className="bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-[10px] px-2.5 py-1.5 rounded-lg flex items-center gap-1 cursor-pointer transition-all shadow-xs"
-                                      >
-                                        <FolderOpen className="w-3.5 h-3.5" /> Abrir Dossier
-                                      </button>
-                                    </div>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-
-                            {students.length === 0 && (
-                              <tr>
-                                <td colSpan={5} className="text-center py-10 text-slate-400">
-                                  Nenhum aluno registrado encontrado para exibição.
-                                </td>
-                              </tr>
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-
-                  {processTabSegment === 'workflow' && (
-                    <div className="space-y-6">
-                      <div className="flex justify-between items-center">
-                        <p className="text-xs text-slate-500 font-medium">Fluxo de solicitações de transferência, matrículas e suspensões acadêmicas.</p>
-                        {hasPermission('processos', 'criar') && (
-                          <button 
-                            onClick={() => {
-                              setEditingItem(null);
-                              setProcessoForm({ estudante_id: students[0]?.id || '', tipo: 'Matrícula', status: 'Solicitação', documentos: ['guia_academic.pdf'], observacao: '' });
-                              setModalType('processo');
-                              setIsModalOpen(true);
-                            }}
-                            className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1 cursor-pointer shadow-sm transition-colors"
-                          >
-                            <Plus className="w-4 h-4" /> Abrir Processo
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="space-y-4">
-                        {processos.map(p => {
-                          const est = students.find(s => s.id === p.estudante_id);
-                          const estUsr = tenantUsers.find(u => u.id === est?.user_id);
-                          return (
-                            <div key={p.id} className="p-4 rounded-xl border border-slate-150 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-50/40">
-                              <div>
-                                <div className="flex items-center gap-2">
-                                  <span className="bg-indigo-50 text-indigo-700 text-xs font-bold px-2 py-0.5 rounded">
-                                    {p.tipo}
-                                  </span>
-                                  <span className="text-xs font-bold text-slate-800">Estudante: {estUsr?.nome}</span>
-                                </div>
-                                <p className="text-xs text-slate-500 mt-2">📝 {p.observacao || 'Nenhuma observação informada.'}</p>
-                                <div className="flex gap-2 flex-wrap mt-3">
-                                  {p.documentos.map(docu => (
-                                    <span key={docu} className="text-[10px] bg-white border border-slate-200 px-2 py-1 rounded text-slate-500 flex items-center gap-1">
-                                      <Download className="w-3 h-3" /> {docu}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-
-                              <div className="flex items-center gap-3 w-full md:w-auto justify-between border-t md:border-none pt-3 md:pt-0">
-                                <div>
-                                  <p className="text-[10px] text-slate-400 font-mono">Workflow Status</p>
-                                  <span className={`inline-block text-xs font-bold mt-1 px-2.5 py-0.5 rounded-full ${
-                                    p.status === 'Concluído' || p.status === 'Aprovado' ? 'bg-emerald-50 text-emerald-700' :
-                                    p.status === 'Rejeitado' ? 'bg-rose-50 text-rose-700' :
-                                    'bg-amber-50 text-amber-700'
-                                  }`}>
-                                    {p.status}
-                                  </span>
-                                </div>
-
-                                {hasPermission('processos', 'editar') && (
-                                  <button 
-                                    onClick={() => {
-                                      setEditingItem(p);
-                                      setProcessoForm({
-                                        estudante_id: p.estudante_id,
-                                        tipo: p.tipo,
-                                        status: p.status,
-                                        documentos: p.documentos,
-                                        observacao: p.observacao || ''
-                                      });
-                                      setModalType('processo');
-                                      setIsModalOpen(true);
-                                    }}
-                                    className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-2.5 py-1.5 rounded text-xs font-semibold flex items-center gap-1 cursor-pointer"
-                                  >
-                                    Analisar Workflow
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-
-                        {processos.length === 0 && (
-                          <div className="text-center py-10 text-slate-400">
-                            Nenhum processo em andamento encontrado.
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
+              !hasPermission('processos') ? renderRestrictedAccess('Processos Individuais') : (
+                <ProcessoIndividualModule
+                  students={students}
+                  teachers={teachers}
+                  processosAlunos={processos}
+                  processosDocentes={rawProcessosDocentes}
+                  tenantUsers={tenantUsers}
+                  turmas={turmas}
+                  schools={schools}
+                  currentUserRole={currentUserRole}
+                  loggedInUser={loggedInUser}
+                  hasPermission={hasPermission}
+                  onOpenStudentDossier={(student) => {
+                    setSelectedProcessStudent(student);
+                    setDossierForm({
+                      documento_identificacao: student.documento_identificacao || '',
+                      nome_pai: student.nome_pai || '',
+                      nome_mae: student.nome_mae || '',
+                      morada: student.morada || ''
+                    });
+                    setIsProcessPanelOpen(true);
+                  }}
+                  onNotifyStudentMissingData={handleNotifyMissingData}
+                  onOpenStudentProcessModal={(processo) => {
+                    setEditingItem(processo || null);
+                    setProcessoForm(
+                      processo
+                        ? {
+                            estudante_id: processo.estudante_id,
+                            tipo: processo.tipo,
+                            status: processo.status,
+                            documentos: processo.documentos || [],
+                            observacao: processo.observacao || ''
+                          }
+                        : {
+                            estudante_id: students[0]?.id || '',
+                            tipo: 'Matrícula',
+                            status: 'Solicitação',
+                            documentos: ['guia_academic.pdf'],
+                            observacao: ''
+                          }
+                    );
+                    setModalType('processo');
+                    setIsModalOpen(true);
+                  }}
+                  onSaveProcessoDocente={async (procData) => {
+                    await handleSaveProcessoDocente(procData, !!procData.id);
+                  }}
+                  onUpdateDocenteDossier={handleUpdateDocenteDossier}
+                  onNotifyTeacherMissingData={handleNotifyTeacherMissingData}
+                  onRefreshData={() => handleManualRefresh('Processos')}
+                />
               )
             )}
 
@@ -13146,6 +13225,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             <table className="w-full text-left text-slate-700 text-xs">
                               <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] tracking-wider border-b border-slate-100">
                                 <tr>
+                                  <th className="px-5 py-3">Data</th>
                                   <th className="px-5 py-3">Tipo / Nome</th>
                                   <th className="px-5 py-3">Identificação</th>
                                   <th className="px-5 py-3">Escola / Polo</th>
@@ -13158,7 +13238,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               <tbody className="divide-y divide-slate-100">
                                 {paginatedAbsentees.length === 0 ? (
                                   <tr>
-                                    <td colSpan={7} className="text-center py-10 text-slate-400 font-medium italic">
+                                    <td colSpan={8} className="text-center py-10 text-slate-400 font-medium italic">
                                       Nenhum aluno ou docente ausente neste turno / filtro de agenda!
                                     </td>
                                   </tr>
@@ -13171,9 +13251,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     const logTime = itemLog?.timestamp ? new Date(itemLog.timestamp).getTime() : new Date().getTime();
                                     const hoursElapsed = (Date.now() - logTime) / (1000 * 60 * 60);
                                     const isWithin72h = hoursElapsed <= 72;
+                                    const formattedData = item.data 
+                                      ? new Date(item.data + 'T12:00:00').toLocaleDateString('pt-PT')
+                                      : (itemLog?.timestamp ? new Date(itemLog.timestamp).toLocaleDateString('pt-PT') : (assiduidadeDateStart ? new Date(assiduidadeDateStart + 'T12:00:00').toLocaleDateString('pt-PT') : new Date().toLocaleDateString('pt-PT')));
 
                                     return (
                                       <tr key={`absentee-${item.id || item.registro_id || idx}-${idx}`} className="hover:bg-slate-50/60 transition-colors">
+                                        <td className="px-5 py-3 font-semibold text-slate-700 whitespace-nowrap">
+                                          <span className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded font-mono text-[11px] text-slate-650">
+                                            {formattedData}
+                                          </span>
+                                        </td>
                                         <td className="px-5 py-3">
                                           <div className="flex items-center gap-2">
                                             <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold uppercase ${
@@ -13302,6 +13390,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             <table className="w-full text-left text-slate-700 text-xs">
                               <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] tracking-wider border-b border-slate-100">
                                 <tr>
+                                  <th className="px-5 py-3">Data</th>
                                   <th className="px-5 py-3">Aluno</th>
                                   <th className="px-5 py-3">Matrícula</th>
                                   <th className="px-5 py-3">Turma</th>
@@ -13314,7 +13403,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               <tbody className="divide-y divide-slate-100">
                                 {paginatedStudents.length === 0 ? (
                                   <tr>
-                                    <td colSpan={7} className="text-center py-10 text-slate-400 font-medium italic">
+                                    <td colSpan={8} className="text-center py-10 text-slate-400 font-medium italic">
                                       Nenhum aluno agendado para o turno ou filtros selecionados.
                                     </td>
                                   </tr>
@@ -13326,9 +13415,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     // Check check-in status
                                     const studentLogs = filteredAssiduidadeLogs.filter(l => l.tipo === 'estudante' && l.registro_id === student.id);
                                     const activeLog = studentLogs[0]; // Active log if exists
+                                    const studentRowData = activeLog?.timestamp
+                                      ? new Date(activeLog.timestamp).toLocaleDateString('pt-PT')
+                                      : (assocClass?.data ? new Date(assocClass.data + 'T12:00:00').toLocaleDateString('pt-PT') : (assiduidadeDateStart ? new Date(assiduidadeDateStart + 'T12:00:00').toLocaleDateString('pt-PT') : new Date().toLocaleDateString('pt-PT')));
 
                                     return (
                                       <tr key={`scheduled-student-${student.id || idx}-${idx}`} className="hover:bg-slate-50/60 transition-colors">
+                                        <td className="px-5 py-3 font-semibold text-slate-700 whitespace-nowrap">
+                                          <span className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded font-mono text-[11px] text-slate-650">
+                                            {studentRowData}
+                                          </span>
+                                        </td>
                                         <td className="px-5 py-3 font-bold text-slate-800">{student.nome}</td>
                                         <td className="px-5 py-3 font-mono">{student.numero_matricula || 'N/D'}</td>
                                         <td className="px-5 py-3 text-slate-500">{assocTurma?.nome || 'N/D'}</td>
@@ -13429,6 +13526,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             <table className="w-full text-left text-slate-700 text-xs">
                               <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] tracking-wider border-b border-slate-100">
                                 <tr>
+                                  <th className="px-5 py-3">Data</th>
                                   <th className="px-5 py-3">Docente</th>
                                   <th className="px-5 py-3">Registro Docente</th>
                                   <th className="px-5 py-3">Especialidade / Escola</th>
@@ -13441,7 +13539,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               <tbody className="divide-y divide-slate-100">
                                 {paginatedTeachers.length === 0 ? (
                                   <tr>
-                                    <td colSpan={7} className="text-center py-10 text-slate-400 font-medium italic">
+                                    <td colSpan={8} className="text-center py-10 text-slate-400 font-medium italic">
                                       Nenhum docente agendado para o turno ou filtros selecionados.
                                     </td>
                                   </tr>
@@ -13452,9 +13550,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     // Check check-in status
                                     const teacherLogs = filteredAssiduidadeLogs.filter(l => l.tipo === 'docente' && l.registro_id === teacher.id);
                                     const activeLog = teacherLogs[0]; // Active log if exists
+                                    const teacherRowData = activeLog?.timestamp
+                                      ? new Date(activeLog.timestamp).toLocaleDateString('pt-PT')
+                                      : (assocClass?.data ? new Date(assocClass.data + 'T12:00:00').toLocaleDateString('pt-PT') : (assiduidadeDateStart ? new Date(assiduidadeDateStart + 'T12:00:00').toLocaleDateString('pt-PT') : new Date().toLocaleDateString('pt-PT')));
 
                                     return (
                                       <tr key={`scheduled-teacher-${teacher.id || idx}-${idx}`} className="hover:bg-slate-50/60 transition-colors">
+                                        <td className="px-5 py-3 font-semibold text-slate-700 whitespace-nowrap">
+                                          <span className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded font-mono text-[11px] text-slate-650">
+                                            {teacherRowData}
+                                          </span>
+                                        </td>
                                         <td className="px-5 py-3 font-bold text-slate-800">{teacher.nome}</td>
                                         <td className="px-5 py-3 font-mono">{teacher.numero_registro || 'N/D'}</td>
                                         <td className="px-5 py-3 text-slate-500">
@@ -16795,6 +16901,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     ? 'Detalhes da Instituição de Ensino' 
                     : modalType === 'horario_aula'
                     ? `${editingItem ? 'Editar Horário de Aula' : 'Novo Agendamento de Horário'}`
+                    : modalType === 'agendar_exame'
+                    ? `${editingItem ? 'Editar Exame / Avaliação' : 'Agendar Exame / Avaliação'}`
                     : modalType === 'feriado'
                     ? `${editingItem ? 'Editar Feriado' : 'Novo Feriado Nacionais/Local'}`
                     : modalType === 'ferias'
@@ -18843,6 +18951,151 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 </>
               )}
 
+              {/* AGENDAR EXAME / AVALIACAO FORM */}
+              {modalType === 'agendar_exame' && (
+                <>
+                  <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 space-y-1">
+                    <p className="font-bold flex items-center gap-1.5">
+                      <span>📝</span> Agendamento de Exames & Avaliações
+                    </p>
+                    <p className="text-[11px] text-amber-800/90 font-medium">
+                      O agendamento será exibido com destaque no Calendário da turma e sincronizado com o cronograma acadêmico.
+                    </p>
+                  </div>
+
+                  <div>
+                    <SearchableDropdown
+                      label="Turma Destino"
+                      options={turmas.map(t => ({ value: t.id, label: `${t.nome} (${t.turno || 'Geral'})` }))}
+                      value={exameForm.turma_id}
+                      onChange={(val) => {
+                        const selTurma = turmas.find(t => t.id === val);
+                        setExameForm({ 
+                          ...exameForm, 
+                          turma_id: val,
+                          escola_id: selTurma?.escola_id || exameForm.escola_id
+                        });
+                      }}
+                      placeholder="-- Selecionar Turma --"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Tipo de Avaliação</label>
+                      <select
+                        value={exameForm.tipo}
+                        onChange={(e) => setExameForm({ ...exameForm, tipo: e.target.value as any })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      >
+                        <option value="Exame Normal">📝 Exame Normal</option>
+                        <option value="Exame Recurso">🔄 Exame de Recurso</option>
+                        <option value="Exame Extraordinário">⚡ Exame Extraordinário</option>
+                        <option value="Avaliação Contínua">📊 Avaliação Contínua (ACS/ACP)</option>
+                        <option value="Teste Escrito">📑 Teste Escrito / Prova</option>
+                        <option value="Trabalho Prático">🔬 Trabalho Prático / Defesa</option>
+                        <option value="Reavaliação">🎯 Reavaliação</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Disciplina / Matéria</label>
+                      <input 
+                        type="text"
+                        required
+                        placeholder="Ex: Matemática, Física, Português"
+                        value={exameForm.disciplina_nome}
+                        onChange={(e) => setExameForm({ ...exameForm, disciplina_nome: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <SearchableDropdown
+                        label="Docente / Vigilante"
+                        options={teachers.map(t => ({ value: t.id, label: t.nome }))}
+                        value={exameForm.docente_id}
+                        onChange={(val) => {
+                          const tea = teachers.find(t => t.id === val);
+                          setExameForm({ ...exameForm, docente_id: val, docente_nome: tea?.nome || '' });
+                        }}
+                        placeholder="-- Selecionar Docente --"
+                      />
+                    </div>
+
+                    <div>
+                      <SearchableDropdown
+                        label="Sala de Exame"
+                        options={rawSalas.length > 0 ? rawSalas.map(s => ({ value: s.nome, label: `${s.nome} (Cap: ${s.capacidade || 30})` })) : [{ value: 'Sala 01', label: 'Sala 01' }, { value: 'Sala 02', label: 'Sala 02' }, { value: 'Anfiteatro', label: 'Anfiteatro' }]}
+                        value={exameForm.sala}
+                        onChange={(val) => setExameForm({ ...exameForm, sala: val })}
+                        placeholder="-- Selecionar Sala --"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Data</label>
+                      <input 
+                        type="date"
+                        required
+                        value={exameForm.data}
+                        onChange={(e) => setExameForm({ ...exameForm, data: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs font-semibold text-slate-800"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Hora Início</label>
+                      <input 
+                        type="time"
+                        required
+                        value={exameForm.hora_inicio}
+                        onChange={(e) => setExameForm({ ...exameForm, hora_inicio: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs font-semibold text-slate-800"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Hora Fim</label>
+                      <input 
+                        type="time"
+                        required
+                        value={exameForm.hora_fim}
+                        onChange={(e) => setExameForm({ ...exameForm, hora_fim: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs font-semibold text-slate-800"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Peso na Nota Final (%)</label>
+                    <input 
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={exameForm.peso_nota || 100}
+                      onChange={(e) => setExameForm({ ...exameForm, peso_nota: Number(e.target.value) })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold text-slate-800"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Instruções / Observações para Alunos</label>
+                    <textarea 
+                      rows={2}
+                      placeholder="Ex: Trazer calculadora científica, documento de identificação e caneta azul/preta..."
+                      value={exameForm.observacoes || ''}
+                      onChange={(e) => setExameForm({ ...exameForm, observacoes: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-800"
+                    />
+                  </div>
+                </>
+              )}
+
               <div className="flex gap-2 justify-end pt-4 border-t border-slate-100">
                 <button 
                   type="button"
@@ -19298,6 +19551,20 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           </div>
         </div>
       )}
+
+      {/* MODAL FORMULÁRIO DO DOCENTE (NOVO/EDIÇÃO) */}
+      <DocenteFormModal
+        isOpen={isDocenteModalOpen}
+        onClose={() => {
+          setIsDocenteModalOpen(false);
+          setEditingDocente(null);
+        }}
+        onSave={handleSaveDocente}
+        editingDocente={editingDocente}
+        schools={schools}
+        tenantUsers={tenantUsers}
+        isSaving={isSaving}
+      />
 
       {isCookiePolicyOpen && (
         <CookiePolicyModal onClose={() => setIsCookiePolicyOpen(false)} />
