@@ -7181,7 +7181,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           {hasPermission('biblioteca') && renderMenuItem('biblioteca', 'Biblioteca Digital', <Library className="w-4.5 h-4.5" />)}
           
           {plan?.modulos_permitidos?.includes('processo') && hasPermission('processos') && (
-            renderMenuItem('processos', 'Processo do Aluno', <FolderOpen className="w-4.5 h-4.5" />)
+            renderMenuItem('processos', 'Processo Individual', <FolderOpen className="w-4.5 h-4.5" />)
           )}
 
           {renderGroupHeader('Comunicação')}
@@ -11312,6 +11312,241 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           </div>
                         </div>
                       )}
+
+                      {calendarSubTab === 'exames' && (
+                        <div className="space-y-4">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                            <div>
+                              <h4 className="font-bold text-slate-800 text-sm">Cronograma de Exames & Avaliações</h4>
+                              <p className="text-[11px] text-slate-400">Consulte, pesquise e agende datas oficiais de exames, provas e avaliações contínuas.</p>
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {hasPermission('disciplinas', 'criar') && (
+                                <button
+                                  id="btn_novo_agendamento_exame_tab"
+                                  onClick={() => {
+                                    setEditingItem(null);
+                                    setExameForm({
+                                      turma_id: turmas[0]?.id || '',
+                                      disciplina_id: '',
+                                      disciplina_nome: '',
+                                      docente_id: teachers[0]?.id || '',
+                                      docente_nome: teachers[0]?.nome || '',
+                                      tipo: 'Exame Normal',
+                                      data: new Date().toISOString().split('T')[0],
+                                      hora_inicio: '08:00',
+                                      hora_fim: '10:00',
+                                      sala: rawSalas[0]?.nome || 'Sala 01',
+                                      peso_nota: 100,
+                                      observacoes: '',
+                                      escola_id: turmas[0]?.escola_id || schools[0]?.id || ''
+                                    });
+                                    setModalType('agendar_exame');
+                                    setIsModalOpen(true);
+                                  }}
+                                  className="bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs py-2 px-3.5 rounded-xl flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                                >
+                                  <Plus className="w-3.5 h-3.5" /> Agendar Exame / Avaliação
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Filters Bar */}
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50/70 p-3 rounded-xl border border-slate-200/60">
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Filtrar por Turma</label>
+                              <select
+                                value={exameTurmaFilter}
+                                onChange={(e) => setExameTurmaFilter(e.target.value)}
+                                className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                              >
+                                <option value="todos">Todas as Turmas</option>
+                                {turmas.map(t => (
+                                  <option key={t.id} value={t.id}>{t.nome}</option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Tipo de Avaliação</label>
+                              <select
+                                value={exameTipoFilter}
+                                onChange={(e) => setExameTipoFilter(e.target.value)}
+                                className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                              >
+                                <option value="todos">Todos os Tipos</option>
+                                <option value="Exame Normal">📝 Exame Normal</option>
+                                <option value="Exame Recurso">🔄 Exame Recurso</option>
+                                <option value="Exame Extraordinário">⚡ Exame Extraordinário</option>
+                                <option value="Avaliação Contínua">📊 Avaliação Contínua</option>
+                                <option value="Teste Escrito">📑 Teste Escrito</option>
+                                <option value="Trabalho Prático">🔬 Trabalho Prático</option>
+                                <option value="Reavaliação">🎯 Reavaliação</option>
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Buscar Disciplina / Docente</label>
+                              <div className="relative">
+                                <input
+                                  type="text"
+                                  placeholder="Buscar..."
+                                  value={exameSearchTerm}
+                                  onChange={(e) => setExameSearchTerm(e.target.value)}
+                                  className="w-full bg-white border border-slate-200 rounded-lg pl-8 pr-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                />
+                                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Table of Scheduled Exams */}
+                          <div className="overflow-x-auto border border-slate-200/80 rounded-xl bg-white shadow-2xs">
+                            <table className="w-full text-left border-collapse text-xs">
+                              <thead>
+                                <tr className="bg-slate-50/80 text-slate-600 font-bold border-b border-slate-200 text-[11px] uppercase tracking-wider">
+                                  <th className="p-3.5">Data & Horário</th>
+                                  <th className="p-3.5">Turma</th>
+                                  <th className="p-3.5">Disciplina</th>
+                                  <th className="p-3.5">Tipo</th>
+                                  <th className="p-3.5">Docente / Vigilante</th>
+                                  <th className="p-3.5">Sala</th>
+                                  <th className="p-3.5">Peso</th>
+                                  <th className="p-3.5">Observações</th>
+                                  <th className="p-3.5 text-center sticky right-0 bg-slate-50 z-10">Ações</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {(() => {
+                                  const filteredExames = rawExames.filter(e => {
+                                    if (exameTurmaFilter !== 'todos' && e.turma_id !== exameTurmaFilter) return false;
+                                    if (exameTipoFilter !== 'todos' && e.tipo !== exameTipoFilter) return false;
+                                    if (exameSearchTerm.trim()) {
+                                      const term = exameSearchTerm.toLowerCase();
+                                      const matchDisc = (e.disciplina_nome || '').toLowerCase().includes(term);
+                                      const matchDoc = (e.docente_nome || '').toLowerCase().includes(term);
+                                      const matchTurma = (e.turma_nome || '').toLowerCase().includes(term);
+                                      if (!matchDisc && !matchDoc && !matchTurma) return false;
+                                    }
+                                    return true;
+                                  }).sort((a, b) => (a.data || '').localeCompare(b.data || ''));
+
+                                  if (filteredExames.length === 0) {
+                                    return (
+                                      <tr>
+                                        <td colSpan={9} className="p-8 text-center text-slate-400 italic">
+                                          Nenhum exame ou avaliação agendado encontrado para os filtros selecionados.
+                                        </td>
+                                      </tr>
+                                    );
+                                  }
+
+                                  return filteredExames.map((ex) => {
+                                    const isEditable = hasPermission('disciplinas', 'editar') || currentUserRole === 'admin' || currentUserRole === 'director';
+                                    const isDeletable = hasPermission('disciplinas', 'excluir') || currentUserRole === 'admin' || currentUserRole === 'director';
+                                    const turmaObj = turmas.find(t => t.id === ex.turma_id);
+
+                                    let tipoColor = "bg-amber-50 text-amber-800 border-amber-200";
+                                    if (ex.tipo?.includes('Recurso')) tipoColor = "bg-rose-50 text-rose-800 border-rose-200";
+                                    if (ex.tipo?.includes('Extraordinário')) tipoColor = "bg-purple-50 text-purple-800 border-purple-200";
+                                    if (ex.tipo?.includes('Contínua') || ex.tipo?.includes('Teste')) tipoColor = "bg-indigo-50 text-indigo-800 border-indigo-200";
+
+                                    return (
+                                      <tr key={ex.id} className="hover:bg-slate-50/50 transition-colors">
+                                        <td className="p-3.5 font-semibold text-slate-850 whitespace-nowrap">
+                                          <div className="flex flex-col">
+                                            <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                                              <span>📅</span> {new Date(ex.data + 'T12:00:00').toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                                            </span>
+                                            <span className="text-[10px] font-mono text-slate-500 mt-0.5">
+                                              ⏰ {ex.hora_inicio} - {ex.hora_fim}
+                                            </span>
+                                          </div>
+                                        </td>
+                                        <td className="p-3.5 font-bold text-slate-700">
+                                          {turmaObj?.nome || ex.turma_nome || 'Turma Geral'}
+                                        </td>
+                                        <td className="p-3.5 font-extrabold text-indigo-900">
+                                          {ex.disciplina_nome}
+                                        </td>
+                                        <td className="p-3.5">
+                                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${tipoColor}`}>
+                                            {ex.tipo || 'Exame Normal'}
+                                          </span>
+                                        </td>
+                                        <td className="p-3.5 text-slate-700 font-medium">
+                                          🧑‍🏫 {ex.docente_nome || teachers.find(t => t.id === ex.docente_id)?.nome || '-'}
+                                        </td>
+                                        <td className="p-3.5 font-mono font-bold text-slate-600">
+                                          🚪 {ex.sala || '-'}
+                                        </td>
+                                        <td className="p-3.5 font-bold text-slate-700">
+                                          {ex.peso_nota ? `${ex.peso_nota}%` : '100%'}
+                                        </td>
+                                        <td className="p-3.5 text-slate-500 font-sans max-w-xs truncate" title={ex.observacoes}>
+                                          {ex.observacoes || '-'}
+                                        </td>
+                                        <td className="p-3.5 text-center sticky right-0 bg-white z-10">
+                                          <div className="flex items-center justify-center gap-1.5">
+                                            {isEditable && (
+                                              <button
+                                                onClick={() => {
+                                                  setEditingItem(ex);
+                                                  setExameForm({
+                                                    turma_id: ex.turma_id || '',
+                                                    disciplina_id: ex.disciplina_id || '',
+                                                    disciplina_nome: ex.disciplina_nome || '',
+                                                    docente_id: ex.docente_id || '',
+                                                    docente_nome: ex.docente_nome || '',
+                                                    tipo: ex.tipo || 'Exame Normal',
+                                                    data: ex.data || new Date().toISOString().split('T')[0],
+                                                    hora_inicio: ex.hora_inicio || '08:00',
+                                                    hora_fim: ex.hora_fim || '10:00',
+                                                    sala: ex.sala || 'Sala 01',
+                                                    peso_nota: ex.peso_nota || 100,
+                                                    observacoes: ex.observacoes || '',
+                                                    escola_id: ex.escola_id || ''
+                                                  });
+                                                  setModalType('agendar_exame');
+                                                  setIsModalOpen(true);
+                                                }}
+                                                className="p-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 rounded-lg transition-colors cursor-pointer"
+                                                title="Editar Agendamento"
+                                              >
+                                                <Edit className="w-3.5 h-3.5" />
+                                              </button>
+                                            )}
+                                            {isDeletable && (
+                                              <button
+                                                onClick={async () => {
+                                                  if (confirm(`Tem certeza que deseja excluir o agendamento de exame de "${ex.disciplina_nome}"?`)) {
+                                                    try {
+                                                      await deleteDoc(doc(db, 'exames_agendamentos', ex.id));
+                                                      setExames(prev => prev.filter(item => item.id !== ex.id));
+                                                      showSystemNotification("Agendamento de exame excluído com sucesso!", "sucesso");
+                                                    } catch (err: any) {
+                                                      showSystemNotification(`Erro ao excluir agendamento: ${err.message}`, "erro");
+                                                    }
+                                                  }
+                                                }}
+                                                className="p-1.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 rounded-lg transition-colors cursor-pointer"
+                                                title="Excluir Agendamento"
+                                              >
+                                                <Trash2 className="w-3.5 h-3.5" />
+                                              </button>
+                                            )}
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    );
+                                  });
+                                })()}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {calendarSubTab === 'grade' && (
@@ -11496,8 +11731,60 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                         );
                                       }
 
-                                      // Check if vacant slot has conflict
+                                      // 3. Check Scheduled Exam for this day/slot
                                       const [partsStart, partsEnd] = timeSlot.split(' - ').map(s => s?.trim());
+                                      const exameInSlot = rawExames.find(e => {
+                                        if (e.turma_id && e.turma_id !== activeCalendarTurma) return false;
+                                        if (e.data !== currentDateStr) return false;
+                                        if (!partsStart || !partsEnd) return false;
+                                        const eStart = parseTimeToMinutes(e.hora_inicio);
+                                        const eEnd = parseTimeToMinutes(e.hora_fim);
+                                        const sStart = parseTimeToMinutes(partsStart);
+                                        const sEnd = parseTimeToMinutes(partsEnd);
+                                        return (eStart < sEnd && eEnd > sStart) || e.hora_inicio === partsStart;
+                                      });
+
+                                      if (exameInSlot) {
+                                        return (
+                                          <td key={dayIdx} className="p-2.5 border-r border-slate-150 last:border-r-0 text-center bg-amber-50/30">
+                                            <div
+                                              onClick={() => {
+                                                setEditingItem(exameInSlot);
+                                                setExameForm({
+                                                  turma_id: exameInSlot.turma_id || '',
+                                                  disciplina_id: exameInSlot.disciplina_id || '',
+                                                  disciplina_nome: exameInSlot.disciplina_nome || '',
+                                                  docente_id: exameInSlot.docente_id || '',
+                                                  docente_nome: exameInSlot.docente_nome || '',
+                                                  tipo: exameInSlot.tipo || 'Exame Normal',
+                                                  data: exameInSlot.data || currentDateStr,
+                                                  hora_inicio: exameInSlot.hora_inicio || '08:00',
+                                                  hora_fim: exameInSlot.hora_fim || '10:00',
+                                                  sala: exameInSlot.sala || 'Sala 01',
+                                                  peso_nota: exameInSlot.peso_nota || 100,
+                                                  observacoes: exameInSlot.observacoes || '',
+                                                  escola_id: exameInSlot.escola_id || ''
+                                                });
+                                                setModalType('agendar_exame');
+                                                setIsModalOpen(true);
+                                              }}
+                                              className="bg-amber-100/90 border-2 border-amber-400 hover:border-amber-500 hover:bg-amber-200/80 rounded-xl p-2.5 text-left shadow-xs space-y-1 cursor-pointer transition-all hover:shadow-md active:scale-98 text-amber-950"
+                                            >
+                                              <span className="inline-flex items-center gap-1 text-[8.5px] font-extrabold bg-amber-200 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-full">
+                                                📝 {exameInSlot.tipo || 'EXAME'}
+                                              </span>
+                                              <p className="font-extrabold text-xs truncate text-amber-950">{exameInSlot.disciplina_nome}</p>
+                                              <p className="text-[9.5px] truncate font-semibold text-amber-800">🧑‍🏫 {exameInSlot.docente_nome || 'Docente'}</p>
+                                              <div className="flex items-center justify-between text-[9px] font-mono text-amber-700 font-bold pt-0.5">
+                                                <span>🚪 {exameInSlot.sala || 'Sala 01'}</span>
+                                                <span>⏰ {exameInSlot.hora_inicio}-{exameInSlot.hora_fim}</span>
+                                              </div>
+                                            </div>
+                                          </td>
+                                        );
+                                      }
+
+                                      // Check if vacant slot has conflict
                                       const slotConflict = (!disc && partsStart && partsEnd) ? checkScheduleConflictDetails(
                                         partsStart,
                                         partsEnd,
@@ -12532,6 +12819,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     detalhe: `Turma: ${assocTurma?.nome || 'Geral'}`,
                     aula: assocClass?.nome || 'Aula Programada',
                     horario: assocClass?.horario || 'Turno Regular',
+                    data: studentLog?.data || (studentLog?.timestamp ? studentLog.timestamp.split('T')[0] : null) || assocClass?.data || assiduidadeDateStart || new Date().toISOString().split('T')[0],
                     rawItem: s,
                     itemLog: studentLog
                   };
@@ -12553,6 +12841,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     detalhe: `Docente de ${t.especialidade || 'Geral'}`,
                     aula: assocClass?.nome || 'Aula Programada',
                     horario: assocClass?.horario || 'Turno Regular',
+                    data: teacherLog?.data || (teacherLog?.timestamp ? teacherLog.timestamp.split('T')[0] : null) || assocClass?.data || assiduidadeDateStart || new Date().toISOString().split('T')[0],
                     rawItem: t,
                     itemLog: teacherLog
                   };
@@ -12578,6 +12867,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       detalhe: log.turma_nome ? `Turma: ${log.turma_nome}` : (assocTurma ? `Turma: ${assocTurma.nome}` : 'Ausência Registrada'),
                       aula: 'Aula Registrada',
                       horario: log.timestamp ? new Date(log.timestamp).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' }) : 'Dia Todo',
+                      data: log.data || (log.timestamp ? log.timestamp.split('T')[0] : null) || assiduidadeDateStart || new Date().toISOString().split('T')[0],
                       rawItem: rawStudent || rawTeacher || log,
                       itemLog: log
                     };
@@ -12585,6 +12875,20 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 });
 
                 const combinedAbsentees: any[] = Object.values(absenteesObj);
+
+                const formatPtDate = (dateVal?: string) => {
+                  if (!dateVal) return new Date().toLocaleDateString('pt-PT');
+                  const pureDate = dateVal.includes('T') ? dateVal.split('T')[0] : dateVal;
+                  if (/^\d{4}-\d{2}-\d{2}$/.test(pureDate)) {
+                    const [y, m, d] = pureDate.split('-');
+                    return `${d}/${m}/${y}`;
+                  }
+                  try {
+                    const parsed = new Date(dateVal);
+                    if (!isNaN(parsed.getTime())) return parsed.toLocaleDateString('pt-PT');
+                  } catch (e) {}
+                  return pureDate;
+                };
 
                 // Play synth beep function
                 const playBeep = () => {
@@ -12697,6 +13001,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     turma_nome: tipo === 'estudante' ? (rawTurmas.find(t => t.id === item?.turma_id)?.nome || '') : '',
                     periodo: period || 'manha',
                     timestamp: now.toISOString(),
+                    data: dateStr,
                     status: status || 'presente',
                     tipo_registro: 'scan',
                     observacao: ''
@@ -12706,6 +13011,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     if (existingLog) {
                       await updateDoc(doc(db, 'assiduidade_logs', existingLog.id), {
                         status,
+                        data: dateStr,
                         timestamp: now.toISOString(),
                         tipo_registro: 'scan'
                       });
@@ -13251,14 +13557,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     const logTime = itemLog?.timestamp ? new Date(itemLog.timestamp).getTime() : new Date().getTime();
                                     const hoursElapsed = (Date.now() - logTime) / (1000 * 60 * 60);
                                     const isWithin72h = hoursElapsed <= 72;
-                                    const formattedData = item.data 
-                                      ? new Date(item.data + 'T12:00:00').toLocaleDateString('pt-PT')
-                                      : (itemLog?.timestamp ? new Date(itemLog.timestamp).toLocaleDateString('pt-PT') : (assiduidadeDateStart ? new Date(assiduidadeDateStart + 'T12:00:00').toLocaleDateString('pt-PT') : new Date().toLocaleDateString('pt-PT')));
+                                    const rawAbsenceDate = item.data || itemLog?.data || (itemLog?.timestamp ? itemLog.timestamp.split('T')[0] : null) || assiduidadeDateStart;
+                                    const formattedData = formatPtDate(rawAbsenceDate);
 
                                     return (
                                       <tr key={`absentee-${item.id || item.registro_id || idx}-${idx}`} className="hover:bg-slate-50/60 transition-colors">
                                         <td className="px-5 py-3 font-semibold text-slate-700 whitespace-nowrap">
-                                          <span className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded font-mono text-[11px] text-slate-650">
+                                          <span className="bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-md font-mono text-[11px] font-bold text-slate-700 dark:text-slate-200 inline-flex items-center gap-1.5 border border-slate-200/60 dark:border-slate-700">
+                                            <Calendar className="w-3 h-3 text-slate-400" />
                                             {formattedData}
                                           </span>
                                         </td>
@@ -13415,14 +13721,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     // Check check-in status
                                     const studentLogs = filteredAssiduidadeLogs.filter(l => l.tipo === 'estudante' && l.registro_id === student.id);
                                     const activeLog = studentLogs[0]; // Active log if exists
-                                    const studentRowData = activeLog?.timestamp
-                                      ? new Date(activeLog.timestamp).toLocaleDateString('pt-PT')
-                                      : (assocClass?.data ? new Date(assocClass.data + 'T12:00:00').toLocaleDateString('pt-PT') : (assiduidadeDateStart ? new Date(assiduidadeDateStart + 'T12:00:00').toLocaleDateString('pt-PT') : new Date().toLocaleDateString('pt-PT')));
+                                    const studentRawDate = activeLog?.data || (activeLog?.timestamp ? activeLog.timestamp.split('T')[0] : null) || assocClass?.data || assiduidadeDateStart;
+                                    const studentRowData = formatPtDate(studentRawDate);
 
                                     return (
                                       <tr key={`scheduled-student-${student.id || idx}-${idx}`} className="hover:bg-slate-50/60 transition-colors">
                                         <td className="px-5 py-3 font-semibold text-slate-700 whitespace-nowrap">
-                                          <span className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded font-mono text-[11px] text-slate-650">
+                                          <span className="bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-md font-mono text-[11px] font-bold text-slate-700 dark:text-slate-200 inline-flex items-center gap-1.5 border border-slate-200/60 dark:border-slate-700">
+                                            <Calendar className="w-3 h-3 text-slate-400" />
                                             {studentRowData}
                                           </span>
                                         </td>
@@ -13550,14 +13856,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     // Check check-in status
                                     const teacherLogs = filteredAssiduidadeLogs.filter(l => l.tipo === 'docente' && l.registro_id === teacher.id);
                                     const activeLog = teacherLogs[0]; // Active log if exists
-                                    const teacherRowData = activeLog?.timestamp
-                                      ? new Date(activeLog.timestamp).toLocaleDateString('pt-PT')
-                                      : (assocClass?.data ? new Date(assocClass.data + 'T12:00:00').toLocaleDateString('pt-PT') : (assiduidadeDateStart ? new Date(assiduidadeDateStart + 'T12:00:00').toLocaleDateString('pt-PT') : new Date().toLocaleDateString('pt-PT')));
+                                    const teacherRawDate = activeLog?.data || (activeLog?.timestamp ? activeLog.timestamp.split('T')[0] : null) || assocClass?.data || assiduidadeDateStart;
+                                    const teacherRowData = formatPtDate(teacherRawDate);
 
                                     return (
                                       <tr key={`scheduled-teacher-${teacher.id || idx}-${idx}`} className="hover:bg-slate-50/60 transition-colors">
                                         <td className="px-5 py-3 font-semibold text-slate-700 whitespace-nowrap">
-                                          <span className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded font-mono text-[11px] text-slate-650">
+                                          <span className="bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-md font-mono text-[11px] font-bold text-slate-700 dark:text-slate-200 inline-flex items-center gap-1.5 border border-slate-200/60 dark:border-slate-700">
+                                            <Calendar className="w-3 h-3 text-slate-400" />
                                             {teacherRowData}
                                           </span>
                                         </td>
@@ -18963,10 +19269,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     </p>
                   </div>
 
-                  <div>
+                    <div>
                     <SearchableDropdown
                       label="Turma Destino"
-                      options={turmas.map(t => ({ value: t.id, label: `${t.nome} (${t.turno || 'Geral'})` }))}
+                      options={turmas.map(t => ({ value: t.id, label: `${t.nome || 'Turma'} (${t.turno || 'Geral'})` }))}
                       value={exameForm.turma_id}
                       onChange={(val) => {
                         const selTurma = turmas.find(t => t.id === val);
@@ -19015,11 +19321,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     <div>
                       <SearchableDropdown
                         label="Docente / Vigilante"
-                        options={teachers.map(t => ({ value: t.id, label: t.nome }))}
+                        options={teachers.map(t => ({ value: t.id, label: t.nome || tenantUsers.find(u => u.id === t.user_id)?.nome || 'Docente' }))}
                         value={exameForm.docente_id}
                         onChange={(val) => {
                           const tea = teachers.find(t => t.id === val);
-                          setExameForm({ ...exameForm, docente_id: val, docente_nome: tea?.nome || '' });
+                          const usr = tenantUsers.find(u => u.id === tea?.user_id);
+                          setExameForm({ ...exameForm, docente_id: val, docente_nome: tea?.nome || usr?.nome || '' });
                         }}
                         placeholder="-- Selecionar Docente --"
                       />
@@ -19154,7 +19461,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 { id: 'calendario', label: 'Calendário & Horários', icon: <Calendar className="w-5 h-5 text-rose-500" />, allowed: hasPermission('calendario') },
                 { id: 'pauta_geral', label: 'Pauta Geral', icon: <Award className="w-5 h-5 text-yellow-500" />, allowed: hasPermission('pautas') },
                 { id: 'assiduidade', label: 'Controle de Assiduidade', icon: <Fingerprint className="w-5 h-5 text-indigo-500" />, allowed: hasPermission('assiduidade') },
-                { id: 'processos', label: 'Processo do Aluno', icon: <FolderOpen className="w-5 h-5 text-pink-500" />, allowed: plan?.modulos_permitidos?.includes('processo') && hasPermission('processos') },
+                { id: 'processos', label: 'Processo Individual', icon: <FolderOpen className="w-5 h-5 text-pink-500" />, allowed: plan?.modulos_permitidos?.includes('processo') && hasPermission('processos') },
                 { id: 'usuarios', label: 'Utilizadores', icon: <UserPlus className="w-5 h-5 text-teal-500" />, allowed: hasPermission('utilizadores') },
                 { id: 'permissoes_globais', label: 'Permissões Globais', icon: <ShieldCheck className="w-5 h-5 text-indigo-500" />, allowed: currentUserRole === 'admin' || currentUserRole === 'director' || hasPermission('utilizadores') },
                 { id: 'configuracao', label: 'Configurações', icon: <Sliders className="w-5 h-5 text-slate-500" />, allowed: hasPermission('configuracoes') },

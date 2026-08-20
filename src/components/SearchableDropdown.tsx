@@ -46,11 +46,16 @@ export function SearchableDropdown({
     };
   }, []);
 
-  const selectedOption = options.find(opt => opt.value === value);
+  const safeOptions = Array.isArray(options) ? options.filter(Boolean) : [];
 
-  const filteredOptions = options.filter(opt =>
-    opt.label.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const selectedOption = safeOptions.find(opt => opt && String(opt.value) === String(value));
+
+  const filteredOptions = safeOptions.filter(opt => {
+    if (!opt) return false;
+    const labelStr = String(opt.label ?? opt.value ?? '');
+    const searchStr = String(searchTerm || '').toLowerCase();
+    return labelStr.toLowerCase().includes(searchStr);
+  });
 
   return (
     <div className="relative w-full text-left font-sans" ref={dropdownRef} id={id}>
@@ -69,7 +74,7 @@ export function SearchableDropdown({
         }`}
       >
         <span className={`truncate ${!selectedOption ? 'text-slate-400 font-normal' : ''}`}>
-          {selectedOption ? selectedOption.label : placeholder}
+          {selectedOption ? (selectedOption.label ?? selectedOption.value ?? '') : placeholder}
         </span>
         <div className="flex items-center gap-1.5">
           {selectedOption && !required && (

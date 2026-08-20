@@ -3119,7 +3119,7 @@ export default function SuperAdminPortal({
                                 calendario: 'Calendário & Horários',
                                 pauta: 'Notas (Pautas)',
                                 pautageral: 'Pauta Geral',
-                                processo: 'Processo do Aluno',
+                                processo: 'Processo Individual',
                                 configuracao: 'Configurações & Usuários',
                                 logs: 'Logs de Auditoria',
                                 analytics: 'Módulo de Análises'
@@ -4736,7 +4736,7 @@ export default function SuperAdminPortal({
                     { id: 'calendario', label: 'Calendário & Horários' },
                     { id: 'pauta', label: 'Lançamento de Notas (Pautas)' },
                     { id: 'pautageral', label: 'Pauta Geral' },
-                    { id: 'processo', label: 'Processo do Aluno' },
+                    { id: 'processo', label: 'Processo Individual' },
                     { id: 'configuracao', label: 'Configurações & Usuários' },
                     { id: 'logs', label: 'Módulo Logs de Auditoria' },
                     { id: 'analytics', label: 'Módulo de Análises & Analytics' }

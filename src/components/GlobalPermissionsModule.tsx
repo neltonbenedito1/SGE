@@ -68,7 +68,7 @@ export const SYSTEM_MODULES: SystemModuleInfo[] = [
   { key: 'pautas', label: 'Lançamento de Notas', category: 'Académico', description: 'Digitador de notas por disciplinas e trimestres' },
   { key: 'assiduidade', label: 'Controle de Assiduidade', category: 'Académico', description: 'Presenças, faltas e relatórios de assiduidade' },
   { key: 'biblioteca', label: 'Biblioteca Digital', category: 'Académico', description: 'Consultas de acervo e repositório de livros PDF' },
-  { key: 'processos', label: 'Processo do Aluno', category: 'Académico', description: 'Históricos, transferências e certidões' },
+  { key: 'processos', label: 'Processo Individual', category: 'Académico', description: 'Históricos, transferências e certidões' },
 
   { key: 'notificacoes', label: 'Notificações & Alertas', category: 'Comunicação', description: 'Envio de mensagens, avisos e comunicados' },
 

@@ -253,6 +253,7 @@ export interface Turma {
   capacidade_max: number;
   classe_escolar_id?: string;
   horario?: string;
+  turno?: string;
 }
 
 export interface Classe {
@@ -514,6 +515,9 @@ export interface PermissaoBiblioteca {
   escolas_permitidas?: string[];
   pode_avaliar?: boolean;
   pode_favoritar?: boolean;
+  pode_excluir?: boolean;
+  pode_adicionar?: boolean;
+  pode_editar?: boolean;
 }
 
 export interface HistoricoLeitura {
@@ -574,6 +578,7 @@ export interface AgendamentoExame {
   id: string;
   tenant_id: string;
   turma_id: string;
+  turma_nome?: string;
   disciplina_id?: string;
   disciplina_nome: string;
   docente_id?: string;
