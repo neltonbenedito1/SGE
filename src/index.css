@@ -446,8 +446,25 @@
   .text-slate-500, .text-slate-400 {
     color: var(--theme-text-muted) !important;
   }
-  .text-slate-300 {
-    color: var(--theme-text-disabled) !important;
+  .text-slate-300, .text-slate-200, .text-slate-100 {
+    color: var(--theme-text) !important;
+  }
+
+  /* Ensure colored accent text is high-contrast on light backgrounds */
+  .text-blue-400 {
+    color: #1D4ED8 !important;
+  }
+  .text-teal-400, .text-teal-300 {
+    color: #0F766E !important;
+  }
+  .text-emerald-400, .text-emerald-300 {
+    color: #047857 !important;
+  }
+  .text-amber-400, .text-amber-300 {
+    color: #B45309 !important;
+  }
+  .text-rose-400, .text-rose-300 {
+    color: #BE123C !important;
   }
 
   /* Links */

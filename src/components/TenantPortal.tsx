@@ -130,6 +130,9 @@ import {
   QrCode,
   Camera,
   Lock,
+  Unlock,
+  KeyRound,
+  EyeOff,
   CheckSquare,
   PauseCircle
 } from 'lucide-react';
@@ -2934,6 +2937,87 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     isOpen: boolean;
     action: 'apagar' | 'suspender' | 'restaurar' | null;
   }>({ isOpen: false, action: null });
+
+  // PASSWORD RESET SIDE DRAWER (SLIDE-OVER RIGHT TO LEFT) STATE
+  const [isResetPasswordDrawerOpen, setIsResetPasswordDrawerOpen] = useState(false);
+  const [resetPasswordTargetUser, setResetPasswordTargetUser] = useState<any>(null);
+  const [resetPasswordForm, setResetPasswordForm] = useState({
+    novaSenha: '',
+    confirmarSenha: '',
+    desbloquear: true,
+  });
+  const [resetPasswordShowNew, setResetPasswordShowNew] = useState(false);
+  const [resetPasswordShowConfirm, setResetPasswordShowConfirm] = useState(false);
+  const [resetPasswordLoading, setResetPasswordLoading] = useState(false);
+
+  const handleOpenResetPasswordDrawer = (user: any) => {
+    const isTargetAdmin = user.tipo === 'admin' || user.tipo === 'administrador' || user.tipo === 'superadmin' || user.role === 'admin';
+    setResetPasswordTargetUser(user);
+    setResetPasswordForm({
+      novaSenha: '',
+      confirmarSenha: '',
+      // Para o administrador, a caixa vem marcada por definição e não pode ser desmarcada.
+      // Para os outros utilizadores, vem marcada se ativo, ou true por padrão.
+      desbloquear: isTargetAdmin ? true : (user.ativo !== false),
+    });
+    setResetPasswordShowNew(false);
+    setResetPasswordShowConfirm(false);
+    setIsResetPasswordDrawerOpen(true);
+  };
+
+  const handleExecuteResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetPasswordTargetUser) return;
+
+    const isTargetAdmin = resetPasswordTargetUser.tipo === 'admin' || resetPasswordTargetUser.tipo === 'administrador' || resetPasswordTargetUser.tipo === 'superadmin' || resetPasswordTargetUser.role === 'admin';
+
+    if (!resetPasswordForm.novaSenha || resetPasswordForm.novaSenha.length < 6) {
+      showSystemNotification("A nova senha deve ter no mínimo 6 caracteres.", "erro");
+      return;
+    }
+
+    if (resetPasswordForm.novaSenha !== resetPasswordForm.confirmarSenha) {
+      showSystemNotification("As senhas digitadas não coincidem. Por favor, confirme a nova senha corretamente.", "erro");
+      return;
+    }
+
+    setResetPasswordLoading(true);
+    try {
+      const shouldBeActive = isTargetAdmin ? true : resetPasswordForm.desbloquear;
+
+      await setDoc(doc(db, 'users', resetPasswordTargetUser.id), {
+        senha_temporaria: resetPasswordForm.novaSenha,
+        senha: resetPasswordForm.novaSenha,
+        ativo: shouldBeActive,
+        requer_alteracao_senha: true,
+        updated_at: new Date().toISOString()
+      }, { merge: true });
+
+      // Sincronizar com Firebase Auth se configurado
+      if (resetPasswordTargetUser.email) {
+        try {
+          await registerUserInFirebaseAuth(resetPasswordTargetUser.email, resetPasswordForm.novaSenha);
+        } catch (authErr) {
+          console.warn("Sync with Firebase Auth:", authErr);
+        }
+      }
+
+      if (shouldBeActive) {
+        showSystemNotification(`Senha redefinida com sucesso para "${resetPasswordTargetUser.nome}"! Usuário desbloqueado e ativo.`, "sucesso");
+      } else {
+        showSystemNotification(`Senha redefinida para "${resetPasswordTargetUser.nome}". O usuário foi bloqueado. Será necessário redefinir a senha novamente para o desbloquear.`, "info");
+      }
+
+      setIsResetPasswordDrawerOpen(false);
+      setResetPasswordTargetUser(null);
+      loadTenantContext();
+    } catch (err: any) {
+      console.error("Erro ao redefinir senha:", err);
+      showSystemNotification("Erro ao redefinir senha: " + (err.message || "Falha na operação"), "erro");
+    } finally {
+      setResetPasswordLoading(false);
+    }
+  };
 
   // Dynamic Forms State
   const [provinciaForm, setProvinciaForm] = useState(() => getSavedFormDraft('draft_provincia', { nome: '', codigo: '' }));
@@ -12708,14 +12792,32 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 const activeTurmaIdsForAssiduidade = Array.from(new Set(activeClassesForAssiduidade.map(c => c.turma_id).filter(Boolean)));
                 const activeTeacherIdsForAssiduidade = Array.from(new Set(activeClassesForAssiduidade.map(c => c.docente_id).filter(Boolean)));
 
-                // Get scheduled Students
+                // Check if tolerance has expired for a given person/shift/school
+                const isToleranceExpiredForPerson = (schoolId: string, itemPeriod?: string) => {
+                  const todayStr = new Date().toISOString().split('T')[0];
+                  // If selected date is in the past, tolerance has already expired
+                  if (assiduidadeDateStart < todayStr) return true;
+                  // If selected date is in the future, tolerance has not started/expired yet
+                  if (assiduidadeDateStart > todayStr) return false;
+
+                  const targetSchool = rawSchools.find(s => s.id === schoolId) || rawSchools[0];
+                  const effPeriod = itemPeriod || assiduidadePeriodFilter;
+                  const tolStr = effPeriod === 'tarde'
+                    ? (targetSchool?.tolerancia_tarde || '12:15')
+                    : (effPeriod === 'noite' ? (targetSchool?.tolerancia_noite || '18:15') : (targetSchool?.tolerancia_manha || '07:15'));
+                  const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+                  const tolMinutes = timeToMinutes(tolStr);
+                  return nowMinutes > tolMinutes;
+                };
+
+                // Get scheduled Students (must have active scheduled class/agenda)
                 const scheduledStudents = rawStudents.filter(s => {
                   if (s.ativo === false) return false;
                   
-                  // Must belong to scheduled turmas if schedule exists for this period
-                  if (activeClassesForAssiduidade.length > 0 && activeTurmaIdsForAssiduidade.length > 0) {
-                    if (!activeTurmaIdsForAssiduidade.includes(s.turma_id || '')) return false;
-                  }
+                  // Must have a calendar agenda / class scheduled for this date and period
+                  if (!s.turma_id) return false;
+                  const studentHasAgenda = activeClassesForAssiduidade.some(c => c.turma_id === s.turma_id);
+                  if (!studentHasAgenda) return false;
                   
                   // School filter (check student's school or student's turma school)
                   const studentSchool = s.escola_id || rawTurmas.find(t => t.id === s.turma_id)?.escola_id || '';
@@ -12730,11 +12832,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   return true;
                 });
 
-                // Get scheduled Teachers
+                // Get scheduled Teachers (must have active scheduled class/agenda)
                 const scheduledTeachers = rawTeachers.filter(t => {
-                  if (activeClassesForAssiduidade.length > 0 && activeTeacherIdsForAssiduidade.length > 0) {
-                    if (!activeTeacherIdsForAssiduidade.includes(t.id)) return false;
-                  }
+                  // Must have a calendar agenda / class scheduled for this date and period
+                  const teacherHasAgenda = activeClassesForAssiduidade.some(c => c.docente_id === t.id);
+                  if (!teacherHasAgenda) return false;
                   
                   // School filter
                   const teacherSchool = t.escola_id || '';
@@ -12781,7 +12883,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 });
 
                 // Compute list of Faltosos (Absent list)
+                // RULE: Only mark as absent if they have a scheduled agenda AND tolerance period has expired without validation
                 const absentStudentsList = scheduledStudents.filter(student => {
+                  const studentTurma = rawTurmas.find(t => t.id === student.turma_id);
+                  const schoolId = student.escola_id || studentTurma?.escola_id || '';
+                  const studentClass = activeClassesForAssiduidade.find(c => c.turma_id === student.turma_id);
+                  const classShift = studentClass ? getShiftForSlot(studentClass.horario) : undefined;
+                  
+                  // Must have expired tolerance period
+                  const tolExpired = isToleranceExpiredForPerson(schoolId, classShift);
+                  if (!tolExpired) return false;
+
                   const hasPresentOrLateRecord = filteredAssiduidadeLogs.some(l => 
                     l.tipo === 'estudante' && 
                     l.registro_id === student.id && 
@@ -12791,6 +12903,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 });
 
                 const absentTeachersList = scheduledTeachers.filter(teacher => {
+                  const schoolId = teacher.escola_id || '';
+                  const teacherClass = activeClassesForAssiduidade.find(c => c.docente_id === teacher.id);
+                  const classShift = teacherClass ? getShiftForSlot(teacherClass.horario) : undefined;
+                  
+                  // Must have expired tolerance period
+                  const tolExpired = isToleranceExpiredForPerson(schoolId, classShift);
+                  if (!tolExpired) return false;
+
                   const hasPresentOrLateRecord = filteredAssiduidadeLogs.some(l => 
                     l.tipo === 'docente' && 
                     l.registro_id === teacher.id && 
@@ -13762,12 +13882,22 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                 Lido: {new Date(activeLog.timestamp).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}
                                               </span>
                                             </div>
-                                          ) : (
-                                            <span className="px-2.5 py-0.5 bg-rose-50 text-rose-500 border border-rose-100 font-bold uppercase text-[9px] rounded-full inline-flex items-center gap-1">
-                                              <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
-                                              Ausente
-                                            </span>
-                                          )}
+                                          ) : (() => {
+                                            const studentSchoolId = student.escola_id || assocTurma?.escola_id || '';
+                                            const classShift = assocClass ? getShiftForSlot(assocClass.horario) : undefined;
+                                            const tolExpired = isToleranceExpiredForPerson(studentSchoolId, classShift);
+                                            return tolExpired ? (
+                                              <span className="px-2.5 py-0.5 bg-rose-50 text-rose-500 border border-rose-100 font-bold uppercase text-[9px] rounded-full inline-flex items-center gap-1">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
+                                                Faltoso
+                                              </span>
+                                            ) : (
+                                              <span className="px-2.5 py-0.5 bg-amber-50 text-amber-600 border border-amber-200 font-bold uppercase text-[9px] rounded-full inline-flex items-center gap-1">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                                                Em Tolerância
+                                              </span>
+                                            );
+                                          })()}
                                         </td>
                                         <td className="px-5 py-3">
                                           {activeLog?.observacao ? (
@@ -13804,14 +13934,31 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                   <Trash2 className="w-4 h-4" />
                                                 </button>
                                               </>
-                                            ) : (
-                                              <button
-                                                onClick={() => registerCheckIn('estudante', student, 'falta')}
-                                                className="bg-rose-600 hover:bg-rose-700 cursor-pointer text-white px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors shadow-2xs"
-                                              >
-                                                Cadastrar Falta
-                                              </button>
-                                            )}
+                                            ) : (() => {
+                                              const studentSchoolId = student.escola_id || assocTurma?.escola_id || '';
+                                              const classShift = assocClass ? getShiftForSlot(assocClass.horario) : undefined;
+                                              const tolExpired = isToleranceExpiredForPerson(studentSchoolId, classShift);
+                                              return (
+                                                <div className="flex items-center gap-1.5">
+                                                  <button
+                                                    onClick={() => registerCheckIn('estudante', student)}
+                                                    className="bg-indigo-600 hover:bg-indigo-700 cursor-pointer text-white px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors shadow-2xs"
+                                                    title="Validar Presença"
+                                                  >
+                                                    Validar Presença
+                                                  </button>
+                                                  {tolExpired && (
+                                                    <button
+                                                      onClick={() => registerCheckIn('estudante', student, 'falta')}
+                                                      className="bg-rose-600 hover:bg-rose-700 cursor-pointer text-white px-2 py-1 rounded-lg text-[11px] font-bold transition-colors shadow-2xs"
+                                                      title="Registrar Falta"
+                                                    >
+                                                      Falta
+                                                    </button>
+                                                  )}
+                                                </div>
+                                              );
+                                            })()}
                                           </div>
                                         </td>
                                       </tr>
@@ -13902,12 +14049,22 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                 Lido: {new Date(activeLog.timestamp).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}
                                               </span>
                                             </div>
-                                          ) : (
-                                            <span className="px-2.5 py-0.5 bg-rose-50 text-rose-500 border border-rose-100 font-bold uppercase text-[9px] rounded-full inline-flex items-center gap-1">
-                                              <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
-                                              Ausente
-                                            </span>
-                                          )}
+                                          ) : (() => {
+                                            const teacherSchoolId = teacher.escola_id || '';
+                                            const classShift = assocClass ? getShiftForSlot(assocClass.horario) : undefined;
+                                            const tolExpired = isToleranceExpiredForPerson(teacherSchoolId, classShift);
+                                            return tolExpired ? (
+                                              <span className="px-2.5 py-0.5 bg-rose-50 text-rose-500 border border-rose-100 font-bold uppercase text-[9px] rounded-full inline-flex items-center gap-1">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
+                                                Faltoso
+                                              </span>
+                                            ) : (
+                                              <span className="px-2.5 py-0.5 bg-amber-50 text-amber-600 border border-amber-200 font-bold uppercase text-[9px] rounded-full inline-flex items-center gap-1">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                                                Em Tolerância
+                                              </span>
+                                            );
+                                          })()}
                                         </td>
                                         <td className="px-5 py-3">
                                           {activeLog?.observacao ? (
@@ -13944,14 +14101,31 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                   <Trash2 className="w-4 h-4" />
                                                 </button>
                                               </>
-                                            ) : (
-                                              <button
-                                                onClick={() => registerCheckIn('docente', teacher, 'falta')}
-                                                className="bg-rose-600 hover:bg-rose-700 cursor-pointer text-white px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors shadow-2xs"
-                                              >
-                                                Cadastrar Falta
-                                              </button>
-                                            )}
+                                            ) : (() => {
+                                              const teacherSchoolId = teacher.escola_id || '';
+                                              const classShift = assocClass ? getShiftForSlot(assocClass.horario) : undefined;
+                                              const tolExpired = isToleranceExpiredForPerson(teacherSchoolId, classShift);
+                                              return (
+                                                <div className="flex items-center gap-1.5">
+                                                  <button
+                                                    onClick={() => registerCheckIn('docente', teacher)}
+                                                    className="bg-indigo-600 hover:bg-indigo-700 cursor-pointer text-white px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors shadow-2xs"
+                                                    title="Validar Presença"
+                                                  >
+                                                    Validar Presença
+                                                  </button>
+                                                  {tolExpired && (
+                                                    <button
+                                                      onClick={() => registerCheckIn('docente', teacher, 'falta')}
+                                                      className="bg-rose-600 hover:bg-rose-700 cursor-pointer text-white px-2 py-1 rounded-lg text-[11px] font-bold transition-colors shadow-2xs"
+                                                      title="Registrar Falta"
+                                                    >
+                                                      Falta
+                                                    </button>
+                                                  )}
+                                                </div>
+                                              );
+                                            })()}
                                           </div>
                                         </td>
                                       </tr>
@@ -14359,18 +14533,37 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         const count = selectedUserIds.length;
                         
                         if (action === 'apagar') {
-                          for (const userId of selectedUserIds) {
+                          const usersToDelete = tenantUsers.filter(u => selectedUserIds.includes(u.id));
+                          const adminUsers = usersToDelete.filter(u => (u as any).tipo === 'admin' || (u as any).tipo === 'administrador' || (u as any).tipo === 'superadmin' || (u as any).role === 'admin');
+                          const nonAdminUserIds = usersToDelete.filter(u => (u as any).tipo !== 'admin' && (u as any).tipo !== 'administrador' && (u as any).tipo !== 'superadmin' && (u as any).role !== 'admin').map(u => u.id);
+
+                          if (nonAdminUserIds.length === 0 && adminUsers.length > 0) {
+                            showSystemNotification("A conta de administrador não pode ser deletada.", "erro");
+                            setBulkUserConfirmModal({ isOpen: false, action: null });
+                            setBulkUserActionLoading(false);
+                            return;
+                          }
+
+                          for (const userId of nonAdminUserIds) {
                             await deleteDoc(doc(db, 'users', userId));
                           }
-                          showSystemNotification(`${count} utilizador(es) eliminado(s) com sucesso!`, 'cadastro');
+
+                          if (adminUsers.length > 0) {
+                            showSystemNotification(`${nonAdminUserIds.length} utilizador(es) eliminado(s). Contas de administrador foram preservadas e não podem ser deletadas.`, 'info');
+                          } else {
+                            showSystemNotification(`${nonAdminUserIds.length} utilizador(es) eliminado(s) com sucesso!`, 'cadastro');
+                          }
                         } else if (action === 'suspender') {
-                          for (const userId of selectedUserIds) {
+                          const usersToSuspend = tenantUsers.filter(u => selectedUserIds.includes(u.id));
+                          const nonAdminUserIds = usersToSuspend.filter(u => (u as any).tipo !== 'admin' && (u as any).tipo !== 'administrador' && (u as any).tipo !== 'superadmin' && (u as any).role !== 'admin').map(u => u.id);
+
+                          for (const userId of nonAdminUserIds) {
                             await setDoc(doc(db, 'users', userId), {
                               ativo: false,
                               updated_at: new Date().toISOString()
                             }, { merge: true });
                           }
-                          showSystemNotification(`${count} utilizador(es) suspenso(s) com sucesso!`, 'cadastro');
+                          showSystemNotification(`${nonAdminUserIds.length} utilizador(es) suspenso(s). Contas de administrador permanecem sempre ativas.`, 'cadastro');
                         } else if (action === 'restaurar') {
                           for (const userId of selectedUserIds) {
                             await setDoc(doc(db, 'users', userId), {
@@ -14611,60 +14804,58 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                           {u.ativo ? 'Ativo' : 'Suspenso'}
                                         </span>
                                       </td>
-                                      <td className="px-6 py-4 text-right sticky right-0 bg-white group-hover:bg-slate-50 transition-colors border-l border-slate-200/80 shadow-xs z-10">
+                                      <td className="px-6 py-4 text-right sticky right-0 bg-white dark:bg-slate-900 group-hover:bg-slate-50 dark:group-hover:bg-slate-850 transition-colors border-l border-slate-200/80 dark:border-slate-800 shadow-xs z-10">
                                         <div className="flex items-center justify-end gap-1.5">
                                           {hasPermission('utilizadores', 'editar') && (
                                             <>
-                                              {/* Reset Password Button */}
+                                              {/* Redefinir Senha Button (Abre painel lateral deslizante) */}
                                               <button 
-                                                onClick={async () => {
-                                                  const rawPass = Math.floor(100000 + Math.random() * 900000).toString();
-                                                  const newPass = `SGE-${rawPass}`;
-                                                  try {
-                                                    await setDoc(doc(db, 'users', u.id), {
-                                                      senha_temporaria: newPass
-                                                    }, { merge: true });
-                                                    showSystemNotification(`Senha resetada com sucesso para o utilizador "${u.nome}"! Nova senha temporária: ${newPass}`, "sucesso");
-                                                    loadTenantContext();
-                                                  } catch (err: any) {
-                                                    showSystemNotification("Erro ao resetar senha: " + err.message, "erro");
-                                                  }
-                                                }}
-                                                className="p-1.5 hover:bg-amber-50 text-amber-600 rounded-lg cursor-pointer transition-colors"
-                                                title="Resetar Senha"
+                                                onClick={() => handleOpenResetPasswordDrawer(u)}
+                                                className="p-1.5 hover:bg-amber-50 dark:hover:bg-amber-950/40 text-amber-600 dark:text-amber-400 rounded-lg cursor-pointer transition-colors"
+                                                title="Redefinir Senha"
                                               >
                                                 <RefreshCw className="w-4 h-4" />
                                               </button>
 
                                               {/* Suspender/Reativar Acesso Button */}
-                                              <button 
-                                                onClick={async () => {
-                                                  const nextStatus = !u.ativo;
-                                                  try {
-                                                    await setDoc(doc(db, 'users', u.id), {
-                                                      ativo: nextStatus
-                                                    }, { merge: true });
-                                                    loadTenantContext();
-                                                    showSystemNotification(`Acesso do utilizador ${u.nome} foi ${nextStatus ? 'ativado' : 'suspenso'}.`, 'cadastro');
-                                                  } catch (err: any) {
-                                                    showSystemNotification("Erro ao alterar estado: " + err.message, "erro");
-                                                  }
-                                                }}
-                                                className={`p-1.5 rounded-lg cursor-pointer transition-colors ${u.ativo ? 'hover:bg-rose-50 text-rose-600' : 'hover:bg-emerald-50 text-emerald-600'}`}
-                                                title={u.ativo ? "Suspender Acesso" : "Reativar Acesso"}
-                                              >
-                                                {u.ativo ? <XCircle className="w-4 h-4" /> : <CheckCircle className="w-4 h-4" />}
-                                              </button>
+                                              {((u as any).tipo === 'admin' || (u as any).tipo === 'administrador' || (u as any).tipo === 'superadmin' || (u as any).role === 'admin') ? (
+                                                <span 
+                                                  className="p-1.5 text-slate-300 dark:text-slate-700 cursor-not-allowed opacity-50 inline-flex items-center"
+                                                  title="Contas de administrador permanecem sempre ativas"
+                                                >
+                                                  <CheckCircle className="w-4 h-4 text-emerald-500/50" />
+                                                </span>
+                                              ) : (
+                                                <button 
+                                                  onClick={async () => {
+                                                    const nextStatus = !u.ativo;
+                                                    try {
+                                                      await setDoc(doc(db, 'users', u.id), {
+                                                        ativo: nextStatus
+                                                      }, { merge: true });
+                                                      loadTenantContext();
+                                                      showSystemNotification(`Acesso do utilizador ${u.nome} foi ${nextStatus ? 'ativado' : 'suspenso'}.`, 'cadastro');
+                                                    } catch (err: any) {
+                                                      showSystemNotification("Erro ao alterar estado: " + err.message, "erro");
+                                                    }
+                                                  }}
+                                                  className={`p-1.5 rounded-lg cursor-pointer transition-colors ${u.ativo ? 'hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400' : 'hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400'}`}
+                                                  title={u.ativo ? "Suspender Acesso" : "Reativar Acesso"}
+                                                >
+                                                  {u.ativo ? <XCircle className="w-4 h-4" /> : <CheckCircle className="w-4 h-4" />}
+                                                </button>
+                                              )}
 
                                               {/* Edit User Button */}
                                               <button 
                                                 onClick={() => {
+                                                  const isAdm = (u as any).tipo === 'admin' || (u as any).tipo === 'administrador' || (u as any).tipo === 'superadmin' || (u as any).role === 'admin';
                                                   setEditingItem(u);
                                                   setUserForm({
                                                     nome: u.nome,
                                                     email: u.email,
                                                     tipo: u.tipo,
-                                                    ativo: u.ativo,
+                                                    ativo: isAdm ? true : u.ativo,
                                                     modulo_acessos: u.modulo_acessos || JSON.parse(JSON.stringify(DEFAULT_MODULO_ACESSOS)),
                                                     foto_url: u.foto_url || '',
                                                     senha_temporaria: u.senha_temporaria || ''
@@ -14672,11 +14863,39 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                   setModalType('user');
                                                   setIsModalOpen(true);
                                                 }}
-                                                className="p-1.5 hover:bg-slate-150 text-slate-600 rounded-lg cursor-pointer transition-colors"
+                                                className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-lg cursor-pointer transition-colors"
                                                 title="Editar Utilizador"
                                               >
                                                 <Edit className="w-4 h-4" />
                                               </button>
+
+                                              {/* Delete User Button - Protegido para Administrador */}
+                                              {((u as any).tipo === 'admin' || (u as any).tipo === 'administrador' || (u as any).tipo === 'superadmin' || (u as any).role === 'admin') ? (
+                                                <span 
+                                                  className="p-1.5 text-slate-300 dark:text-slate-700 cursor-not-allowed opacity-50 inline-flex items-center"
+                                                  title="A conta de administrador não pode ser deletada"
+                                                >
+                                                  <Trash2 className="w-4 h-4" />
+                                                </span>
+                                              ) : (
+                                                <button
+                                                  onClick={async () => {
+                                                    if (window.confirm(`Deseja realmente eliminar permanentemente o utilizador "${u.nome}"?`)) {
+                                                      try {
+                                                        await deleteDoc(doc(db, 'users', u.id));
+                                                        showSystemNotification(`Utilizador "${u.nome}" eliminado com sucesso!`, 'cadastro');
+                                                        loadTenantContext();
+                                                      } catch (err: any) {
+                                                        showSystemNotification(`Erro ao eliminar utilizador: ${err.message}`, 'erro');
+                                                      }
+                                                    }
+                                                  }}
+                                                  className="p-1.5 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 rounded-lg cursor-pointer transition-colors"
+                                                  title="Eliminar Utilizador"
+                                                >
+                                                  <Trash2 className="w-4 h-4" />
+                                                </button>
+                                              )}
                                             </>
                                           )}
                                         </div>
@@ -19858,6 +20077,277 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           </div>
         </div>
       )}
+
+      {/* PAINEL LATERAL DESLIZANTE DA DIREITA PARA A ESQUERDA - REDEFINIR SENHA */}
+      {isResetPasswordDrawerOpen && resetPasswordTargetUser && (() => {
+        const isTargetAdmin = resetPasswordTargetUser.tipo === 'admin' || resetPasswordTargetUser.tipo === 'administrador' || resetPasswordTargetUser.tipo === 'superadmin' || resetPasswordTargetUser.role === 'admin';
+        const categoryObj = globalCategories.find(c => c.codigo === resetPasswordTargetUser.tipo || c.id === resetPasswordTargetUser.tipo);
+        const categoryName = categoryObj?.nome 
+          || (resetPasswordTargetUser.tipo === 'admin' ? 'Administrador Geral' 
+            : resetPasswordTargetUser.tipo === 'director' ? 'Diretor Pedagógico'
+            : resetPasswordTargetUser.tipo === 'docente' ? 'Docente / Professor'
+            : resetPasswordTargetUser.tipo === 'estudante' ? 'Estudante'
+            : resetPasswordTargetUser.tipo === 'encarregado' ? 'Encarregado de Educação'
+            : resetPasswordTargetUser.tipo === 'secretaria' ? 'Secretaria'
+            : resetPasswordTargetUser.tipo === 'financeiro' ? 'Financeiro'
+            : resetPasswordTargetUser.tipo);
+
+        return (
+          <div 
+            onClick={(e) => {
+              if (e.target === e.currentTarget && !resetPasswordLoading) {
+                setIsResetPasswordDrawerOpen(false);
+              }
+            }}
+            className="fixed inset-0 z-[10050] bg-slate-950/60 backdrop-blur-xs flex justify-end overflow-hidden pointer-events-auto transition-opacity duration-300"
+          >
+            <div className="bg-white dark:bg-slate-900 h-full max-w-md w-full p-6 sm:p-8 shadow-2xl border-l border-slate-200 dark:border-slate-800 overflow-y-auto pointer-events-auto flex flex-col justify-between rounded-l-3xl rounded-r-none animate-in slide-in-from-right duration-300">
+              <div className="space-y-6">
+                {/* Header */}
+                <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-amber-500/10 dark:bg-amber-500/20 border border-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center shadow-xs">
+                      <KeyRound className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-slate-900 dark:text-white font-sans">
+                        Redefinir Senha
+                      </h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Painel de segurança e credenciais de acesso
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => !resetPasswordLoading && setIsResetPasswordDrawerOpen(false)}
+                    className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+                    title="Fechar Painel"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {/* Card de Identificação do Utilizador */}
+                <div className="bg-slate-50 dark:bg-slate-850/80 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 space-y-3">
+                  <div className="flex items-center gap-3.5">
+                    {resetPasswordTargetUser.foto_url ? (
+                      <img 
+                        src={resetPasswordTargetUser.foto_url} 
+                        alt={resetPasswordTargetUser.nome} 
+                        className="w-12 h-12 rounded-2xl object-cover border border-slate-200 dark:border-slate-700 shadow-xs shrink-0"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="w-12 h-12 rounded-2xl bg-indigo-100 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-900/50 flex items-center justify-center text-indigo-700 dark:text-indigo-300 font-extrabold text-base shrink-0">
+                        {resetPasswordTargetUser.nome ? resetPasswordTargetUser.nome[0].toUpperCase() : 'U'}
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-bold text-slate-900 dark:text-white text-sm truncate">
+                          {resetPasswordTargetUser.nome || 'Utilizador'}
+                        </h4>
+                        {isTargetAdmin && (
+                          <span className="px-2 py-0.5 rounded-md bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 text-[10px] font-bold">
+                            Admin
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                        {resetPasswordTargetUser.email}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-200/60 dark:border-slate-800 grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Categoria</span>
+                      <span className="font-semibold text-slate-800 dark:text-slate-200 inline-flex items-center gap-1 mt-0.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                        {categoryName}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Estado Atual</span>
+                      <span className={`font-semibold inline-flex items-center gap-1 mt-0.5 ${resetPasswordTargetUser.ativo !== false ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${resetPasswordTargetUser.ativo !== false ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
+                        {resetPasswordTargetUser.ativo !== false ? 'Desbloqueado' : 'Bloqueado'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Formulário de Redefinição */}
+                <form id="reset-password-drawer-form" onSubmit={handleExecuteResetPassword} className="space-y-4">
+                  {/* Campo Nova Senha */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-200">
+                        Nova Senha <span className="text-rose-500">*</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const rawPass = Math.floor(100000 + Math.random() * 900000).toString();
+                          const genPass = `SGE-${rawPass}`;
+                          setResetPasswordForm(prev => ({ ...prev, novaSenha: genPass, confirmarSenha: genPass }));
+                        }}
+                        className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <Sparkles className="w-3 h-3" /> Gerar Senha Segura
+                      </button>
+                    </div>
+                    <div className="relative">
+                      <input
+                        type={resetPasswordShowNew ? "text" : "password"}
+                        required
+                        value={resetPasswordForm.novaSenha}
+                        onChange={(e) => setResetPasswordForm(prev => ({ ...prev, novaSenha: e.target.value }))}
+                        placeholder="Digite a nova senha (mínimo 6 caracteres)"
+                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setResetPasswordShowNew(!resetPasswordShowNew)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer p-1"
+                        title={resetPasswordShowNew ? "Ocultar senha" : "Ver senha"}
+                      >
+                        {resetPasswordShowNew ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Campo Confirmar Senha */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-200 mb-1.5">
+                      Confirmar Senha <span className="text-rose-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={resetPasswordShowConfirm ? "text" : "password"}
+                        required
+                        value={resetPasswordForm.confirmarSenha}
+                        onChange={(e) => setResetPasswordForm(prev => ({ ...prev, confirmarSenha: e.target.value }))}
+                        placeholder="Repita a nova senha para confirmação"
+                        className={`w-full bg-slate-50 dark:bg-slate-950 border ${
+                          resetPasswordForm.confirmarSenha && resetPasswordForm.novaSenha !== resetPasswordForm.confirmarSenha
+                            ? 'border-rose-400 focus:ring-rose-500/20 focus:border-rose-500'
+                            : resetPasswordForm.confirmarSenha && resetPasswordForm.novaSenha === resetPasswordForm.confirmarSenha
+                            ? 'border-emerald-400 focus:ring-emerald-500/20 focus:border-emerald-500'
+                            : 'border-slate-200 dark:border-slate-800 focus:ring-indigo-500/20 focus:border-indigo-500'
+                        } rounded-xl px-3.5 py-2.5 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 pr-10`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setResetPasswordShowConfirm(!resetPasswordShowConfirm)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer p-1"
+                        title={resetPasswordShowConfirm ? "Ocultar senha" : "Ver senha"}
+                      >
+                        {resetPasswordShowConfirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    {resetPasswordForm.confirmarSenha && (
+                      <div className="mt-1.5 flex items-center gap-1.5 text-[11px]">
+                        {resetPasswordForm.novaSenha === resetPasswordForm.confirmarSenha ? (
+                          <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-medium">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> As senhas coincidem
+                          </span>
+                        ) : (
+                          <span className="text-rose-600 dark:text-rose-400 flex items-center gap-1 font-medium">
+                            <AlertCircle className="w-3.5 h-3.5 text-rose-500" /> As senhas não coincidem
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Checkbox Desbloquear usuário */}
+                  <div className={`p-4 rounded-2xl border transition-all ${
+                    isTargetAdmin 
+                      ? 'bg-amber-50/70 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900/50' 
+                      : resetPasswordForm.desbloquear
+                      ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900/50'
+                      : 'bg-rose-50/70 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900/50'
+                  }`}>
+                    <label className={`flex items-start gap-3 ${isTargetAdmin ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
+                      <input
+                        type="checkbox"
+                        checked={isTargetAdmin ? true : resetPasswordForm.desbloquear}
+                        disabled={isTargetAdmin}
+                        onChange={(e) => {
+                          if (!isTargetAdmin) {
+                            setResetPasswordForm(prev => ({ ...prev, desbloquear: e.target.checked }));
+                          }
+                        }}
+                        className="mt-0.5 w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer disabled:cursor-not-allowed"
+                      />
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-slate-900 dark:text-white">
+                            Desbloquear usuário
+                          </span>
+                          {isTargetAdmin && (
+                            <span className="px-2 py-0.5 rounded-full bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 text-[10px] font-bold flex items-center gap-1">
+                              <Lock className="w-2.5 h-2.5" /> Obrigatório (Admin)
+                            </span>
+                          )}
+                        </div>
+                        
+                        <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+                          {isTargetAdmin ? (
+                            <span className="text-amber-800 dark:text-amber-300 font-medium">
+                              Para o administrador, a caixa vem marcada por definição e não pode ser desmarcada. A conta de administrador não pode ser bloqueada nem deletada.
+                            </span>
+                          ) : resetPasswordForm.desbloquear ? (
+                            <span>
+                              O usuário terá acesso desbloqueado ao sistema com as novas credenciais.
+                            </span>
+                          ) : (
+                            <span className="text-rose-700 dark:text-rose-400 font-semibold">
+                              Caso não seja marcado, o usuário será bloqueado e será necessário redefinir a senha novamente para liberar o acesso.
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+                </form>
+              </div>
+
+              {/* Footer */}
+              <div className="pt-4 mt-6 border-t border-slate-100 dark:border-slate-800 flex items-center gap-3">
+                <button
+                  type="button"
+                  disabled={resetPasswordLoading}
+                  onClick={() => setIsResetPasswordDrawerOpen(false)}
+                  className="w-1/3 py-2.5 px-4 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-xs rounded-xl transition-colors cursor-pointer text-center"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  form="reset-password-drawer-form"
+                  disabled={resetPasswordLoading}
+                  className="w-2/3 py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
+                >
+                  {resetPasswordLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Atualizando...
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4" />
+                      Salvar Nova Senha
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* MODAL FORMULÁRIO DO DOCENTE (NOVO/EDIÇÃO) */}
       <DocenteFormModal

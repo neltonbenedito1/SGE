@@ -51,8 +51,12 @@ import {
   Sparkles,
   Maximize2,
   Minimize2,
-  HelpCircle
+  Globe,
+  Sun,
+  Moon,
+  ChevronDown
 } from 'lucide-react';
+import { LANGUAGES } from '../lib/translation';
 
 // Generated imagery paths
 import heroBannerImg from '../assets/images/sysedu_hero_banner_1786584832528.jpg';
@@ -62,12 +66,31 @@ import student360Img from '../assets/images/sysedu_student_360_1786663342297.jpg
 import securityCloudImg from '../assets/images/sysedu_security_cloud_1786663353598.jpg';
 import analyticsKpiImg from '../assets/images/sysedu_analytics_kpi_1786663363949.jpg';
 
-export default function BrandbookView() {
+interface BrandbookViewProps {
+  onOpenLogin?: () => void;
+  onOpenCookiePolicy?: () => void;
+  systemLang?: string;
+  onChangeLanguage?: (lang: string) => void;
+  activeTheme?: string;
+  onToggleTheme?: () => void;
+}
+
+export default function BrandbookView({
+  onOpenLogin,
+  onOpenCookiePolicy,
+  systemLang = 'pt',
+  onChangeLanguage,
+  activeTheme = 'theme-dark',
+  onToggleTheme
+}: BrandbookViewProps) {
   const [activeCategory, setActiveCategory] = useState<'all' | 'vision' | 'academic' | 'tech' | 'branding'>('all');
   const [slideMode, setSlideMode] = useState<boolean>(false);
   const [currentSlideIndex, setCurrentSlideIndex] = useState<number>(0);
   const [copiedColor, setCopiedColor] = useState<string | null>(null);
   const [copiedSvg, setCopiedSvg] = useState<string | null>(null);
+  const [isLangDropdownOpen, setIsLangDropdownOpen] = useState<boolean>(false);
+
+  const currentLangObj = LANGUAGES.find(l => l.code === systemLang) || LANGUAGES[0];
 
   const colors = [
     {
@@ -427,87 +450,223 @@ export default function BrandbookView() {
     }
   ];
 
+  const isDark = activeTheme === 'theme-dark';
+
   return (
-    <main id="branding-root-main" className="min-h-screen bg-slate-900 text-slate-100 font-sans pb-24 selection:bg-blue-600 selection:text-white">
-      {/* Top Navigation & Mode Switcher Bar */}
-      <header id="branding-header" className="sticky top-0 z-50 bg-slate-950/90 backdrop-blur-xl border-b border-slate-800/80 px-4 sm:px-8 py-3.5 transition-all shadow-md">
-        <div id="branding-header-inner" className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <SysEduLogo variant="negative" size={36} />
-            <div className="h-6 w-[1px] bg-slate-800 hidden sm:block"></div>
-            <span className="text-xs font-semibold uppercase tracking-widest text-blue-400/90 hidden sm:inline-block">
-              Pitch Deck & Brandbook Institucional
-            </span>
+    <main 
+      id="branding-root-main" 
+      className={`min-h-screen ${isDark ? 'bg-[#070b16] text-slate-100' : 'bg-slate-50 text-slate-900'} font-sans pb-16 selection:bg-blue-600 selection:text-white transition-colors duration-300`}
+    >
+      {/* 1. TOP UTILITY BAR (Barra Superior - Left: Language Pill; Right: Login/Sign-Up & Theme Toggle) */}
+      <div 
+        id="top-utility-bar" 
+        className={`w-full ${isDark ? 'bg-[#0a0f1d] border-slate-800/80' : 'bg-white border-slate-200'} border-b px-4 sm:px-8 py-2.5 transition-colors`}
+      >
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          {/* Left: Language Selector Pill */}
+          <div className="relative">
+            <button
+              id="btn-lang-selector"
+              type="button"
+              onClick={() => setIsLangDropdownOpen(!isLangDropdownOpen)}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full ${
+                isDark 
+                  ? 'bg-[#0f172a] hover:bg-slate-800 border-slate-700/80 text-slate-200' 
+                  : 'bg-slate-100 hover:bg-slate-200/80 border-slate-300 text-slate-800'
+              } border text-xs sm:text-sm font-semibold transition-all cursor-pointer shadow-xs active:scale-95`}
+              title="Mudar idioma"
+            >
+              <Globe className={`w-4 h-4 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
+              <span>{currentLangObj.name}</span>
+              <ChevronDown className={`w-3.5 h-3.5 ${isDark ? 'text-slate-400' : 'text-slate-500'} ml-0.5`} />
+            </button>
+
+            {/* Language Dropdown */}
+            {isLangDropdownOpen && (
+              <>
+                <div 
+                  className="fixed inset-0 z-50 bg-transparent" 
+                  onClick={() => setIsLangDropdownOpen(false)} 
+                />
+                <div className={`absolute left-0 mt-2 w-52 ${isDark ? 'bg-slate-900 border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-900 shadow-xl'} rounded-2xl border shadow-2xl z-50 p-2 space-y-1 animate-in fade-in slide-in-from-top-2 duration-150`}>
+                  <div className={`px-2.5 py-1 border-b ${isDark ? 'border-slate-800 text-slate-400' : 'border-slate-200 text-slate-500'} mb-1`}>
+                    <p className="text-[10px] font-bold uppercase tracking-wider">Selecionar Idioma</p>
+                  </div>
+                  <div className="max-h-60 overflow-y-auto space-y-1">
+                    {LANGUAGES.map((lang) => {
+                      const isSelected = (systemLang || 'pt') === lang.code;
+                      return (
+                        <button
+                          key={lang.code}
+                          type="button"
+                          onClick={() => {
+                            if (onChangeLanguage) {
+                              onChangeLanguage(lang.code);
+                            }
+                            setIsLangDropdownOpen(false);
+                          }}
+                          className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-left text-xs font-semibold cursor-pointer transition-colors ${
+                            isSelected
+                              ? 'bg-blue-600 text-white'
+                              : isDark ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-700 hover:bg-slate-100'
+                          }`}
+                        >
+                          <span className="text-sm">{lang.flag}</span>
+                          <span className="truncate">{lang.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </>
+            )}
           </div>
 
-          <div className="flex items-center gap-2.5 flex-wrap justify-center">
-            {/* View Mode Switcher */}
+          {/* Right: Login/Sign-Up Pill & Theme Toggle Pill */}
+          <div className="flex items-center gap-3">
+            {/* Login / Sign-Up Pill Button */}
+            <button
+              id="btn-login-signup"
+              type="button"
+              onClick={onOpenLogin}
+              className={`flex items-center gap-2 px-4 py-1.5 rounded-full ${
+                isDark
+                  ? 'bg-[#0f172a] hover:bg-slate-800 border-slate-700/80 text-white'
+                  : 'bg-blue-600 hover:bg-blue-700 border-blue-600 text-white shadow-xs shadow-blue-500/20'
+              } border text-xs sm:text-sm font-semibold transition-all cursor-pointer active:scale-95`}
+            >
+              <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+              <span>Login / Sign-Up</span>
+            </button>
+
+            {/* Light / Dark Theme Toggle Pill */}
+            <button
+              id="btn-theme-toggle"
+              type="button"
+              onClick={onToggleTheme}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full ${
+                isDark 
+                  ? 'bg-[#0f172a] hover:bg-slate-800 border-slate-700/80 text-slate-300' 
+                  : 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700'
+              } border transition-all cursor-pointer shadow-xs active:scale-95`}
+              title="Alternar Tema Claro / Escuro"
+            >
+              <Sun className={`w-3.5 h-3.5 ${activeTheme === 'theme-slate' ? 'text-amber-500 font-bold' : 'text-slate-400'}`} />
+              <Moon className={`w-3.5 h-3.5 ${activeTheme === 'theme-dark' ? 'text-blue-400 font-bold' : 'text-slate-400'}`} />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 2. MAIN BRANDING & CATEGORIES NAVIGATION HEADER */}
+      <header 
+        id="branding-header" 
+        className={`sticky top-0 z-40 ${
+          isDark ? 'bg-[#0a0f1d]/95 border-slate-800/80' : 'bg-white/95 border-slate-200 shadow-sm'
+        } backdrop-blur-xl border-b px-4 sm:px-8 py-3.5 transition-all`}
+      >
+        <div id="branding-header-inner" className="max-w-7xl mx-auto flex flex-col lg:flex-row items-center justify-between gap-4">
+          {/* Logo & Subtitle */}
+          <div className="flex items-center gap-4">
+            <SysEduLogo variant={isDark ? "negative" : "full"} size={38} />
+            <div className={`h-8 w-[1px] ${isDark ? 'bg-slate-800' : 'bg-slate-200'} hidden sm:block`}></div>
+            <div className="flex flex-col">
+              <span className={`text-xs sm:text-sm font-black uppercase tracking-wider ${isDark ? 'text-blue-400' : 'text-blue-700'} leading-tight`}>
+                Pitch Deck & Brandbook
+              </span>
+              <span className={`text-xs sm:text-sm font-black uppercase tracking-wider ${isDark ? 'text-blue-400/90' : 'text-slate-700'} leading-tight`}>
+                Institucional
+              </span>
+            </div>
+          </div>
+
+          {/* Right Side: Mode Switcher + Tabs + Print */}
+          <div className="flex flex-col items-center lg:items-end gap-2.5">
+            {/* Top row: Mode Switcher */}
             <button
               id="btn-toggle-presentation-mode"
               onClick={() => setSlideMode(!slideMode)}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer border ${
+              className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer border ${
                 slideMode
-                  ? 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-900/40'
-                  : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                  ? 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-900/20'
+                  : isDark
+                    ? 'bg-slate-900 text-slate-300 border-slate-700/80 hover:bg-slate-800 hover:text-white'
+                    : 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200 hover:text-slate-900'
               }`}
             >
               {slideMode ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
               {slideMode ? 'Visualização em Grade' : 'Modo Apresentação (Slides)'}
             </button>
 
-            {/* Category Filter Tabs (when in grid mode) */}
+            {/* Bottom row: Category Filter Tabs */}
             {!slideMode && (
-              <div className="flex items-center bg-slate-900 border border-slate-800 rounded-xl p-1 gap-1">
+              <div className="flex items-center gap-2 flex-wrap justify-center">
+                <div className={`flex items-center ${isDark ? 'bg-slate-950/90 border-slate-800' : 'bg-slate-100 border-slate-200'} border rounded-2xl p-1 gap-1 shadow-inner`}>
+                  <button
+                    onClick={() => setActiveCategory('all')}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                      activeCategory === 'all' 
+                        ? 'bg-blue-600 text-white shadow-sm' 
+                        : isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900 hover:bg-white/70'
+                    }`}
+                  >
+                    Todos (22 Tópicos)
+                  </button>
+                  <button
+                    onClick={() => setActiveCategory('vision')}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                      activeCategory === 'vision' 
+                        ? 'bg-blue-600 text-white shadow-sm' 
+                        : isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900 hover:bg-white/70'
+                    }`}
+                  >
+                    Visão & Estrutura
+                  </button>
+                  <button
+                    onClick={() => setActiveCategory('academic')}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                      activeCategory === 'academic' 
+                        ? 'bg-blue-600 text-white shadow-sm' 
+                        : isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900 hover:bg-white/70'
+                    }`}
+                  >
+                    Académico & Módulos
+                  </button>
+                  <button
+                    onClick={() => setActiveCategory('tech')}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                      activeCategory === 'tech' 
+                        ? 'bg-blue-600 text-white shadow-sm' 
+                        : isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900 hover:bg-white/70'
+                    }`}
+                  >
+                    Tecnologia & Governança
+                  </button>
+                  <button
+                    onClick={() => setActiveCategory('branding')}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                      activeCategory === 'branding' 
+                        ? 'bg-blue-600 text-white shadow-sm' 
+                        : isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900 hover:bg-white/70'
+                    }`}
+                  >
+                    Identidade Visual
+                  </button>
+                </div>
+
                 <button
-                  onClick={() => setActiveCategory('all')}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                    activeCategory === 'all' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'
-                  }`}
+                  onClick={() => window.print()}
+                  className={`p-2 rounded-xl ${
+                    isDark 
+                      ? 'bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border-slate-800' 
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 border-slate-200'
+                  } border transition-colors cursor-pointer`}
+                  title="Imprimir Apresentação"
                 >
-                  Todos (22 Tópicos)
-                </button>
-                <button
-                  onClick={() => setActiveCategory('vision')}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                    activeCategory === 'vision' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  Visão & Estrutura
-                </button>
-                <button
-                  onClick={() => setActiveCategory('academic')}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                    activeCategory === 'academic' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  Académico & Módulos
-                </button>
-                <button
-                  onClick={() => setActiveCategory('tech')}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                    activeCategory === 'tech' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  Tecnologia & Governança
-                </button>
-                <button
-                  onClick={() => setActiveCategory('branding')}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                    activeCategory === 'branding' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  Identidade Visual
+                  <Printer className="w-4 h-4" />
                 </button>
               </div>
             )}
-
-            <button
-              onClick={() => window.print()}
-              className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors cursor-pointer"
-              title="Imprimir Apresentação"
-            >
-              <Printer className="w-4 h-4" />
-            </button>
           </div>
         </div>
       </header>
@@ -517,36 +676,36 @@ export default function BrandbookView() {
          ========================================================================= */}
       {slideMode ? (
         <div id="slide-mode-container" className="max-w-6xl mx-auto px-4 py-8">
-          <div className="bg-slate-950 border border-slate-800 rounded-3xl p-8 sm:p-12 shadow-2xl relative overflow-hidden min-h-[600px] flex flex-col justify-between">
+          <div className={`${isDark ? 'bg-slate-950 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900 shadow-xl'} border rounded-3xl p-8 sm:p-12 relative overflow-hidden min-h-[600px] flex flex-col justify-between`}>
             {/* Background Graphic Accents */}
             <div className="absolute -top-24 -right-24 w-96 h-96 bg-blue-600/10 rounded-full blur-3xl pointer-events-none"></div>
             <div className="absolute -bottom-24 -left-24 w-96 h-96 bg-teal-500/10 rounded-full blur-3xl pointer-events-none"></div>
 
             {/* Slide Header */}
-            <div className="flex items-center justify-between border-b border-slate-800/80 pb-6 mb-8 relative z-10">
+            <div className={`flex items-center justify-between border-b ${isDark ? 'border-slate-800/80' : 'border-slate-200'} pb-6 mb-8 relative z-10`}>
               <div className="flex items-center gap-3">
-                <span className="px-3 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 text-xs font-bold rounded-full uppercase tracking-wider">
+                <span className={`px-3 py-1 ${isDark ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-blue-50 text-blue-700 border-blue-200'} border text-xs font-bold rounded-full uppercase tracking-wider`}>
                   {slidesData[currentSlideIndex].tag}
                 </span>
-                <span className="text-xs text-slate-500 font-mono">
+                <span className={`text-xs ${isDark ? 'text-slate-500' : 'text-slate-400'} font-mono`}>
                   Slide {currentSlideIndex + 1} de {slidesData.length}
                 </span>
               </div>
-              <SysEduLogo variant="negative" size={28} />
+              <SysEduLogo variant={isDark ? "negative" : "full"} size={28} />
             </div>
 
             {/* Slide Body Content */}
             <div className="relative z-10 my-auto">
-              <h2 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight mb-4 leading-tight">
+              <h2 className={`text-3xl sm:text-4xl font-extrabold ${isDark ? 'text-white' : 'text-slate-900'} tracking-tight mb-4 leading-tight`}>
                 {slidesData[currentSlideIndex].title}
               </h2>
-              <p className="text-lg text-slate-300 font-normal leading-relaxed max-w-3xl mb-8">
+              <p className={`text-lg ${isDark ? 'text-slate-300' : 'text-slate-600'} font-normal leading-relaxed max-w-3xl mb-8`}>
                 {slidesData[currentSlideIndex].subtitle}
               </p>
 
               {/* Dynamic Slide Content by Schema */}
               {slidesData[currentSlideIndex].image && (
-                <div className="relative rounded-2xl overflow-hidden border border-slate-800 my-6 shadow-xl max-h-72">
+                <div className={`relative rounded-2xl overflow-hidden border ${isDark ? 'border-slate-800' : 'border-slate-200'} my-6 shadow-xl max-h-72`}>
                   <img 
                     src={slidesData[currentSlideIndex].image} 
                     alt={slidesData[currentSlideIndex].title}
@@ -566,12 +725,12 @@ export default function BrandbookView() {
               {slidesData[currentSlideIndex].items && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mt-6">
                   {slidesData[currentSlideIndex].items.map((it: any, idx: number) => (
-                    <div key={idx} className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 hover:border-slate-700 transition-all">
-                      <div className="w-8 h-8 rounded-xl bg-blue-600/20 text-blue-400 font-bold flex items-center justify-center text-sm mb-3 border border-blue-500/20">
+                    <div key={idx} className={`${isDark ? 'bg-slate-900/80 border-slate-800 text-slate-100' : 'bg-slate-50 border-slate-200 text-slate-800'} border rounded-2xl p-5 hover:border-blue-400 transition-all`}>
+                      <div className={`w-8 h-8 rounded-xl ${isDark ? 'bg-blue-600/20 text-blue-400 border-blue-500/20' : 'bg-blue-100 text-blue-700 border-blue-200'} font-bold flex items-center justify-center text-sm mb-3 border`}>
                         {it.num}
                       </div>
-                      <h4 className="font-bold text-white text-base mb-1">{it.title}</h4>
-                      <p className="text-xs text-slate-400 leading-relaxed">{it.desc}</p>
+                      <h4 className={`font-bold ${isDark ? 'text-white' : 'text-slate-900'} text-base mb-1`}>{it.title}</h4>
+                      <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-600'} leading-relaxed`}>{it.desc}</p>
                     </div>
                   ))}
                 </div>
@@ -580,8 +739,8 @@ export default function BrandbookView() {
               {slidesData[currentSlideIndex].grid && (
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-6">
                   {slidesData[currentSlideIndex].grid.map((g: any, idx: number) => (
-                    <div key={idx} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 text-center">
-                      <p className="font-bold text-sm text-slate-200 mb-2">{g.name}</p>
+                    <div key={idx} className={`${isDark ? 'bg-slate-900 border-slate-800 text-slate-200' : 'bg-slate-50 border-slate-200 text-slate-800'} border rounded-2xl p-4 text-center`}>
+                      <p className={`font-bold text-sm ${isDark ? 'text-slate-200' : 'text-slate-800'} mb-2`}>{g.name}</p>
                       <span className={`inline-block px-2.5 py-0.5 text-[11px] font-bold rounded-full ${g.color}`}>
                         {g.status}
                       </span>
@@ -592,15 +751,15 @@ export default function BrandbookView() {
 
               {slidesData[currentSlideIndex].flow && (
                 <div className="my-6">
-                  <div className="flex flex-wrap items-center gap-3 bg-slate-900/60 p-4 rounded-2xl border border-slate-800">
+                  <div className={`flex flex-wrap items-center gap-3 ${isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-50 border-slate-200'} p-4 rounded-2xl border`}>
                     {slidesData[currentSlideIndex].flow.map((step: string, idx: number) => (
                       <React.Fragment key={idx}>
-                        <div className="bg-blue-600/20 border border-blue-500/30 px-4 py-2 rounded-xl text-blue-300 font-bold text-xs sm:text-sm flex items-center gap-2">
+                        <div className={`${isDark ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-blue-100 border-blue-200 text-blue-800'} border px-4 py-2 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2`}>
                           <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center">{idx + 1}</span>
                           {step}
                         </div>
                         {idx < slidesData[currentSlideIndex].flow.length - 1 && (
-                          <ArrowRight className="w-4 h-4 text-slate-600 shrink-0" />
+                          <ArrowRight className={`w-4 h-4 ${isDark ? 'text-slate-600' : 'text-slate-400'} shrink-0`} />
                         )}
                       </React.Fragment>
                     ))}
@@ -608,8 +767,8 @@ export default function BrandbookView() {
                   {slidesData[currentSlideIndex].details && (
                     <ul className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
                       {slidesData[currentSlideIndex].details.map((d: string, idx: number) => (
-                        <li key={idx} className="flex items-start gap-2.5 text-xs text-slate-300 bg-slate-900/40 p-3 rounded-xl border border-slate-800/60">
-                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                        <li key={idx} className={`flex items-start gap-2.5 text-xs ${isDark ? 'text-slate-300 bg-slate-900/40 border-slate-800/60' : 'text-slate-700 bg-slate-50 border-slate-200'} p-3 rounded-xl border`}>
+                          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
                           <span>{d}</span>
                         </li>
                       ))}
@@ -621,8 +780,8 @@ export default function BrandbookView() {
               {slidesData[currentSlideIndex].modules && (
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6">
                   {slidesData[currentSlideIndex].modules.map((m: string, idx: number) => (
-                    <div key={idx} className="bg-slate-900/90 border border-slate-800/90 rounded-xl p-3.5 hover:border-blue-500/40 transition-colors">
-                      <p className="font-semibold text-xs text-slate-200">{m}</p>
+                    <div key={idx} className={`${isDark ? 'bg-slate-900/90 border-slate-800/90 text-slate-200' : 'bg-slate-50 border-slate-200 text-slate-800'} border rounded-xl p-3.5 hover:border-blue-400 transition-colors`}>
+                      <p className={`font-semibold text-xs ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>{m}</p>
                     </div>
                   ))}
                 </div>
@@ -631,13 +790,13 @@ export default function BrandbookView() {
               {slidesData[currentSlideIndex].portals && (
                 <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 mt-6">
                   {slidesData[currentSlideIndex].portals.map((p: any, idx: number) => (
-                    <div key={idx} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between">
+                    <div key={idx} className={`${isDark ? 'bg-slate-900 border-slate-800 text-slate-100' : 'bg-slate-50 border-slate-200 text-slate-800'} border rounded-2xl p-4 flex flex-col justify-between`}>
                       <div>
-                        <span className="w-6 h-6 rounded-lg bg-blue-600/30 text-blue-400 font-bold text-xs flex items-center justify-center mb-2">
+                        <span className={`w-6 h-6 rounded-lg ${isDark ? 'bg-blue-600/30 text-blue-400' : 'bg-blue-100 text-blue-700'} font-bold text-xs flex items-center justify-center mb-2`}>
                           {p.num}
                         </span>
-                        <h4 className="font-bold text-sm text-white mb-1.5">{p.name}</h4>
-                        <p className="text-[11px] text-slate-400 leading-normal">{p.desc}</p>
+                        <h4 className={`font-bold text-sm ${isDark ? 'text-white' : 'text-slate-900'} mb-1.5`}>{p.name}</h4>
+                        <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-600'} leading-normal`}>{p.desc}</p>
                       </div>
                     </div>
                   ))}
@@ -647,15 +806,15 @@ export default function BrandbookView() {
               {slidesData[currentSlideIndex].phases && (
                 <div className="space-y-3.5 mt-6">
                   {slidesData[currentSlideIndex].phases.map((ph: any, idx: number) => (
-                    <div key={idx} className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4">
+                    <div key={idx} className={`${isDark ? 'bg-slate-900/80 border-slate-800 text-slate-100' : 'bg-slate-50 border-slate-200 text-slate-800'} border rounded-2xl p-4`}>
                       <div className="flex justify-between items-center mb-2">
-                        <span className="font-bold text-sm text-white">{ph.name}</span>
-                        <span className="font-bold text-xs text-blue-400">{ph.progress}%</span>
+                        <span className={`font-bold text-sm ${isDark ? 'text-white' : 'text-slate-900'}`}>{ph.name}</span>
+                        <span className={`font-bold text-xs ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>{ph.progress}%</span>
                       </div>
-                      <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden mb-2">
+                      <div className={`w-full ${isDark ? 'bg-slate-800' : 'bg-slate-200'} rounded-full h-2 overflow-hidden mb-2`}>
                         <div className={`h-2 rounded-full ${ph.color}`} style={{ width: `${ph.progress}%` }}></div>
                       </div>
-                      <p className="text-xs text-slate-400">{ph.desc}</p>
+                      <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{ph.desc}</p>
                     </div>
                   ))}
                 </div>
@@ -663,7 +822,7 @@ export default function BrandbookView() {
 
               {slidesData[currentSlideIndex].quote && (
                 <div className="mt-8 border-l-4 border-teal-500 pl-4 py-1">
-                  <p className="italic text-base sm:text-lg text-teal-300 font-serif">
+                  <p className={`italic text-base sm:text-lg ${isDark ? 'text-teal-300' : 'text-teal-700'} font-serif`}>
                     {slidesData[currentSlideIndex].quote}
                   </p>
                 </div>
@@ -671,11 +830,11 @@ export default function BrandbookView() {
             </div>
 
             {/* Slide Navigation Footer */}
-            <div className="flex items-center justify-between border-t border-slate-800/80 pt-6 mt-8 relative z-10">
+            <div className={`flex items-center justify-between border-t ${isDark ? 'border-slate-800/80' : 'border-slate-200'} pt-6 mt-8 relative z-10`}>
               <button
                 onClick={() => setCurrentSlideIndex(Math.max(0, currentSlideIndex - 1))}
                 disabled={currentSlideIndex === 0}
-                className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-40 disabled:pointer-events-none text-slate-300 text-xs font-bold flex items-center gap-2 border border-slate-800 transition-colors cursor-pointer"
+                className={`px-4 py-2 rounded-xl ${isDark ? 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800' : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'} disabled:opacity-40 disabled:pointer-events-none text-xs font-bold flex items-center gap-2 border transition-colors cursor-pointer`}
               >
                 <ChevronLeft className="w-4 h-4" /> Anterior
               </button>
@@ -686,7 +845,7 @@ export default function BrandbookView() {
                     key={idx}
                     onClick={() => setCurrentSlideIndex(idx)}
                     className={`h-2 rounded-full transition-all cursor-pointer ${
-                      currentSlideIndex === idx ? 'w-6 bg-blue-500' : 'w-2 bg-slate-800 hover:bg-slate-700'
+                      currentSlideIndex === idx ? 'w-6 bg-blue-500' : isDark ? 'w-2 bg-slate-800 hover:bg-slate-700' : 'w-2 bg-slate-200 hover:bg-slate-300'
                     }`}
                     title={`Ir para slide ${idx + 1}`}
                   />
@@ -1459,30 +1618,30 @@ export default function BrandbookView() {
               </div>
 
               {/* Color Palette Grid */}
-              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-                  <h3 className="text-lg font-black text-white">Paleta Cromática Oficial</h3>
-                  <span className="text-xs text-slate-400">Clique para copiar o HEX</span>
+              <div className={`${isDark ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200 shadow-sm'} border rounded-3xl p-6 sm:p-8 space-y-6`}>
+                <div className={`flex items-center justify-between border-b ${isDark ? 'border-slate-800' : 'border-slate-200'} pb-4`}>
+                  <h3 className={`text-lg font-black ${isDark ? 'text-white' : 'text-slate-900'}`}>Paleta Cromática Oficial</h3>
+                  <span className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Clique para copiar o HEX</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {colors.map((col, idx) => (
                     <div
                       key={idx}
                       onClick={() => handleCopyColor(col.hex)}
-                      className="bg-slate-900 border border-slate-800/90 rounded-2xl p-4 hover:border-slate-700 transition-all cursor-pointer group"
+                      className={`${isDark ? 'bg-slate-900 border-slate-800/90 hover:border-slate-700' : 'bg-slate-50 border-slate-200 hover:border-blue-400'} border rounded-2xl p-4 transition-all cursor-pointer group`}
                     >
                       <div className="flex items-center gap-3 mb-3">
                         <div className={`w-10 h-10 rounded-xl ${col.bgClass} shadow-md shrink-0 flex items-center justify-center font-bold text-xs`}>
                         </div>
                         <div>
-                          <h4 className="font-bold text-xs text-white leading-tight">{col.name}</h4>
-                          <span className="text-[11px] font-mono text-slate-400">{col.hex}</span>
+                          <h4 className={`font-bold text-xs ${isDark ? 'text-white' : 'text-slate-900'} leading-tight`}>{col.name}</h4>
+                          <span className={`text-[11px] font-mono ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{col.hex}</span>
                         </div>
                       </div>
-                      <p className="text-[11px] text-slate-400 leading-normal">{col.use}</p>
+                      <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-600'} leading-normal`}>{col.use}</p>
                       <div className="mt-2 text-right">
-                        <span className="text-[10px] font-semibold text-blue-400 group-hover:underline inline-flex items-center gap-1">
-                          {copiedColor === col.hex ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                        <span className="text-[10px] font-semibold text-blue-500 group-hover:underline inline-flex items-center gap-1">
+                          {copiedColor === col.hex ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
                           {copiedColor === col.hex ? 'Copiado!' : 'Copiar HEX'}
                         </span>
                       </div>
@@ -1495,6 +1654,24 @@ export default function BrandbookView() {
 
         </div>
       )}
+
+      {/* FOOTER */}
+      <footer id="branding-footer" className={`w-full mt-20 pt-10 pb-12 border-t ${isDark ? 'border-slate-800/80 bg-[#070c18]' : 'border-slate-200 bg-white'}`}>
+        <div className="max-w-7xl mx-auto px-4 sm:px-8 flex flex-col sm:flex-row items-center justify-center gap-4 text-center">
+          <button
+            id="btn-footer-cookie-policy"
+            type="button"
+            onClick={onOpenCookiePolicy}
+            className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full ${isDark ? 'bg-slate-900/90 hover:bg-slate-800 border-slate-700/80 text-slate-300 hover:text-white' : 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700 hover:text-slate-900'} border text-xs font-semibold transition-all cursor-pointer shadow-sm active:scale-95`}
+          >
+            <Shield className="w-3.5 h-3.5 text-blue-500" />
+            <span>Privacidade & Cookies</span>
+          </button>
+          <span className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'} font-normal`}>
+            © SysEdu 2026. Todos os direitos reservados.
+          </span>
+        </div>
+      </footer>
     </main>
   );
 }

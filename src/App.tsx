@@ -112,6 +112,7 @@ export default function App() {
   const [systemLang, setSystemLang] = useState<string>(getSystemLanguage());
   const [isLangDropdownOpen, setIsLangDropdownOpen] = useState(false);
   const [isCookiePolicyOpen, setIsCookiePolicyOpen] = useState(false);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
 
   // Sync currentView changes to persistent storage
   useEffect(() => {
@@ -508,6 +509,7 @@ export default function App() {
           saveLastAction("Login realizado como Super Admin");
           setLoginEmail('');
           setLoginPassword('');
+          setIsLoginModalOpen(false);
           setCurrentView('superadmin');
           setLoginLoading(false);
           return;
@@ -665,6 +667,7 @@ export default function App() {
       }
 
       if (userDocData.requer_alteracao_senha) {
+        setIsLoginModalOpen(false);
         setFirstLoginResetUser(userDocData);
         setLoginLoading(false);
         return;
@@ -712,6 +715,7 @@ export default function App() {
       setSelectedRole(userType);
       setLoginEmail('');
       setLoginPassword('');
+      setIsLoginModalOpen(false);
       setCurrentView('tenant');
     } catch (error) {
       console.error('Erro na autenticação:', error);
@@ -763,6 +767,7 @@ export default function App() {
       setConfirmFirstPassword('');
       setLoginEmail('');
       setLoginPassword('');
+      setIsLoginModalOpen(false);
       setCurrentView('tenant');
     } catch (err) {
       console.error("Error resetting temporary password:", err);
@@ -1130,165 +1135,6 @@ const clientSideCache: Record<string, any> = {
     }
   }
 
-  const renderLoginHeader = () => {
-    const themes = [
-      { id: 'theme-slate', name: 'Claro (Classic)', color: 'bg-slate-200 border-slate-400 text-slate-800' },
-      { id: 'theme-dark', name: 'Escuro (Midnight)', color: 'bg-slate-900 border-slate-700 text-white' },
-      { id: 'theme-emerald', name: 'Verde (Emerald)', color: 'bg-emerald-500 border-emerald-600 text-white' },
-      { id: 'theme-amber', name: 'Amber (Cozy)', color: 'bg-amber-500 border-amber-600 text-white' }
-    ];
-
-    const currentTheme = themes.find(t => t.id === activeTheme) || themes[0];
-    const currentLangObj = LANGUAGES.find(l => l.code === systemLang) || LANGUAGES[0];
-
-    return (
-      <header className="fixed top-0 left-0 right-0 p-4 flex justify-end items-center z-[9990] bg-transparent gap-4 pointer-events-none">
-        {/* Top Right Corner: Buttons, Theme Selector & Language Selector */}
-        <div className="flex items-center gap-2.5 flex-wrap pointer-events-auto">
-          {/* Brandbook & Portal View Switcher Buttons */}
-          <div className="flex bg-white/90 dark:bg-slate-900/90 p-1 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-lg backdrop-blur-md gap-1">
-            <button
-              type="button"
-              onClick={() => setCurrentView('brandbook')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
-                currentView === 'brandbook'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
-              }`}
-            >
-              📖 Brandbook SysEdu
-            </button>
-            <button
-              type="button"
-              onClick={() => setCurrentView('landing')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
-                currentView === 'landing'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
-              }`}
-            >
-              ⚡ Portal de Acesso
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsCookiePolicyOpen(true)}
-              className="px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-              title="Abrir Política de Cookies e Privacidade"
-            >
-              🛡️ Privacidade & Cookies
-            </button>
-          </div>
-
-          {/* Theme Selector Dropdown */}
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => {
-                setIsThemeDropdownOpen(!isThemeDropdownOpen);
-                setIsLangDropdownOpen(false);
-              }}
-              className={`w-9 h-9 rounded-2xl ${currentTheme.color.split(' ')[0]} border-2 border-white/80 dark:border-slate-700 shadow-lg flex items-center justify-center cursor-pointer transition-transform active:scale-95 duration-200 relative group`}
-              title={`Alterar Tema: ${currentTheme.name}`}
-            >
-              <Palette className="w-4 h-4 text-indigo-500 mix-blend-difference" />
-              <span className="absolute -bottom-1 -right-1 w-3 h-3 bg-indigo-600 rounded-full border border-white" />
-            </button>
-
-            {isThemeDropdownOpen && (
-              <>
-                <div 
-                  className="fixed inset-0 z-40 bg-transparent" 
-                  onClick={() => setIsThemeDropdownOpen(false)} 
-                />
-                <div className="absolute right-0 mt-2.5 w-48 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl z-50 p-2.5 animate-in fade-in slide-in-from-top-2 duration-200">
-                  <div className="px-2 pb-1.5 mb-1.5 border-b border-slate-100 dark:border-slate-800">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Alterar Tema</p>
-                  </div>
-                  <div className="space-y-1">
-                    {themes.map((t) => {
-                      const isSelected = activeTheme === t.id;
-                      return (
-                        <button
-                          key={t.id}
-                          type="button"
-                          onClick={() => {
-                            handleThemeChange(t.id);
-                            setIsThemeDropdownOpen(false);
-                          }}
-                          className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left text-xs font-semibold cursor-pointer transition-colors ${
-                            isSelected 
-                              ? 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400' 
-                              : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-850'
-                          }`}
-                        >
-                          <span className={`w-4.5 h-4.5 rounded-full ${t.color.split(' ')[0]} border border-slate-300 dark:border-slate-700 shrink-0`} />
-                          <span className="truncate">{t.name}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Language Selector */}
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => {
-                setIsLangDropdownOpen(!isLangDropdownOpen);
-                setIsThemeDropdownOpen(false);
-              }}
-              className="flex items-center gap-2 px-3 py-2 rounded-2xl bg-white/90 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 shadow-lg text-slate-700 dark:text-slate-200 text-xs font-bold cursor-pointer hover:bg-white dark:hover:bg-slate-900 transition-colors duration-200 backdrop-blur-md"
-            >
-              <span className="text-sm">{currentLangObj.flag}</span>
-              <span>{currentLangObj.name}</span>
-              <span className="text-[10px] opacity-60">▼</span>
-            </button>
-
-            {isLangDropdownOpen && (
-              <>
-                <div className="fixed inset-0 z-40 bg-transparent" onClick={() => setIsLangDropdownOpen(false)} />
-                <div className="absolute right-0 mt-2.5 w-48 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl z-50 p-2.5 space-y-1 animate-in fade-in slide-in-from-top-2 duration-200">
-                  <div className="px-2 pb-1.5 mb-1.5 border-b border-slate-100 dark:border-slate-800">
-                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Mudar Idioma</p>
-                  </div>
-                  <div className="max-h-60 overflow-y-auto no-scrollbar space-y-1">
-                    {LANGUAGES.map((lang) => {
-                      const isSelected = systemLang === lang.code;
-                      return (
-                        <button
-                          key={lang.code}
-                          type="button"
-                          onClick={() => {
-                            setSystemLanguage(lang.code);
-                            setSystemLang(lang.code);
-                            setIsLangDropdownOpen(false);
-                            saveLastAction(`Alterou o idioma do sistema para ${lang.name}`);
-                            fetchAiTranslation("Portal de Acesso Educacional", lang.code);
-                          }}
-                          className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl text-left text-xs font-semibold cursor-pointer transition-colors ${
-                            isSelected
-                              ? 'bg-indigo-600 text-white'
-                              : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-850'
-                          }`}
-                        >
-                          <span className="text-sm">{lang.flag}</span>
-                          <span className="truncate">{lang.name}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      </header>
-    );
-  };
-
   const renderCmdIcon = (iconName: string) => {
     switch (iconName) {
       case 'BarChart3': return <BarChart3 className="w-4 h-4" />;
@@ -1425,135 +1271,154 @@ const clientSideCache: Record<string, any> = {
   };
 
   return (
-    <main className="min-h-screen bg-theme-bg text-theme-text font-sans transition-colors duration-300 relative">
+    <main className="min-h-screen bg-[#070b16] text-slate-100 font-sans transition-colors duration-300 relative">
       <StripeCheckoutStatus />
-      {(currentView === 'landing' || currentView === 'brandbook') && renderLoginHeader()}
       
-      {/* VIEW: LANDING/LOGIN PORTAL SWITCHER (FLOATING POP-UP OVERLAY) */}
-      {currentView === 'landing' && (
-        <div className="min-h-screen bg-theme-bg relative overflow-hidden">
-          {/* Subtle Background Decorative Hero Section */}
-          <div className="min-h-screen flex flex-col items-center justify-center p-8 text-center space-y-4 opacity-40 blur-[0.5px] pointer-events-none">
-            <SysEduLogo variant="full" size={56} />
-            <h2 className="text-2xl font-black text-theme-text font-sans">SysEdu SaaS Multi-tenant</h2>
-            <p className="text-xs text-theme-text-muted max-w-md leading-relaxed">
-              Plataforma Integrada de Gestão Escolar, Acadêmica e Financeira para Instituições de Ensino.
-            </p>
-          </div>
+      {/* VIEW: BRANDBOOK & HOMEPAGE PRESENTATION */}
+      {(currentView === 'landing' || currentView === 'brandbook') && (
+        <BrandbookView 
+          onOpenLogin={() => setIsLoginModalOpen(true)}
+          onOpenCookiePolicy={() => setIsCookiePolicyOpen(true)}
+          systemLang={systemLang}
+          onChangeLanguage={(lang) => {
+            setSystemLanguage(lang);
+            setSystemLang(lang);
+            saveLastAction(`Alterou o idioma do sistema para ${lang}`);
+          }}
+          activeTheme={activeTheme}
+          onToggleTheme={() => {
+            handleThemeChange(activeTheme === 'theme-dark' ? 'theme-slate' : 'theme-dark');
+          }}
+        />
+      )}
 
-          {/* Floating Pop-up Modal Container Overlapping All Screen Elements */}
-          <div className="fixed inset-0 z-[9980] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6 overflow-y-auto animate-in fade-in duration-300">
-            <div className="relative max-w-2xl w-full bg-theme-card rounded-3xl border border-theme-border shadow-2xl p-6 md:p-10 space-y-6 text-theme-text transition-all duration-300 my-auto animate-in zoom-in-95 duration-200 ring-1 ring-white/10 overflow-hidden">
+      {/* LOGIN & SIGN-UP POPUP MODAL (OPENED VIA ⚡ LOGIN / SIGN-UP) */}
+      {isLoginModalOpen && (currentView === 'landing' || currentView === 'brandbook') && (
+        <div className="fixed inset-0 z-[9980] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6 overflow-y-auto animate-in fade-in duration-300">
+          <div 
+            className="fixed inset-0 -z-10" 
+            onClick={() => setIsLoginModalOpen(false)} 
+          />
+          <div className={`relative max-w-2xl w-full ${activeTheme === 'theme-dark' ? 'bg-slate-900 border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-900 shadow-2xl'} rounded-3xl border shadow-2xl p-6 md:p-10 space-y-6 transition-all duration-300 my-auto animate-in zoom-in-95 duration-200 ring-1 ring-white/10 overflow-hidden`}>
+            
+            {/* Close Button */}
+            <button
+              type="button"
+              onClick={() => setIsLoginModalOpen(false)}
+              className={`absolute top-5 right-5 p-2 rounded-full ${activeTheme === 'theme-dark' ? 'text-slate-400 hover:text-white hover:bg-slate-800' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'} transition-colors cursor-pointer`}
+              title="Fechar"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* Header with Title and Sign-up Button */}
+            <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b ${activeTheme === 'theme-dark' ? 'border-slate-800' : 'border-slate-200'} pb-5`}>
+              <div className="space-y-3">
+                <SysEduLogo variant={activeTheme === 'theme-dark' ? "negative" : "full"} size={38} />
+                <h1 className={`text-xl font-extrabold ${activeTheme === 'theme-dark' ? 'text-white' : 'text-slate-900'} tracking-tight font-sans`}>
+                  {translate("Portal de Acesso Educacional", systemLang)}
+                </h1>
+                <p className={`${activeTheme === 'theme-dark' ? 'text-slate-400' : 'text-slate-600'} text-xs mt-1 leading-relaxed`}>
+                  {translate("Sistema SaaS multi-tenant. Faça o login único abaixo ou registre sua própria escola.", systemLang)}
+                </p>
+              </div>
               
-              {/* Header with Title and Sign-up Button */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-theme-border pb-5">
-                <div className="space-y-3">
-                  <SysEduLogo variant="full" size={38} />
-                  <h1 className="text-xl font-extrabold text-theme-text tracking-tight font-sans">
-                    {translate("Portal de Acesso Educacional", systemLang)}
-                  </h1>
-                  <p className="text-theme-text-muted text-xs mt-1 leading-relaxed">
-                    {translate("Sistema SaaS multi-tenant. Faça o login único abaixo ou registre sua própria escola.", systemLang)}
-                  </p>
+              <button 
+                onClick={() => {
+                  setOnboardingSuccess(null);
+                  setOnboardingForm({
+                    nome: '',
+                    email_admin: '',
+                    senha: '',
+                    telefone: '',
+                    endereco: '',
+                    plano_id: plans[0]?.id || 'plano-profissional',
+                    plataforma_pagamento: 'multicaixa'
+                  });
+                  setIsOnboardingModalOpen(true);
+                }}
+                className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-blue-600/30 cursor-pointer shrink-0"
+              >
+                <Plus className="w-4 h-4" /> {translate("Registrar Escola (Sign-up)", systemLang)}
+              </button>
+            </div>
+
+            {/* Main Login Card */}
+            <div className={`${activeTheme === 'theme-dark' ? 'bg-slate-950/80 border-slate-800' : 'bg-slate-50 border-slate-200'} p-6 rounded-2xl border shadow-sm space-y-5`}>
+              <div className={`border-b ${activeTheme === 'theme-dark' ? 'border-slate-800' : 'border-slate-200'} pb-3 flex justify-between items-center`}>
+                <div>
+                  <h3 className={`font-bold font-sans ${activeTheme === 'theme-dark' ? 'text-white' : 'text-slate-900'} text-sm`}>{translate("Acesso Unificado ao Sistema", systemLang)}</h3>
+                  <p className={`${activeTheme === 'theme-dark' ? 'text-slate-400' : 'text-slate-600'} text-[11px] mt-0.5`}>{translate("Informe suas credenciais para ser redirecionado automaticamente.", systemLang)}</p>
                 </div>
-                
+              </div>
+
+              {loginError && (
+                <div className="bg-rose-950/40 border border-rose-800 text-rose-300 p-3 rounded-xl text-xs leading-relaxed font-semibold">
+                  {translate(loginError, systemLang)}
+                </div>
+              )}
+
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div>
+                  <label className={`block text-[10px] font-bold ${activeTheme === 'theme-dark' ? 'text-slate-400' : 'text-slate-600'} uppercase tracking-wider mb-1`}>{translate("Endereço de E-mail", systemLang)}</label>
+                  <input 
+                    type="email"
+                    required
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                    placeholder="nome@dominio.edu ou admin@escola.com"
+                    className={`w-full ${activeTheme === 'theme-dark' ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'} border rounded-lg p-2.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all`}
+                  />
+                </div>
+
+                <div>
+                  <label className={`block text-[10px] font-bold ${activeTheme === 'theme-dark' ? 'text-slate-400' : 'text-slate-600'} uppercase tracking-wider mb-1`}>{translate("Senha de Acesso", systemLang)}</label>
+                  <input 
+                    type="password"
+                    required
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className={`w-full ${activeTheme === 'theme-dark' ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'} border rounded-lg p-2.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all`}
+                  />
+                </div>
+
                 <button 
-                  onClick={() => {
-                    setOnboardingSuccess(null);
-                    setOnboardingForm({
-                      nome: '',
-                      email_admin: '',
-                      senha: '',
-                      telefone: '',
-                      endereco: '',
-                      plano_id: plans[0]?.id || 'plano-profissional',
-                      plataforma_pagamento: 'multicaixa'
-                    });
-                    setIsOnboardingModalOpen(true);
-                  }}
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-600/30 cursor-pointer shrink-0"
+                  type="submit"
+                  disabled={loginLoading}
+                  className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 text-white font-bold text-xs py-2.5 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-blue-600/30 cursor-pointer"
                 >
-                  <Plus className="w-4 h-4" /> {translate("Registrar Escola (Sign-up)", systemLang)}
+                  {loginLoading ? '...' : translate("Autenticar e Entrar", systemLang)} <ArrowRight className="w-4 h-4" />
                 </button>
-              </div>
+              </form>
+            </div>
 
-              {/* Main Login Card */}
-              <div className="bg-theme-bg/60 p-6 rounded-2xl border border-theme-border shadow-sm space-y-5">
-                <div className="border-b border-theme-border pb-3 flex justify-between items-center">
-                  <div>
-                    <h3 className="font-bold font-sans text-theme-text text-sm">{translate("Acesso Unificado ao Sistema", systemLang)}</h3>
-                    <p className="text-theme-text-muted text-[11px] mt-0.5">{translate("Informe suas credenciais para ser redirecionado automaticamente.", systemLang)}</p>
-                  </div>
-                </div>
+            {/* Bottom Invitation Prompt */}
+            <div className={`flex flex-col sm:flex-row items-center justify-between text-xs ${activeTheme === 'theme-dark' ? 'text-slate-400 bg-slate-950/60 border-slate-800' : 'text-slate-600 bg-slate-50 border-slate-200'} p-3.5 rounded-xl border gap-2`}>
+              <span>Quer testar a criação instantânea de uma nova escola?</span>
+              <button
+                onClick={() => {
+                  setOnboardingSuccess(null);
+                  setOnboardingForm({
+                    nome: '',
+                    email_admin: '',
+                    senha: '',
+                    telefone: '',
+                    endereco: '',
+                    plano_id: plans[0]?.id || 'plano-profissional',
+                    plataforma_pagamento: 'multicaixa'
+                  });
+                  setIsOnboardingModalOpen(true);
+                }}
+                className="text-blue-500 hover:text-blue-600 font-bold underline transition-colors cursor-pointer"
+              >
+                Registrar Escola Agora
+              </button>
+            </div>
 
-                {loginError && (
-                  <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-150 text-rose-700 dark:text-rose-350 p-3 rounded-xl text-xs leading-relaxed font-semibold">
-                    {translate(loginError, systemLang)}
-                  </div>
-                )}
-
-                <form onSubmit={handleLogin} className="space-y-4">
-                  <div>
-                    <label className="block text-[10px] font-bold text-theme-text-muted uppercase tracking-wider mb-1">{translate("Endereço de E-mail", systemLang)}</label>
-                    <input 
-                      type="email"
-                      required
-                      value={loginEmail}
-                      onChange={(e) => setLoginEmail(e.target.value)}
-                      placeholder="nome@dominio.edu ou admin@escola.com"
-                      className="w-full bg-theme-bg border border-theme-border rounded-lg p-2.5 text-xs text-theme-text font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-bold text-theme-text-muted uppercase tracking-wider mb-1">{translate("Senha de Acesso", systemLang)}</label>
-                    <input 
-                      type="password"
-                      required
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full bg-theme-bg border border-theme-border rounded-lg p-2.5 text-xs text-theme-text font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-                    />
-                  </div>
-
-                  <button 
-                    type="submit"
-                    disabled={loginLoading}
-                    className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-400 text-white font-bold text-xs py-2.5 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-600/30 cursor-pointer"
-                  >
-                    {loginLoading ? '...' : translate("Autenticar e Entrar", systemLang)} <ArrowRight className="w-4 h-4" />
-                  </button>
-                </form>
-              </div>
-
-              {/* Bottom Invitation Prompt */}
-              <div className="flex flex-col sm:flex-row items-center justify-between text-xs text-theme-text-muted bg-theme-bg/80 p-3.5 rounded-xl border border-theme-border gap-2">
-                <span>Quer testar a criação instantânea de uma nova escola?</span>
-                <button
-                  onClick={() => {
-                    setOnboardingSuccess(null);
-                    setOnboardingForm({
-                      nome: '',
-                      email_admin: '',
-                      senha: '',
-                      telefone: '',
-                      endereco: '',
-                      plano_id: plans[0]?.id || 'plano-profissional',
-                      plataforma_pagamento: 'multicaixa'
-                    });
-                    setIsOnboardingModalOpen(true);
-                  }}
-                  className="text-indigo-600 hover:text-indigo-500 font-bold underline transition-colors cursor-pointer"
-                >
-                  Registrar Escola Agora
-                </button>
-              </div>
-
-              {/* Footer */}
-              <div className="text-center text-xs text-slate-400 pt-2 border-t border-slate-100 dark:border-slate-800">
-                Nelton Benedito • MVP Sistema SaaS Educacional Multi-Contas
-              </div>
+            {/* Footer */}
+            <div className={`text-center text-xs ${activeTheme === 'theme-dark' ? 'text-slate-500 border-slate-800' : 'text-slate-400 border-slate-200'} pt-2 border-t`}>
+              Nelton Benedito • MVP Sistema SaaS Educacional Multi-Contas
             </div>
           </div>
         </div>
@@ -1982,13 +1847,6 @@ const clientSideCache: Record<string, any> = {
             }}
           />
         </ErrorBoundary>
-      )}
-
-      {/* VIEW: BRANDBOOK VIEW */}
-      {currentView === 'brandbook' && (
-        <div className="pt-20">
-          <BrandbookView />
-        </div>
       )}
 
       {/* COMPLIANT COOKIE CONSENT BANNER & POLICY MODAL */}

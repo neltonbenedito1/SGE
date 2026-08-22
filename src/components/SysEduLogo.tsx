@@ -1,17 +1,19 @@
 import React from 'react';
 
 interface SysEduLogoProps {
-  variant?: 'full' | 'vertical' | 'icon' | 'monochrome' | 'negative';
+  variant?: 'full' | 'vertical' | 'icon' | 'monochrome' | 'negative' | 'auto';
   className?: string;
   size?: number;
   showSlogan?: boolean;
+  isDark?: boolean;
 }
 
 export function SysEduLogo({ 
   variant = 'full', 
   className = '', 
   size = 40,
-  showSlogan = false 
+  showSlogan = false,
+  isDark
 }: SysEduLogoProps) {
   // Gradients and Colors based on the brandbook specs:
   // - Azul-marinho (texto/título): #0D1B3D
@@ -20,12 +22,20 @@ export function SysEduLogo({
   // - Monochrome: #6B7280 / #9CA3AF
   // - Negative: #FFFFFF
 
-  const isMonochrome = variant === 'monochrome';
-  const isNegative = variant === 'negative';
+  let resolvedVariant = variant;
+  if (variant === 'auto') {
+    resolvedVariant = isDark ? 'negative' : 'full';
+  } else if (isDark !== undefined) {
+    if (variant === 'full' && isDark) resolvedVariant = 'negative';
+    if (variant === 'negative' && !isDark) resolvedVariant = 'full';
+  }
+
+  const isMonochrome = resolvedVariant === 'monochrome';
+  const isNegative = resolvedVariant === 'negative';
 
   const sysColor = isMonochrome ? 'text-gray-600' : isNegative ? 'text-white' : 'text-[#0D1B3D]';
   const eduColor = isMonochrome ? 'text-gray-400' : isNegative ? 'text-white' : 'text-[#1E66F5]';
-  const subtitleColor = isMonochrome ? 'text-gray-400' : isNegative ? 'text-blue-200' : 'text-[#6B7280]';
+  const subtitleColor = isMonochrome ? 'text-gray-400' : isNegative ? 'text-blue-200' : 'text-[#4B5563]';
 
   // Return the SVG Icon of the graduation hat over open book
   const renderIcon = () => (
@@ -109,11 +119,11 @@ export function SysEduLogo({
     </svg>
   );
 
-  if (variant === 'icon') {
+  if (resolvedVariant === 'icon') {
     return renderIcon();
   }
 
-  if (variant === 'vertical') {
+  if (resolvedVariant === 'vertical') {
     return (
       <div className={`flex flex-col items-center text-center space-y-3 ${className}`}>
         {renderIcon()}
@@ -133,7 +143,7 @@ export function SysEduLogo({
           <p className={`text-[10px] uppercase tracking-[0.15em] font-bold ${subtitleColor}`}>
             Sistema de Gestão Educacional
           </p>
-          {(showSlogan || variant === 'vertical') && (
+          {(showSlogan || resolvedVariant === 'vertical') && (
             <p className={`text-xs italic font-medium mt-1 ${isMonochrome ? 'text-gray-400' : isNegative ? 'text-indigo-200/80' : 'text-[#6B7280]'}`}>
               "Organizar hoje, transformar o amanhã."
             </p>
