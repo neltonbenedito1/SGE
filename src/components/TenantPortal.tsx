@@ -20,6 +20,7 @@ import {
   onSnapshot
 } from 'firebase/firestore';
 import { db, registerUserInFirebaseAuth } from '../lib/firebase';
+import { authSecurityService } from '../services/authSecurityService';
 import { 
   Tenant, 
   Plano, 
@@ -144,6 +145,7 @@ import { GlobalPermissionsModule, DEFAULT_CATEGORIES } from './GlobalPermissions
 import { NotificationSettingsModule } from './NotificationSettingsModule';
 import { UserPermissionsChecklist } from './UserPermissionsChecklist';
 import { LANGUAGES, translate } from '../lib/translation';
+import LanguageSwitcher from './LanguageSwitcher';
 import { SysEduLogo } from './SysEduLogo';
 import { SearchableDropdown } from './SearchableDropdown';
 import { SamsungLoadingScreen } from './SamsungLoadingScreen';
@@ -2985,27 +2987,32 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     try {
       const shouldBeActive = isTargetAdmin ? true : resetPasswordForm.desbloquear;
 
+      // 1. Atualização via authSecurityService para garantir troca segura no Firebase Auth e revogação de tokens
+      try {
+        await authSecurityService.changePassword({
+          targetUid: resetPasswordTargetUser.id,
+          newPassword: resetPasswordForm.novaSenha,
+          callerUid: currentUserEmail || 'admin',
+          callerRole: currentUserRole || 'admin',
+          callerTenantId: currentTenantId,
+          email: resetPasswordTargetUser.email
+        });
+      } catch (authSecErr: any) {
+        console.warn("authSecurityService note during reset:", authSecErr);
+      }
+
+      // 2. Marcar no Firestore que o usuário deve obrigatoriamente alterar a senha ao logar
       await setDoc(doc(db, 'users', resetPasswordTargetUser.id), {
-        senha_temporaria: resetPasswordForm.novaSenha,
-        senha: resetPasswordForm.novaSenha,
         ativo: shouldBeActive,
         requer_alteracao_senha: true,
+        mustChangePassword: true,
         updated_at: new Date().toISOString()
       }, { merge: true });
 
-      // Sincronizar com Firebase Auth se configurado
-      if (resetPasswordTargetUser.email) {
-        try {
-          await registerUserInFirebaseAuth(resetPasswordTargetUser.email, resetPasswordForm.novaSenha);
-        } catch (authErr) {
-          console.warn("Sync with Firebase Auth:", authErr);
-        }
-      }
-
       if (shouldBeActive) {
-        showSystemNotification(`Senha redefinida com sucesso para "${resetPasswordTargetUser.nome}"! Usuário desbloqueado e ativo.`, "sucesso");
+        showSystemNotification(`Senha redefinida com sucesso para "${resetPasswordTargetUser.nome}"! Senhas antigas foram invalidadas.`, "sucesso");
       } else {
-        showSystemNotification(`Senha redefinida para "${resetPasswordTargetUser.nome}". O usuário foi bloqueado. Será necessário redefinir a senha novamente para o desbloquear.`, "info");
+        showSystemNotification(`Senha redefinida para "${resetPasswordTargetUser.nome}". O usuário foi bloqueado.`, "info");
       }
 
       setIsResetPasswordDrawerOpen(false);
@@ -3744,6 +3751,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             tipo: 'docente',
             ativo: true,
             tenant_id: currentTenantId,
+            modulo_acessos: getInheritedModuloAcessos('docente'),
             created_at: new Date().toISOString()
           });
 
@@ -3996,6 +4004,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             tipo: 'estudante',
             ativo: true,
             tenant_id: currentTenantId,
+            modulo_acessos: getInheritedModuloAcessos('estudante'),
             created_at: new Date().toISOString()
           });
 
@@ -4526,6 +4535,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           tenant_id: currentTenantId,
           escola_id: docenteData.escola_id || schools[0]?.id || '',
           senha_temporaria: '12345678',
+          modulo_acessos: getInheritedModuloAcessos('docente'),
           created_at: new Date().toISOString()
         });
 
@@ -5005,21 +5015,44 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     );
   }
 
-  function hasPermission(moduleKey: string, featureKey?: 'visualizar' | 'criar' | 'editar' | 'excluir'): boolean {
-    if (moduleKey === 'analytics') {
-      const isAllowedRole = currentUserRole === 'admin' || currentUserRole === 'director' || currentUserRole === 'docente' ||
-                            loggedInUser?.tipo === 'admin' || loggedInUser?.tipo === 'director' || loggedInUser?.tipo === 'docente';
-      if (!isAllowedRole) return false;
-      if (loggedInUser && loggedInUser.modulo_acessos && (loggedInUser.modulo_acessos as any).analytics) {
-        return !!(loggedInUser.modulo_acessos as any).analytics.habilitado;
-      }
-      return true;
+  const getInheritedModuloAcessos = (tipo: string) => {
+    const normTipo = tipo.toLowerCase().trim();
+    const category = globalCategories.find(c => {
+      const catCode = (c.codigo || '').toLowerCase().trim();
+      const catId = (c.id || '').toLowerCase().trim();
+      const catNome = (c.nome || '').toLowerCase().trim();
+      return catCode === normTipo || catId === normTipo || catNome === normTipo || catCode.includes(normTipo) || catId.includes(normTipo);
+    });
+    if (category && category.modulos) {
+      return JSON.parse(JSON.stringify(category.modulos));
     }
+    // Fallback based on type
+    if (normTipo === 'estudante') {
+      const estCat = DEFAULT_CATEGORIES.find(c => c.id === 'estudantes');
+      if (estCat) return JSON.parse(JSON.stringify(estCat.modulos));
+    }
+    if (normTipo === 'docente' || normTipo === 'professor') {
+      const profCat = DEFAULT_CATEGORIES.find(c => c.id === 'professores');
+      if (profCat) return JSON.parse(JSON.stringify(profCat.modulos));
+    }
+    return JSON.parse(JSON.stringify(DEFAULT_MODULO_ACESSOS));
+  };
+
+  function hasPermission(moduleKey: string, featureKey?: 'visualizar' | 'criar' | 'editar' | 'excluir'): boolean {
+    let normalizedKey = moduleKey;
+    if (moduleKey === 'classes') normalizedKey = 'classes_escolares';
+    if (moduleKey === 'utilizadores' || moduleKey === 'usuarios') normalizedKey = 'usuarios';
+    if (moduleKey === 'configuracoes' || moduleKey === 'configuracao') normalizedKey = 'configuracao';
+    if (moduleKey === 'processos') normalizedKey = 'processos';
+    if (moduleKey === 'permissoes_globais') normalizedKey = 'usuarios';
+
+    if (normalizedKey === 'dashboard') return true;
 
     // Check if the subscription plan allows this module key.
     const planKeyMap: Record<string, string> = {
       provincias: 'provincias',
       escolas: 'escolas',
+      salas: 'escolas',
       docentes: 'docentes',
       estudantes: 'estudantes',
       turmas: 'turmas',
@@ -5040,68 +5073,81 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       analytics: 'analytics'
     };
 
-    const planKey = planKeyMap[moduleKey];
+    const planKey = planKeyMap[normalizedKey];
     if (plan && planKey && plan.modulos_permitidos) {
       if (!plan.modulos_permitidos.includes(planKey)) {
         return false;
       }
     }
 
-    const effectiveRole = loggedInUser?.tipo || currentUserRole;
+    const effectiveRole = (loggedInUser?.tipo || currentUserRole || '').toString().toLowerCase().trim();
     if (effectiveRole === 'admin' || currentUserRole === 'admin') return true;
 
     // Check dynamic category permissions from Global Permissions module
     if (globalCategories && globalCategories.length > 0) {
-      const category = globalCategories.find(c => 
-        c.codigo === effectiveRole || 
-        c.id === effectiveRole || 
-        c.nome.toLowerCase() === effectiveRole.toLowerCase()
-      );
+      const category = globalCategories.find(c => {
+        const catCode = (c.codigo || '').toLowerCase().trim();
+        const catId = (c.id || '').toLowerCase().trim();
+        const catNome = (c.nome || '').toLowerCase().trim();
+        return catCode === effectiveRole || catId === effectiveRole || catNome === effectiveRole || catCode.includes(effectiveRole) || catId.includes(effectiveRole);
+      });
 
       if (category && category.modulos) {
-        const modConfig = category.modulos[moduleKey];
+        const modConfig = category.modulos[normalizedKey];
         if (modConfig) {
           if (!modConfig.habilitado) return false;
           if (featureKey && modConfig.acoes) {
             return !!modConfig.acoes[featureKey];
           }
           return !!modConfig.habilitado;
+        } else {
+          // If the category is found but the specific module key is not in category.modulos,
+          // then it is not associated with this user category/role. Return false.
+          if (normalizedKey === 'notificacoes') return true;
+          return false;
         }
       }
     }
 
-    const isDocente = effectiveRole === 'docente';
-    const isEstudante = effectiveRole === 'estudante';
+    // Fallback to static/legacy rules if category config is not loaded or not found
+    const isDocente = effectiveRole === 'docente' || effectiveRole.includes('docent') || effectiveRole.includes('prof');
+    const isEstudante = effectiveRole === 'estudante' || effectiveRole.includes('estudant') || effectiveRole.includes('alun');
+    const isPai = effectiveRole === 'pai' || effectiveRole.includes('pai') || effectiveRole.includes('encarregado');
 
-    // 2. Student restrictions
     if (isEstudante) {
       const allowedStudentModules = ['dashboard', 'atividades', 'estudantes', 'turmas', 'disciplinas', 'pauta_geral', 'pautas', 'processos', 'calendario', 'assiduidade', 'biblioteca'];
-      if (!allowedStudentModules.includes(moduleKey)) return false;
+      if (!allowedStudentModules.includes(normalizedKey)) return false;
       if (featureKey && featureKey !== 'visualizar') return false;
       return true;
     }
 
-    // 3. Teacher restrictions
+    if (isPai) {
+      const allowedPaiModules = ['dashboard', 'atividades', 'estudantes', 'pauta_geral', 'pautas', 'processos', 'calendario', 'assiduidade'];
+      if (!allowedPaiModules.includes(normalizedKey)) return false;
+      if (featureKey && featureKey !== 'visualizar') return false;
+      return true;
+    }
+
     if (isDocente) {
-      const forbiddenTeacherModules = ['usuarios', 'configuracao'];
-      if (forbiddenTeacherModules.includes(moduleKey)) return false;
+      const forbiddenTeacherModules = ['usuarios', 'configuracao', 'provincias', 'escolas', 'auditoria'];
+      if (forbiddenTeacherModules.includes(normalizedKey)) return false;
       if (!featureKey || featureKey === 'visualizar') return true;
-      if (['pautas', 'pauta_geral', 'processos', 'assiduidade'].includes(moduleKey)) {
+      if (['pautas', 'pauta_geral', 'processos', 'assiduidade', 'atividades', 'biblioteca'].includes(normalizedKey)) {
         return true;
       }
       return false;
     }
 
-    // 4. Fallback/Standard logic
+    // Fallback
     if (!loggedInUser) {
-      if (effectiveRole === 'director') return true;
+      if (effectiveRole === 'director' || effectiveRole.includes('direc')) return true;
       if (featureKey === 'visualizar') return true;
       return false;
     }
 
-    const access = loggedInUser.modulo_acessos?.[moduleKey];
+    const access = loggedInUser.modulo_acessos?.[normalizedKey];
     if (!access) {
-      if (loggedInUser.tipo === 'director') return true;
+      if (loggedInUser.tipo === 'director' || loggedInUser.tipo?.toString().toLowerCase().includes('direc')) return true;
       if (featureKey === 'visualizar') return true;
       return false;
     }
@@ -5965,6 +6011,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             senha_temporaria: "12345678",
             permissoes: ["R", "W"],
             ativo: true,
+            modulo_acessos: getInheritedModuloAcessos('docente'),
             created_at: new Date().toISOString()
           };
           await setDoc(doc(db, 'users', userGenId), newUser);
@@ -6084,6 +6131,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             senha_temporaria: studentPwd,
             permissoes: ["R"],
             ativo: true,
+            modulo_acessos: getInheritedModuloAcessos('estudante'),
             created_at: new Date().toISOString()
           };
           await setDoc(doc(db, 'users', userGenId), newUser);
@@ -7095,6 +7143,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
         {/* Right Actions Container */}
         <div className="flex items-center gap-3">
+          {/* Language Switcher */}
+          <LanguageSwitcher />
+
           {/* Theme Toggle Switch */}
           <div className="flex items-center gap-2.5 mr-1">
             <span className="text-[10px] font-extrabold text-slate-300 uppercase tracking-wider">Modo escuro</span>
@@ -7241,40 +7292,49 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
         {/* Modules Navigation Links */}
         <nav className="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto overscroll-y-contain no-scrollbar">
-          {renderGroupHeader('Principal')}
-          {renderMenuItem('dashboard', 'Dashboard', <Sliders className="w-4.5 h-4.5" />)}
-          {hasPermission('atividades') && renderMenuItem('atividades', 'Actividades', <CheckSquare className="w-4.5 h-4.5" />)}
-          {(currentUserRole === 'admin' || loggedInUser?.tipo === 'admin') && renderMenuItem('analise_administrativa', 'Análise Administrativa', <ShieldAlert className="w-4.5 h-4.5" />)}
-          {hasPermission('analytics') && renderMenuItem('analytics', 'Análises & Analytics', <BarChart3 className="w-4.5 h-4.5" />)}
+          {(() => {
+            const showPrincipal = hasPermission('dashboard') || hasPermission('atividades') || hasPermission('analise_administrativa') || hasPermission('analytics');
+            const showEstrutura = hasPermission('provincias') || hasPermission('escolas') || hasPermission('salas');
+            const showAcademico = hasPermission('docentes') || hasPermission('estudantes') || hasPermission('turmas') || hasPermission('disciplinas') || hasPermission('classes') || hasPermission('calendario') || hasPermission('pautas') || hasPermission('pauta_geral') || hasPermission('assiduidade') || hasPermission('biblioteca') || (plan?.modulos_permitidos?.includes('processo') && hasPermission('processos'));
+            const showComunicacao = hasPermission('notificacoes');
+            const showAdministracao = hasPermission('utilizadores') || hasPermission('permissoes_globais') || hasPermission('configuracoes');
 
-          {renderGroupHeader('Estrutura')}
-          {hasPermission('provincias') && renderMenuItem('provincias', 'Distritos / Províncias', <Map className="w-4.5 h-4.5" />)}
-          {hasPermission('escolas') && renderMenuItem('escolas', `Escolas (${schools.length})`, <School className="w-4.5 h-4.5" />)}
-          {hasPermission('escolas') && renderMenuItem('salas', `Salas de Aula (${rawSalas.length})`, <DoorOpen className="w-4.5 h-4.5" />)}
+            return (
+              <>
+                {showPrincipal && renderGroupHeader('Principal')}
+                {renderMenuItem('dashboard', 'Dashboard', <Sliders className="w-4.5 h-4.5" />)}
+                {hasPermission('atividades') && renderMenuItem('atividades', 'Actividades', <CheckSquare className="w-4.5 h-4.5" />)}
+                {hasPermission('analise_administrativa') && renderMenuItem('analise_administrativa', 'Análise Administrativa', <ShieldAlert className="w-4.5 h-4.5" />)}
+                {hasPermission('analytics') && renderMenuItem('analytics', 'Análises & Analytics', <BarChart3 className="w-4.5 h-4.5" />)}
 
-          {renderGroupHeader('Académico')}
-          {hasPermission('docentes') && renderMenuItem('docentes', 'Docentes', <Users className="w-4.5 h-4.5" />)}
-          {hasPermission('estudantes') && renderMenuItem('estudantes', 'Estudantes', <GraduationCap className="w-4.5 h-4.5" />)}
-          {hasPermission('turmas') && renderMenuItem('turmas', 'Turmas', <BookOpen className="w-4.5 h-4.5" />)}
-          {hasPermission('disciplinas') && renderMenuItem('disciplinas', `Disciplinas (${classes.filter(isBaseDiscipline).length})`, <BookMarked className="w-4.5 h-4.5" />)}
-          {hasPermission('classes') && renderMenuItem('classes_escolares', `Classes (${classesEscolares.length})`, <List className="w-4.5 h-4.5" />)}
-          {hasPermission('calendario') && renderMenuItem('calendario', 'Calendário & Horários', <Calendar className="w-4.5 h-4.5" />)}
-          {hasPermission('pautas') && renderMenuItem('pauta_geral', 'Pauta Geral', <Award className="w-4.5 h-4.5" />)}
-          {hasPermission('pautas') && renderMenuItem('pautas', 'Lançamento (Notas)', <FileSpreadsheet className="w-4.5 h-4.5" />)}
-          {hasPermission('assiduidade') && renderMenuItem('assiduidade', 'Controle de Assiduidade', <Fingerprint className="w-4.5 h-4.5" />)}
-          {hasPermission('biblioteca') && renderMenuItem('biblioteca', 'Biblioteca Digital', <Library className="w-4.5 h-4.5" />)}
-          
-          {plan?.modulos_permitidos?.includes('processo') && hasPermission('processos') && (
-            renderMenuItem('processos', 'Processo Individual', <FolderOpen className="w-4.5 h-4.5" />)
-          )}
+                {showEstrutura && renderGroupHeader('Estrutura')}
+                {hasPermission('provincias') && renderMenuItem('provincias', 'Distritos / Províncias', <Map className="w-4.5 h-4.5" />)}
+                {hasPermission('escolas') && renderMenuItem('escolas', `Escolas (${schools.length})`, <School className="w-4.5 h-4.5" />)}
+                {hasPermission('salas') && renderMenuItem('salas', `Salas de Aula (${rawSalas.length})`, <DoorOpen className="w-4.5 h-4.5" />)}
 
-          {renderGroupHeader('Comunicação')}
-          {renderMenuItem('notificacoes', 'Notificações', <Bell className="w-4.5 h-4.5" />)}
+                {showAcademico && renderGroupHeader('Académico')}
+                {hasPermission('docentes') && renderMenuItem('docentes', 'Docentes', <Users className="w-4.5 h-4.5" />)}
+                {hasPermission('estudantes') && renderMenuItem('estudantes', 'Estudantes', <GraduationCap className="w-4.5 h-4.5" />)}
+                {hasPermission('turmas') && renderMenuItem('turmas', 'Turmas', <BookOpen className="w-4.5 h-4.5" />)}
+                {hasPermission('disciplinas') && renderMenuItem('disciplinas', `Disciplinas (${classes.filter(isBaseDiscipline).length})`, <BookMarked className="w-4.5 h-4.5" />)}
+                {hasPermission('classes') && renderMenuItem('classes_escolares', `Classes (${classesEscolares.length})`, <List className="w-4.5 h-4.5" />)}
+                {hasPermission('calendario') && renderMenuItem('calendario', 'Calendário & Horários', <Calendar className="w-4.5 h-4.5" />)}
+                {hasPermission('pauta_geral') && renderMenuItem('pauta_geral', 'Pauta Geral', <Award className="w-4.5 h-4.5" />)}
+                {hasPermission('pautas') && renderMenuItem('pautas', 'Lançamento (Notas)', <FileSpreadsheet className="w-4.5 h-4.5" />)}
+                {hasPermission('assiduidade') && renderMenuItem('assiduidade', 'Controle de Assiduidade', <Fingerprint className="w-4.5 h-4.5" />)}
+                {hasPermission('biblioteca') && renderMenuItem('biblioteca', 'Biblioteca Digital', <Library className="w-4.5 h-4.5" />)}
+                {plan?.modulos_permitidos?.includes('processo') && hasPermission('processos') && renderMenuItem('processos', 'Processo Individual', <FolderOpen className="w-4.5 h-4.5" />)}
 
-          {renderGroupHeader('Administração')}
-          {hasPermission('utilizadores') && renderMenuItem('usuarios', 'Utilizadores', <UserPlus className="w-4.5 h-4.5" />)}
-          {(currentUserRole === 'admin' || currentUserRole === 'director' || hasPermission('utilizadores')) && renderMenuItem('permissoes_globais', 'Permissões Globais', <ShieldCheck className="w-4.5 h-4.5" />)}
-          {hasPermission('configuracoes') && renderMenuItem('configuracao', 'Configurações', <Sliders className="w-4.5 h-4.5" />)}
+                {showComunicacao && renderGroupHeader('Comunicação')}
+                {hasPermission('notificacoes') && renderMenuItem('notificacoes', 'Notificações', <Bell className="w-4.5 h-4.5" />)}
+
+                {showAdministracao && renderGroupHeader('Administração')}
+                {hasPermission('utilizadores') && renderMenuItem('usuarios', 'Utilizadores', <UserPlus className="w-4.5 h-4.5" />)}
+                {hasPermission('permissoes_globais') && renderMenuItem('permissoes_globais', 'Permissões Globais', <ShieldCheck className="w-4.5 h-4.5" />)}
+                {hasPermission('configuracoes') && renderMenuItem('configuracao', 'Configurações', <Sliders className="w-4.5 h-4.5" />)}
+              </>
+            );
+          })()}
         </nav>
 
         {/* Footer / User Profile */}
@@ -7351,6 +7411,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 </p>
               </div>
               <div className="flex items-center gap-4 flex-wrap">
+                {/* Language Switcher */}
+                <LanguageSwitcher />
+
                 {/* Theme Toggle Switch */}
                 <div className="flex items-center gap-2.5">
                   <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Modo escuro</span>

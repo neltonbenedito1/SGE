@@ -1,0 +1,11 @@
+{
+  "title": "Digital Library",
+  "search_books": "Search Books...",
+  "add_book": "Add Book",
+  "book_title": "Book Title",
+  "author": "Author",
+  "category": "Category",
+  "available_copies": "Available Copies",
+  "borrow_book": "Borrow Book",
+  "return_book": "Return Book"
+}

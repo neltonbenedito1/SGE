@@ -289,9 +289,35 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
     return 0;
   };
 
+  const checkUserCategoryMatch = useCallback((categoriaAtribuicao?: string): boolean => {
+    if (!categoriaAtribuicao || categoriaAtribuicao === 'Todos') return false;
+    const userRole = normRole.toLowerCase();
+    
+    // Find category in globalCategories
+    const catObj = globalCategories.find((c: any) => 
+      c.nome?.toLowerCase() === categoriaAtribuicao.toLowerCase() || 
+      c.codigo?.toLowerCase() === categoriaAtribuicao.toLowerCase() || 
+      c.id?.toLowerCase() === categoriaAtribuicao.toLowerCase()
+    );
+
+    if (catObj) {
+      const catCode = (catObj.codigo || catObj.id || '').toLowerCase().trim();
+      return userRole === catCode || userRole.includes(catCode) || catCode.includes(userRole);
+    }
+
+    // Fallback simple match
+    const targetCat = categoriaAtribuicao.toLowerCase().trim();
+    return userRole === targetCat || userRole.includes(targetCat) || targetCat.includes(userRole);
+  }, [normRole, globalCategories]);
+
   // Check if current user is directly assigned as responsible for the activity
   const checkIsDirectlyResponsible = useCallback((act: ActividadePendente): boolean => {
     if (!loggedInUser || currentUserAliases.size === 0) return false;
+
+    // Check if the user's category matches the assigned category
+    if (act.categoria_atribuicao && checkUserCategoryMatch(act.categoria_atribuicao)) {
+      return true;
+    }
 
     // 1. Direct ID match or Responsável ID lookup
     if (act.responsavel_id) {
@@ -367,19 +393,17 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
     }
 
     return false;
-  }, [loggedInUser, currentUserAliases, tenantUsers, teachers, students]);
+  }, [loggedInUser, currentUserAliases, tenantUsers, teachers, students, checkUserCategoryMatch]);
 
-  // Check Category Hierarchy Visibility:
-  // User can only view activities whose category is <= their own category level
-  // Exception: Admin (level 4) sees ALL activities.
-  // Exception: Directly assigned user sees their own activity even if assigned across roles.
+  // Check Category Hierarchy Visibility
   const checkIsCategoryVisible = useCallback((act: ActividadePendente): boolean => {
     if (isAdmin) return true; // Administrator sees everything
     if (checkIsDirectlyResponsible(act)) return true; // Direct assignment is always visible to assignee
 
-    const reqLevel = getCategoryRequiredLevel(act.categoria_atribuicao);
-    return reqLevel <= userCategoryLevel;
-  }, [isAdmin, checkIsDirectlyResponsible, userCategoryLevel]);
+    if (!act.categoria_atribuicao || act.categoria_atribuicao === 'Todos') return true;
+
+    return checkUserCategoryMatch(act.categoria_atribuicao);
+  }, [isAdmin, checkIsDirectlyResponsible, checkUserCategoryMatch]);
 
   // Check if current logged-in user can complete the activity
   // Rule: session.user_id === activity.responsavel_id OR isAdmin

@@ -85,6 +85,11 @@ export interface User {
   foto_url?: string;
   senha_temporaria?: string;
   ativo: boolean;
+  mustChangePassword?: boolean;
+  requer_alteracao_senha?: boolean;
+  passwordLastChangedAt?: any;
+  passwordChangedBy?: string;
+  sessionsRevokedAt?: any;
   created_at: string;
 }
 

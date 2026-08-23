@@ -42,8 +42,8 @@ const PROVINCE_COORDS: Record<string, [number, number]> = {
 const MAP_LAYERS = {
   streets: {
     name: 'Padrão',
-    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
   },
   satellite: {
     name: 'Satélite',

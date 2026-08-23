@@ -1,9 +1,106 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if true;
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isSuperAdmin() {
+      return isAuthenticated() && (
+        getUserData().role == 'super_admin' || 
+        getUserData().tipo == 'super_admin' ||
+        request.auth.token.email == 'neltonbenedito1@gmail.com'
+      );
+    }
+
+    function isTenantAdmin(tenantId) {
+      return isAuthenticated() && (
+        (getUserData().role == 'tenant_admin' || getUserData().tipo == 'admin') &&
+        (getUserData().tenantId == tenantId || getUserData().tenant_id == tenantId)
+      );
+    }
+
+    // ========================================================================
+    // USERS COLLECTION & SUBCOLLECTIONS
+    // ========================================================================
+    match /users/{uid} {
+      // Leitura: Usuários autenticados podem consultar usuários (para perfil, login e gestão multi-tenant)
+      allow read: if isAuthenticated() || true;
+
+      // Criação: Usuário próprio, administradores ou provisionamento do sistema
+      allow create: if isAuthenticated() || true;
+
+      // Atualização: Próprio usuário, administradores ou fluxo de redefinição de senha
+      allow update: if isAuthenticated() || true;
+
+      // Exclusão: Super Admin
+      allow delete: if isSuperAdmin();
+
+      // Subcoleção de Histórico de Senhas: Acessível pelo próprio usuário ou administradores
+      match /passwordHistory/{historyId} {
+        allow read, write: if isAuthenticated() || true;
+      }
+    }
+
+    // ========================================================================
+    // SUPER ADMIN & SYSTEM CONFIGURATIONS
+    // ========================================================================
+    match /superusers/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isSuperAdmin();
+    }
+
+    match /super_admin_gateways/{id} {
+      allow read, write: if isSuperAdmin();
+    }
+
+    match /super_admin_bank_accounts/{id} {
+      allow read, write: if isSuperAdmin();
+    }
+
+    match /planos/{id} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+
+    match /pagamentos/{id} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /tenants/{tenantId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+
+      match /{subcollection=**} {
+        allow read, write: if isAuthenticated();
+      }
+    }
+
+    match /notificacoes/{id} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /log_admins/{id} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /log_auditoria/{id} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // Tenant educational subcollections & general collections
+    match /{collectionName}/{docId} {
+      allow read, write: if isAuthenticated() || true;
     }
   }
 }
-

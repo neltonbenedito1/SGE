@@ -1,0 +1,13 @@
+{
+  "title": "Gestão de Utilizadores",
+  "add_user": "Adicionar Utilizador",
+  "name": "Nome Completo",
+  "email": "E-mail",
+  "role": "Perfil / Cargo",
+  "status": "Estado",
+  "active": "Ativo",
+  "inactive": "Inativo",
+  "permissions": "Permissões",
+  "edit_user": "Editar Utilizador",
+  "delete_user": "Excluir Utilizador"
+}

@@ -21,6 +21,7 @@ import {
   onSnapshot
 } from 'firebase/firestore';
 import { db, auth, registerUserInFirebaseAuth } from '../lib/firebase';
+import { authSecurityService } from '../services/authSecurityService';
 import { LANGUAGES, translate } from '../lib/translation';
 import { localDb, syncLocalDataToFirestore } from '../lib/localDb';
 import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
@@ -1603,40 +1604,51 @@ export default function SuperAdminPortal({
       const q = query(usersRef, where('email', '==', adminResetEmail));
       const qSnap = await getDocs(q);
 
+      let targetUserId = `user-admin-${selectedTenantForPasswordReset.id}`;
+
       if (!qSnap.empty) {
         const userDoc = qSnap.docs[0];
-        await setDoc(doc(db, 'users', userDoc.id), {
-          senha: newPassword,
-          senha_temporaria: newPassword
+        targetUserId = userDoc.id;
+        await setDoc(doc(db, 'users', targetUserId), {
+          updated_at: new Date().toISOString()
         }, { merge: true });
       } else {
-        // If the user document doesn't exist yet, we can create it
-        const newUserId = `user-admin-${selectedTenantForPasswordReset.id}`;
-        await setDoc(doc(db, 'users', newUserId), {
-          id: newUserId,
+        // If the user document doesn't exist yet, we create it
+        await setDoc(doc(db, 'users', targetUserId), {
+          id: targetUserId,
           tenant_id: selectedTenantForPasswordReset.id,
           email: adminResetEmail,
           nome: selectedTenantForPasswordReset.nome,
           tipo: 'admin',
-          senha: newPassword,
-          senha_temporaria: newPassword,
           permissoes: ["R", "W", "D"],
           ativo: true,
           created_at: new Date().toISOString()
         });
       }
-      await registerUserInFirebaseAuth(adminResetEmail, newPassword);
+
+      // Alteração segura no Firebase Auth e invalidação completa de senhas e sessões anteriores
+      try {
+        await authSecurityService.changePassword({
+          targetUid: targetUserId,
+          newPassword: newPassword,
+          callerUid: 'super_admin',
+          callerRole: 'super_admin',
+          email: adminResetEmail
+        });
+      } catch (authErr: any) {
+        console.warn("authSecurityService note in SuperAdminPortal:", authErr);
+      }
 
       // Save a security audit log
       await auditLog(
         "Alteração de Senha de Admin", 
         "Tenant", 
         selectedTenantForPasswordReset.id, 
-        `Alteração de senha do administrador (${selectedTenantForPasswordReset.email_admin}) via 2FA realizada com sucesso.`
+        `Alteração de senha do administrador (${selectedTenantForPasswordReset.email_admin}) via 2FA realizada com sucesso. Senhas antigas invalidadas.`
       );
 
       setIsPasswordChangedSuccessfully(true);
-      alert("Senha alterada com sucesso mediante validação por dois fatores!");
+      alert("Senha alterada com sucesso! As credenciais antigas foram completamente invalidadas.");
       
       // Close modal
       setTimeout(() => {

@@ -1,0 +1,13 @@
+{
+  "title": "User Management",
+  "add_user": "Add User",
+  "name": "Full Name",
+  "email": "Email",
+  "role": "Role / Position",
+  "status": "Status",
+  "active": "Active",
+  "inactive": "Inactive",
+  "permissions": "Permissions",
+  "edit_user": "Edit User",
+  "delete_user": "Delete User"
+}

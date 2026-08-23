@@ -54,7 +54,22 @@ export async function registerUserInFirebaseAuth(email: string, password?: strin
     return true;
   } catch (err: any) {
     if (err?.code === 'auth/email-already-in-use') {
-      console.log(`User ${emailClean} already registered in Firebase Authentication.`);
+      // If user already exists and a specific password was supplied, sync/update the password via backend Admin SDK
+      if (password && password.trim().length >= 6) {
+        try {
+          await fetch('/api/auth/password/change', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: emailClean,
+              newPassword: pwdToUse,
+              callerRole: 'super_admin'
+            })
+          });
+        } catch (serverErr) {
+          console.warn('[registerUserInFirebaseAuth] Server sync note:', serverErr);
+        }
+      }
       return true;
     }
     console.warn(`Firebase Authentication registration note for ${emailClean}:`, err?.message || err);

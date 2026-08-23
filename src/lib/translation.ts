@@ -322,6 +322,8 @@ export const DICTIONARY: Record<string, Record<LanguageCode, string>> = {
   }
 };
 
+import i18n from '../i18n';
+
 // Local storage keys
 const LANG_STORAGE_KEY = "saas_educ_system_lang";
 const CACHE_STORAGE_KEY = "saas_educ_system_lang_cache";
@@ -335,6 +337,9 @@ export function getSystemLanguage(): string {
 // Set active language
 export function setSystemLanguage(lang: string): void {
   localStorage.setItem(LANG_STORAGE_KEY, lang);
+  i18n.changeLanguage(lang).catch(err => {
+    console.warn("i18n language change failed in setSystemLanguage bridge:", err);
+  });
   try {
     window.dispatchEvent(new Event("languagechange"));
   } catch (e) {
@@ -375,20 +380,33 @@ function saveTranslationToCache(text: string, lang: string, translated: string) 
 export function translate(text: string, customLang?: string): string {
   if (!text) return "";
   const lang = customLang || getSystemLanguage();
+  
+  // 1. Try i18next first
+  // Translate keys directly if they exist in namespaces
+  if (i18n.exists(text, { lng: lang })) {
+    return i18n.t(text, { lng: lang });
+  }
+
+  // 2. Also map standard sentences if they are defined in 'common' under a sanitized key format or direct key lookup
+  const cleanKey = text.toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/(^_+|_+$)/g, '');
+  if (i18n.exists(`common:${cleanKey}`, { lng: lang })) {
+    return i18n.t(`common:${cleanKey}`, { lng: lang });
+  }
+
   if (lang === "pt") return text; // Default is Portuguese
 
-  // 1. Look up in static dictionary
+  // 3. Look up in static dictionary
   const dictMatch = DICTIONARY[text];
   if (dictMatch && dictMatch[lang]) {
     return dictMatch[lang];
   }
 
-  // 2. Look up in dynamic AI translation cache
+  // 4. Look up in dynamic AI translation cache
   if (translationCache[lang] && translationCache[lang][text]) {
     return translationCache[lang][text];
   }
 
-  // 3. Fallback to original text immediately (background translator will fetch it asynchronously)
+  // 5. Fallback to original text immediately (background translator will fetch it asynchronously)
   return text;
 }
 

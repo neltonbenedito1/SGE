@@ -83,6 +83,7 @@ import {
 } from './lib/cookies';
 import { CookieBanner } from './components/CookieBanner';
 import { CookiePolicyModal } from './components/CookiePolicyModal';
+import { MandatoryPasswordResetModal } from './components/MandatoryPasswordResetModal';
 import { SessionStateService } from './lib/userState';
 import { localDb } from './lib/localDb';
 
@@ -120,6 +121,17 @@ export default function App() {
       saveCurrentView(currentView);
     }
   }, [currentView]);
+
+  // Keep systemLang state in sync with global language changes (from useLanguage hook)
+  useEffect(() => {
+    const handleLanguageChange = () => {
+      setSystemLang(getSystemLanguage());
+    };
+    window.addEventListener('languagechange', handleLanguageChange);
+    return () => {
+      window.removeEventListener('languagechange', handleLanguageChange);
+    };
+  }, []);
 
   // Logout handler that clears client session cookies and calls server logout endpoint
   const handleLogout = async () => {
@@ -499,7 +511,23 @@ export default function App() {
 
       // 1. Super Admin Credentials Check
       if (emailClean === 'neltonbenedito1@gmail.com') {
-        if (pwdClean === 'Errado23x') {
+        let isSuperAdminAuth = false;
+        try {
+          await signInWithEmailAndPassword(auth, emailClean, pwdClean);
+          isSuperAdminAuth = true;
+        } catch {
+          // If not in Firebase Auth yet, allow initial default bootstrap once
+          if (pwdClean === 'Errado23x') {
+            isSuperAdminAuth = true;
+            try {
+              await registerUserInFirebaseAuth(emailClean, pwdClean);
+            } catch (e) {
+              console.warn("SuperAdmin bootstrap note:", e);
+            }
+          }
+        }
+
+        if (isSuperAdminAuth) {
           saveUserSessionCookie({
             nome: 'Administrador Geral',
             email: 'neltonbenedito1@gmail.com',
@@ -514,7 +542,7 @@ export default function App() {
           setLoginLoading(false);
           return;
         } else {
-          setLoginError('Credenciais inválidas');
+          setLoginError('Credenciais inválidas. E-mail ou senha incorretos.');
           setLoginLoading(false);
           return;
         }
@@ -555,7 +583,7 @@ export default function App() {
                 nome: d.nome || 'Docente',
                 tipo: 'docente',
                 ativo: true,
-                senha: '12345678',
+                mustChangePassword: true,
                 senha_temporaria: '12345678'
               };
             }
@@ -576,7 +604,7 @@ export default function App() {
                 nome: s.nome || 'Estudante',
                 tipo: 'estudante',
                 ativo: true,
-                senha: s.senha_temporaria || '12345678',
+                mustChangePassword: true,
                 senha_temporaria: s.senha_temporaria || '12345678'
               };
             }
@@ -639,34 +667,32 @@ export default function App() {
         return;
       }
 
-      // 4. Authenticate via Firebase Authentication with multi-field fallback
+      // 4. Strict Authentication via Firebase Authentication
       try {
         await signInWithEmailAndPassword(auth, emailClean, pwdClean);
       } catch (authError: any) {
-        // Check password matching against stored password fields (senha, senha_temporaria, password or default)
-        const isPasswordMatch = 
-          (userDocData.senha && userDocData.senha === pwdClean) ||
-          (userDocData.senha_temporaria && userDocData.senha_temporaria === pwdClean) ||
-          (userDocData.password && userDocData.password === pwdClean) ||
-          (!userDocData.senha && !userDocData.senha_temporaria && pwdClean === '12345678');
+        // ONLY allow initial first-login bootstrap if user has NEVER changed password and is flagged with mustChangePassword
+        const hasNeverChangedPassword = !userDocData.passwordLastChangedAt;
+        const isTemporaryUser = !!(userDocData.mustChangePassword || userDocData.requer_alteracao_senha);
+        const matchesInitialTemp = (userDocData.senha_temporaria && userDocData.senha_temporaria === pwdClean) ||
+                                  (userDocData.senha && userDocData.senha === pwdClean);
 
-        if (isPasswordMatch) {
-          console.log("Fallback password matching succeeded for user:", emailClean);
-          // Self-heal user registration in Firebase Auth so future logins work seamlessly with Firebase Auth
-          try {
-            await registerUserInFirebaseAuth(emailClean, pwdClean.length >= 6 ? pwdClean : '12345678');
-          } catch (healError) {
-            console.warn("Self-healing auth error:", healError);
-          }
-        } else {
-          console.warn('Authentication credentials did not match:', authError?.message || authError);
-          setLoginError('E-mail ou senha de acesso incorretos. Verifique suas credenciais.');
+        if (hasNeverChangedPassword && isTemporaryUser && matchesInitialTemp) {
+          // Send immediately to mandatory password reset
+          setIsLoginModalOpen(false);
+          setFirstLoginResetUser(userDocData);
           setLoginLoading(false);
           return;
         }
+
+        // If the password was already changed in the past, or credentials do not match: strictly reject!
+        console.warn('Authentication rejected for:', emailClean, authError?.code || authError?.message);
+        setLoginError('E-mail ou senha de acesso incorretos. Senhas antigas não são mais válidas.');
+        setLoginLoading(false);
+        return;
       }
 
-      if (userDocData.requer_alteracao_senha) {
+      if (userDocData.requer_alteracao_senha || userDocData.mustChangePassword) {
         setIsLoginModalOpen(false);
         setFirstLoginResetUser(userDocData);
         setLoginLoading(false);
@@ -1426,76 +1452,28 @@ const clientSideCache: Record<string, any> = {
 
       {/* FIRST LOGIN MANDATORY PASSWORD RESET MODAL */}
       {firstLoginResetUser && (
-        <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
-          <div className="bg-slate-900 text-slate-100 rounded-3xl border border-slate-800 shadow-2xl max-w-md w-full overflow-hidden">
-            {/* Modal Header */}
-            <div className="p-6 border-b border-slate-800 bg-slate-950">
-              <div className="space-y-1 text-center sm:text-left">
-                <span className="bg-rose-500/20 text-rose-400 text-[10px] font-bold py-1 px-3 rounded-full uppercase tracking-wider font-mono">
-                  🚨 Segurança Obrigatória
-                </span>
-                <h3 className="text-lg font-extrabold text-white font-sans mt-2">Alteração de Senha Necessária</h3>
-                <p className="text-slate-400 text-xs leading-relaxed">
-                  Identificamos que este é o seu primeiro login com uma senha temporária. Para garantir a segurança dos seus dados, por favor defina uma senha pessoal definitiva.
-                </p>
-              </div>
-            </div>
-
-            {/* Modal Body / Form */}
-            <form onSubmit={handleFirstLoginPasswordReset} className="p-6 space-y-4">
-              <div className="bg-slate-950/60 p-3.5 rounded-2xl border border-slate-800 space-y-1">
-                <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider">Conta Identificada:</p>
-                <p className="text-xs font-semibold text-white truncate">{firstLoginResetUser.nome}</p>
-                <p className="text-[11px] text-slate-400 font-mono truncate">{firstLoginResetUser.email}</p>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Nova Senha Definitiva</label>
-                <input
-                  type="password"
-                  required
-                  value={newFirstPassword}
-                  onChange={(e) => setNewFirstPassword(e.target.value)}
-                  placeholder="Mínimo de 6 caracteres"
-                  className="w-full bg-slate-950 border border-slate-850 rounded-xl p-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Confirmar Nova Senha</label>
-                <input
-                  type="password"
-                  required
-                  value={confirmFirstPassword}
-                  onChange={(e) => setConfirmFirstPassword(e.target.value)}
-                  placeholder="Repita a senha definitiva"
-                  className="w-full bg-slate-950 border border-slate-850 rounded-xl p-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
-                />
-              </div>
-
-              <div className="flex gap-2.5 pt-4 border-t border-slate-850">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFirstLoginResetUser(null);
-                    setNewFirstPassword('');
-                    setConfirmFirstPassword('');
-                    setLoginPassword('');
-                  }}
-                  className="w-1/3 bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="w-2/3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 rounded-xl text-xs transition-colors shadow flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  Confirmar e Entrar
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <MandatoryPasswordResetModal
+          user={firstLoginResetUser}
+          onSuccess={() => {
+            showNotification("Nova senha definida com sucesso! Acesso liberado.", "sucesso");
+            saveUserSessionCookie({
+              id: firstLoginResetUser.id,
+              nome: firstLoginResetUser.nome,
+              email: firstLoginResetUser.email,
+              tipo: firstLoginResetUser.tipo || firstLoginResetUser.role,
+              tenant_id: firstLoginResetUser.tenant_id || firstLoginResetUser.tenantId
+            });
+            saveLastAction(`Primeiro login bem-sucedido com nova senha: ${firstLoginResetUser.email}`);
+            saveLastModule("dashboard");
+            setSelectedTenantId(firstLoginResetUser.tenant_id || firstLoginResetUser.tenantId);
+            setSelectedRole(firstLoginResetUser.tipo || firstLoginResetUser.role);
+            setFirstLoginResetUser(null);
+            setLoginEmail('');
+            setLoginPassword('');
+            setIsLoginModalOpen(false);
+            setCurrentView('tenant');
+          }}
+        />
       )}
 
       {/* ONBOARDING MODAL (POPUP) */}

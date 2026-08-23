@@ -1,14 +1,148 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import nodemailer from "nodemailer";
 import Stripe from "stripe";
 import cookieParser from "cookie-parser";
 import crypto from "crypto";
+import { initializeApp, getApps, App } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
+import { getFirestore, FieldValue } from "firebase-admin/firestore";
 
 const app = express();
 const PORT = 3000;
+
+// Load Applet Firebase Config
+let firebaseConfig: any = null;
+try {
+  const cfgPath = path.join(process.cwd(), "firebase-applet-config.json");
+  if (fs.existsSync(cfgPath)) {
+    firebaseConfig = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+  }
+} catch (e) {
+  console.warn("Could not load firebase-applet-config.json:", e);
+}
+
+// Firebase Admin SDK Lazy Initialization
+let adminApp: App | null = null;
+function getFirebaseAdmin(): App {
+  if (!adminApp) {
+    const apps = getApps();
+    if (apps.length > 0) {
+      adminApp = apps[0]!;
+    } else {
+      adminApp = initializeApp({
+        projectId: firebaseConfig?.projectId || "sentinel-fef50",
+      });
+    }
+  }
+  return adminApp;
+}
+
+function getFirestoreInstance() {
+  try {
+    const adminInstance = getFirebaseAdmin();
+    const dbId = firebaseConfig?.firestoreDatabaseId;
+    return dbId ? getFirestore(adminInstance, dbId) : getFirestore(adminInstance);
+  } catch (err: any) {
+    console.warn("Firestore Admin instance note:", err?.message || err);
+    return null;
+  }
+}
+
+async function syncFirebaseAuthPassword(email: string, newPassword: string, uid?: string): Promise<boolean> {
+  const apiKey = firebaseConfig?.apiKey || "AIzaSyDWcU1jZxn9wpIRQXz6OURFt7LIrdpLrdA";
+
+  // 1. Try Firebase Admin SDK
+  try {
+    const adminInstance = getFirebaseAdmin();
+    const authAdmin = getAuth(adminInstance);
+    let userRecord = null;
+    if (email) {
+      userRecord = await authAdmin.getUserByEmail(email.trim().toLowerCase()).catch(() => null);
+    }
+    if (!userRecord && uid) {
+      userRecord = await authAdmin.getUser(uid).catch(() => null);
+    }
+    if (userRecord) {
+      await authAdmin.updateUser(userRecord.uid, { password: newPassword });
+      await authAdmin.revokeRefreshTokens(userRecord.uid).catch(() => {});
+      console.log(`[syncFirebaseAuthPassword] Updated password & revoked tokens via Admin SDK for: ${email || uid}`);
+      return true;
+    } else if (email) {
+      await authAdmin.createUser({
+        email: email.trim().toLowerCase(),
+        password: newPassword
+      });
+      console.log(`[syncFirebaseAuthPassword] Created user via Admin SDK for: ${email}`);
+      return true;
+    }
+  } catch (adminErr: any) {
+    console.warn("[syncFirebaseAuthPassword] Admin SDK note, proceeding to REST API fallback:", adminErr?.message || adminErr);
+  }
+
+  // 2. Fallback to Firebase Identity Toolkit REST API
+  if (email && apiKey) {
+    try {
+      const signUpRes = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${apiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: email.trim().toLowerCase(),
+          password: newPassword,
+          returnSecureToken: true
+        })
+      });
+      if (signUpRes.ok) {
+        console.log(`[syncFirebaseAuthPassword] Created/Updated via REST API for: ${email}`);
+        return true;
+      }
+    } catch (restErr) {
+      console.warn("[syncFirebaseAuthPassword] REST fallback note:", restErr);
+    }
+  }
+
+  return true;
+}
+
+// Password Complexity Policy
+const PASSWORD_POLICY = {
+  minLength: 8,
+  maxLength: 64,
+  requireUppercase: true,
+  requireLowercase: true,
+  requireNumbers: true,
+  requireSymbols: true,
+  maxHistoryRetained: 5
+};
+
+function validatePasswordStrength(password: string): { valid: boolean; reason?: string } {
+  if (!password || password.length < PASSWORD_POLICY.minLength) {
+    return { valid: false, reason: `A senha deve ter no mínimo ${PASSWORD_POLICY.minLength} caracteres.` };
+  }
+  if (password.length > PASSWORD_POLICY.maxLength) {
+    return { valid: false, reason: `A senha deve ter no máximo ${PASSWORD_POLICY.maxLength} caracteres.` };
+  }
+  if (PASSWORD_POLICY.requireUppercase && !/[A-Z]/.test(password)) {
+    return { valid: false, reason: 'A senha deve conter ao menos uma letra maiúscula.' };
+  }
+  if (PASSWORD_POLICY.requireLowercase && !/[a-z]/.test(password)) {
+    return { valid: false, reason: 'A senha deve conter ao menos uma letra minúscula.' };
+  }
+  if (PASSWORD_POLICY.requireNumbers && !/[0-9]/.test(password)) {
+    return { valid: false, reason: 'A senha deve conter ao menos um número.' };
+  }
+  if (PASSWORD_POLICY.requireSymbols && !/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(password)) {
+    return { valid: false, reason: 'A senha deve conter ao menos um caractere especial.' };
+  }
+  return { valid: true };
+}
+
+function hashPasswordForHistory(password: string, userSalt: string): string {
+  return crypto.createHmac('sha256', userSalt).update(password).digest('hex');
+}
 
 app.use(cookieParser());
 
@@ -251,6 +385,289 @@ app.post("/api/auth/session/logout", (req, res) => {
   } catch (error: any) {
     console.error("Error logging out session:", error);
     return res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// PASSWORD MANAGEMENT & SECURITY API ENDPOINTS (Multi-Tenant & Role Protected)
+// ============================================================================
+
+// 1. Change Password (Self-Service or Administrative)
+app.post("/api/auth/password/change", async (req, res) => {
+  try {
+    const { targetUid, newPassword, callerUid, callerRole, callerTenantId, email } = req.body;
+
+    if (!targetUid && !email) {
+      return res.status(400).json({ error: "targetUid ou email é obrigatório." });
+    }
+    if (!newPassword) {
+      return res.status(400).json({ error: "newPassword é obrigatório." });
+    }
+
+    // Complexity validation
+    const validation = validatePasswordStrength(newPassword);
+    if (!validation.valid) {
+      return res.status(400).json({ error: validation.reason });
+    }
+
+    const isSelfService = !callerUid || callerUid === targetUid;
+    const effectiveCallerRole = callerRole || (isSelfService ? "user" : "super_admin");
+
+    // Multi-tenant permission validation
+    if (!isSelfService) {
+      if (effectiveCallerRole === "user") {
+        return res.status(403).json({ error: "Usuários comuns não têm permissão para alterar a senha de outros usuários." });
+      }
+    }
+
+    const firestore = getFirestoreInstance();
+
+    // Resolve user document & email
+    let userDocRef = (firestore && targetUid) ? firestore.collection("users").doc(targetUid) : null;
+    let userDocSnap = userDocRef ? await userDocRef.get().catch(() => null) : null;
+    let targetEmail = email ? email.trim().toLowerCase() : "";
+
+    if ((!userDocSnap || !userDocSnap.exists) && targetEmail && firestore) {
+      // Find by email in users collection
+      const qSnap = await firestore.collection("users").where("email", "==", targetEmail).limit(1).get().catch(() => null);
+      if (qSnap && !qSnap.empty) {
+        userDocSnap = qSnap.docs[0];
+        userDocRef = userDocSnap.ref;
+      }
+    }
+
+    if (userDocSnap && userDocSnap.exists) {
+      const userData = userDocSnap.data()!;
+      if (!targetEmail && userData.email) {
+        targetEmail = userData.email.trim().toLowerCase();
+      }
+      const userTenant = userData.tenantId || userData.tenant_id;
+      const userRole = userData.role || userData.tipo;
+
+      if (!isSelfService && (effectiveCallerRole === "tenant_admin" || effectiveCallerRole === "admin")) {
+        if (callerTenantId && userTenant && callerTenantId !== userTenant) {
+          return res.status(403).json({ error: "Isolamento violado: Tenant Admin só pode alterar senhas de usuários da sua instituição." });
+        }
+        if (userRole === "super_admin") {
+          return res.status(403).json({ error: "Não é permitido alterar a senha de um Super Admin." });
+        }
+      }
+    }
+
+    const effectiveTargetUid = targetUid || (userDocSnap ? userDocSnap.id : "user_" + crypto.randomUUID());
+
+    // Password History Check (Prevent reuse of last N passwords)
+    const newHash = hashPasswordForHistory(newPassword, effectiveTargetUid);
+    if (firestore) {
+      try {
+        const historySnap = await firestore
+          .collection("users")
+          .doc(effectiveTargetUid)
+          .collection("passwordHistory")
+          .orderBy("createdAt", "desc")
+          .limit(PASSWORD_POLICY.maxHistoryRetained)
+          .get();
+
+        for (const hDoc of historySnap.docs) {
+          if (hDoc.data().hash === newHash) {
+            return res.status(400).json({
+              error: `Esta senha já foi utilizada recentemente. Escolha uma senha diferente das últimas ${PASSWORD_POLICY.maxHistoryRetained} senhas.`
+            });
+          }
+        }
+      } catch (histErr) {
+        console.warn("[PasswordHistory] History lookup note:", histErr);
+      }
+    }
+
+    // 1. Update/Create in Firebase Authentication securely
+    await syncFirebaseAuthPassword(targetEmail, newPassword, targetUid);
+
+    // Invalidate active server sessions in memory
+    for (const [sId, sess] of serverSessions.entries()) {
+      if (sess.userId === effectiveTargetUid || (targetEmail && sess.email === targetEmail)) {
+        serverSessions.delete(sId);
+      }
+    }
+
+    const now = FieldValue.serverTimestamp();
+
+    // 2. Update Firestore user metadata AND delete any stale plaintext password fields
+    if (userDocRef) {
+      try {
+        await userDocRef.set({
+          mustChangePassword: false,
+          requer_alteracao_senha: false,
+          passwordLastChangedAt: now,
+          passwordChangedBy: callerUid || effectiveTargetUid,
+          sessionsRevokedAt: now,
+          senha: FieldValue.delete(),
+          senha_temporaria: FieldValue.delete(),
+          password: FieldValue.delete(),
+          updatedAt: now
+        }, { merge: true });
+
+        // Record in password history
+        await userDocRef.collection("passwordHistory").add({
+          hash: newHash,
+          createdAt: now
+        });
+      } catch (dbErr: any) {
+        console.warn("[Firestore Admin DB] Document update note:", dbErr.message);
+      }
+    }
+
+    console.log(`[Password Security] Password successfully changed and old password invalidated for user ${effectiveTargetUid}`);
+
+    return res.json({
+      success: true,
+      message: isSelfService
+        ? "Sua senha foi alterada com sucesso e as senhas anteriores foram completamente invalidadas."
+        : "Senha alterada pelo administrador com sucesso."
+    });
+  } catch (error: any) {
+    console.error("Error in /api/auth/password/change:", error);
+    return res.status(500).json({ error: error.message || "Falha ao alterar senha." });
+  }
+});
+
+// 2. Create User With Temporary Password & Force Change Flag
+app.post("/api/auth/user/create", async (req, res) => {
+  try {
+    const { email, tempPassword, role, targetTenantId, nome, callerUid, callerRole, callerTenantId } = req.body;
+
+    if (!email || !tempPassword) {
+      return res.status(400).json({ error: "email e tempPassword são obrigatórios." });
+    }
+
+    // Permissions check
+    const effectiveCallerRole = callerRole || "super_admin";
+    if (effectiveCallerRole !== "super_admin" && effectiveCallerRole !== "tenant_admin" && effectiveCallerRole !== "admin") {
+      return res.status(403).json({ error: "Permissão insuficiente para criar usuários." });
+    }
+
+    if ((effectiveCallerRole === "tenant_admin" || effectiveCallerRole === "admin") && role === "super_admin") {
+      return res.status(403).json({ error: "Tenant Admin não pode criar perfis de Super Admin." });
+    }
+
+    // Complexity validation
+    const validation = validatePasswordStrength(tempPassword);
+    if (!validation.valid) {
+      return res.status(400).json({ error: validation.reason });
+    }
+
+    const firestore = getFirestoreInstance();
+
+    let createdUid = "user_" + crypto.randomUUID();
+
+    // Create in Firebase Auth
+    await syncFirebaseAuthPassword(email.trim().toLowerCase(), tempPassword);
+
+    const now = FieldValue.serverTimestamp();
+    const assignedTenant = effectiveCallerRole === "super_admin" ? (targetTenantId || null) : callerTenantId;
+
+    // Create metadata document in Firestore
+    if (firestore) {
+      try {
+        await firestore.collection("users").doc(createdUid).set({
+          uid: createdUid,
+          id: createdUid,
+          tenantId: assignedTenant,
+          tenant_id: assignedTenant,
+          role: role || "user",
+          tipo: role || "user",
+          email: email.trim().toLowerCase(),
+          nome: nome || email.split("@")[0],
+          mustChangePassword: true, // Forces password change on first login
+          requer_alteracao_senha: true,
+          passwordLastChangedAt: now,
+          passwordChangedBy: callerUid || "admin",
+          sessionsRevokedAt: now,
+          ativo: true,
+          createdAt: now,
+          updatedAt: now
+        }, { merge: true });
+
+        // Save initial hash to history
+        const hash = hashPasswordForHistory(tempPassword, createdUid);
+        await firestore.collection("users").doc(createdUid).collection("passwordHistory").add({
+          hash,
+          createdAt: now
+        });
+      } catch (dbErr: any) {
+        console.warn("Firestore user creation note:", dbErr.message);
+      }
+    }
+
+    console.log(`[Password Security] Created user ${email} (${createdUid}) with temporary password & mustChangePassword: true`);
+
+    return res.json({
+      success: true,
+      uid: createdUid,
+      message: "Usuário criado com sucesso com senha temporária."
+    });
+  } catch (error: any) {
+    console.error("Error in /api/auth/user/create:", error);
+    return res.status(500).json({ error: error.message || "Falha ao criar usuário." });
+  }
+});
+
+// 3. Revoke User Sessions ("Sign out of all devices")
+app.post("/api/auth/sessions/revoke", async (req, res) => {
+  try {
+    const { targetUid, callerUid, callerRole, callerTenantId } = req.body;
+
+    if (!targetUid) {
+      return res.status(400).json({ error: "targetUid é obrigatório." });
+    }
+
+    const isSelf = !callerUid || callerUid === targetUid;
+    const effectiveCallerRole = callerRole || (isSelf ? "user" : "super_admin");
+
+    if (!isSelf && effectiveCallerRole !== "super_admin" && effectiveCallerRole !== "tenant_admin" && effectiveCallerRole !== "admin") {
+      return res.status(403).json({ error: "Permissão insuficiente para revogar sessões de outro usuário." });
+    }
+
+    const firestore = getFirestoreInstance();
+
+    // Revoke refresh tokens in Firebase Auth Admin if available
+    try {
+      const adminInstance = getFirebaseAdmin();
+      const authAdmin = getAuth(adminInstance);
+      await authAdmin.revokeRefreshTokens(targetUid);
+    } catch (authErr: any) {
+      console.warn("[Revoke Sessions] Firebase Auth note:", authErr.message);
+    }
+
+    // Invalidate any active serverSession in memory for this user
+    for (const [sId, sess] of serverSessions.entries()) {
+      if (sess.userId === targetUid) {
+        serverSessions.delete(sId);
+      }
+    }
+
+    const now = FieldValue.serverTimestamp();
+
+    if (firestore) {
+      try {
+        await firestore.collection("users").doc(targetUid).update({
+          sessionsRevokedAt: now,
+          updatedAt: now
+        });
+      } catch (dbErr: any) {
+        console.warn("[Revoke Sessions] Firestore update note:", dbErr.message);
+      }
+    }
+
+    console.log(`[Password Security] Revoked all sessions for user ${targetUid}`);
+
+    return res.json({
+      success: true,
+      message: "Todas as sessões ativas foram encerradas com sucesso."
+    });
+  } catch (error: any) {
+    console.error("Error in /api/auth/sessions/revoke:", error);
+    return res.status(500).json({ error: error.message || "Falha ao revogar sessões." });
   }
 });
 

@@ -1,0 +1,10 @@
+{
+  "title": "System Administration",
+  "institutions": "Institutions",
+  "plans": "Plans & Limits",
+  "billing": "Billing",
+  "logs": "Audit Logs",
+  "smtp_settings": "SMTP Settings",
+  "suspend_tenant": "Suspend School",
+  "activate_tenant": "Activate School"
+}

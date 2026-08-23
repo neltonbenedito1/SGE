@@ -1,0 +1,10 @@
+{
+  "title": "Administração do Sistema",
+  "institutions": "Instituições",
+  "plans": "Planos e Limites",
+  "billing": "Faturamento",
+  "logs": "Logs de Auditoria",
+  "smtp_settings": "Configurações SMTP",
+  "suspend_tenant": "Suspender Escola",
+  "activate_tenant": "Ativar Escola"
+}

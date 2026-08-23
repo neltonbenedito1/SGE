@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { SysEduLogo } from './SysEduLogo';
+import LanguageSwitcher from './LanguageSwitcher';
 import { 
   LayoutDashboard, 
   Users, 
@@ -464,63 +465,7 @@ export default function BrandbookView({
       >
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           {/* Left: Language Selector Pill */}
-          <div className="relative">
-            <button
-              id="btn-lang-selector"
-              type="button"
-              onClick={() => setIsLangDropdownOpen(!isLangDropdownOpen)}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full ${
-                isDark 
-                  ? 'bg-[#0f172a] hover:bg-slate-800 border-slate-700/80 text-slate-200' 
-                  : 'bg-slate-100 hover:bg-slate-200/80 border-slate-300 text-slate-800'
-              } border text-xs sm:text-sm font-semibold transition-all cursor-pointer shadow-xs active:scale-95`}
-              title="Mudar idioma"
-            >
-              <Globe className={`w-4 h-4 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
-              <span>{currentLangObj.name}</span>
-              <ChevronDown className={`w-3.5 h-3.5 ${isDark ? 'text-slate-400' : 'text-slate-500'} ml-0.5`} />
-            </button>
-
-            {/* Language Dropdown */}
-            {isLangDropdownOpen && (
-              <>
-                <div 
-                  className="fixed inset-0 z-50 bg-transparent" 
-                  onClick={() => setIsLangDropdownOpen(false)} 
-                />
-                <div className={`absolute left-0 mt-2 w-52 ${isDark ? 'bg-slate-900 border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-900 shadow-xl'} rounded-2xl border shadow-2xl z-50 p-2 space-y-1 animate-in fade-in slide-in-from-top-2 duration-150`}>
-                  <div className={`px-2.5 py-1 border-b ${isDark ? 'border-slate-800 text-slate-400' : 'border-slate-200 text-slate-500'} mb-1`}>
-                    <p className="text-[10px] font-bold uppercase tracking-wider">Selecionar Idioma</p>
-                  </div>
-                  <div className="max-h-60 overflow-y-auto space-y-1">
-                    {LANGUAGES.map((lang) => {
-                      const isSelected = (systemLang || 'pt') === lang.code;
-                      return (
-                        <button
-                          key={lang.code}
-                          type="button"
-                          onClick={() => {
-                            if (onChangeLanguage) {
-                              onChangeLanguage(lang.code);
-                            }
-                            setIsLangDropdownOpen(false);
-                          }}
-                          className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-left text-xs font-semibold cursor-pointer transition-colors ${
-                            isSelected
-                              ? 'bg-blue-600 text-white'
-                              : isDark ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-700 hover:bg-slate-100'
-                          }`}
-                        >
-                          <span className="text-sm">{lang.flag}</span>
-                          <span className="truncate">{lang.name}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
+          <LanguageSwitcher />
 
           {/* Right: Login/Sign-Up Pill & Theme Toggle Pill */}
           <div className="flex items-center gap-3">

@@ -1,0 +1,11 @@
+{
+  "title": "Biblioteca Digital",
+  "search_books": "Pesquisar Livros...",
+  "add_book": "Adicionar Livro",
+  "book_title": "Título do Livro",
+  "author": "Autor",
+  "category": "Categoria",
+  "available_copies": "Cópias Disponíveis",
+  "borrow_book": "Requisitar Livro",
+  "return_book": "Devolver Livro"
+}
