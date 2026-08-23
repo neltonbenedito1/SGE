@@ -47,6 +47,14 @@ import {
   AgendamentoExame,
   TipoAgendamentoExame
 } from '../types';
+import { 
+  sendAppNotification, 
+  notifyScheduleCreatedOrUpdated, 
+  notifyExamScheduled, 
+  notifyGradePublished, 
+  notifyAttendanceLogged, 
+  notifyJustificationEvaluated 
+} from '../services/notificationDispatcher';
 import { ValidarPresencaModal } from './ValidarPresencaModal';
 import { StudentQrDisplay } from './StudentQrDisplay';
 import { generateStudentQrPayload, generateQrDataUrl } from '../utils/qrCodeHelper';
@@ -5386,78 +5394,159 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     const q = query(collection(db, 'notificacoes'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list: Notificacao[] = [];
-      const userRole = currentUserRole || loggedInUser?.tipo || 'estudante';
+      const userRole = (currentUserRole || loggedInUser?.tipo || 'estudante').toLowerCase();
       
+      // Build exhaustive Set of ID / email aliases for the currently logged-in user
+      const userAliases = new Set<string>();
+      if (loggedInUser?.id) userAliases.add(loggedInUser.id.toLowerCase());
+      if ((loggedInUser as any)?.user_id) userAliases.add((loggedInUser as any).user_id.toLowerCase());
+      if ((loggedInUser as any)?.uid) userAliases.add((loggedInUser as any).uid.toLowerCase());
+      if (loggedInUser?.email) userAliases.add(loggedInUser.email.toLowerCase());
+      if (currentUserEmail) userAliases.add(currentUserEmail.toLowerCase());
+
+      // If docente, add teacher IDs
+      const currentDocente = rawTeachers.find(t => 
+        (t.user_id && userAliases.has(t.user_id.toLowerCase())) ||
+        (t.id && userAliases.has(t.id.toLowerCase())) ||
+        ((t as any).email && userAliases.has((t as any).email.toLowerCase()))
+      );
+      if (currentDocente?.id) userAliases.add(currentDocente.id.toLowerCase());
+      if (currentDocente?.user_id) userAliases.add(currentDocente.user_id.toLowerCase());
+
+      // If estudante, add student IDs and matricula
+      const currentEstudante = rawStudents.find(s => 
+        (s.user_id && userAliases.has(s.user_id.toLowerCase())) ||
+        (s.id && userAliases.has(s.id.toLowerCase())) ||
+        (s.numero_matricula && userAliases.has(s.numero_matricula.toLowerCase()))
+      );
+      if (currentEstudante?.id) userAliases.add(currentEstudante.id.toLowerCase());
+      if (currentEstudante?.user_id) userAliases.add(currentEstudante.user_id.toLowerCase());
+      if (currentEstudante?.numero_matricula) userAliases.add(currentEstudante.numero_matricula.toLowerCase());
+
+      // If parent / encarregado, gather children IDs
+      const parentChildIds = new Set<string>();
+      const parentChildTurmas = new Set<string>();
+      if (userRole === 'pai' || userRole === 'encarregado' || loggedInUser?.tipo === 'pai') {
+        rawStudents.forEach(s => {
+          const sAny = s as any;
+          if (
+            (sAny.pai_id && userAliases.has(String(sAny.pai_id).toLowerCase())) ||
+            (sAny.pai_email && userAliases.has(String(sAny.pai_email).toLowerCase())) ||
+            (sAny.user_id && userAliases.has(String(sAny.user_id).toLowerCase()))
+          ) {
+            if (s.id) parentChildIds.add(s.id.toLowerCase());
+            if (s.user_id) parentChildIds.add(s.user_id.toLowerCase());
+            if (s.turma_id) parentChildTurmas.add(s.turma_id.toLowerCase());
+          }
+        });
+      }
+
+      // Relevant turmas for user
+      const userTurmaIds = new Set<string>();
+      if (currentEstudante?.turma_id) userTurmaIds.add(currentEstudante.turma_id.toLowerCase());
+      if (currentDocente?.id) {
+        rawClasses.forEach(c => {
+          if (c.docente_id === currentDocente.id && c.turma_id) userTurmaIds.add(c.turma_id.toLowerCase());
+        });
+        rawTurmas.forEach(t => {
+          if (t.docente_id === currentDocente.id) userTurmaIds.add(t.id.toLowerCase());
+        });
+      }
+      parentChildTurmas.forEach(tId => userTurmaIds.add(tId));
+
+      const isUserAdmin = userRole === 'admin' || userRole === 'super_admin' || userRole === 'director';
+      const isUserDocente = userRole === 'docente' || userRole === 'professor';
+      const isUserEstudante = userRole === 'estudante' || userRole === 'aluno';
+      const isUserPai = userRole === 'pai' || userRole === 'encarregado';
+
       snapshot.forEach((doc) => {
         const data = doc.data();
         
-        // Match if notification is globally for all, or matches current tenant
-        const isBelongToTenant = data.destinatario_id === currentTenantId || data.tenant_id === currentTenantId || data.destinatario_id === 'todos';
-        
-        if (isBelongToTenant) {
-          // Direct target checking: if a notification is sent directly to this specific user ID
-          const isDirectMessage = loggedInUser?.id && (data.destinatario_id === loggedInUser.id || data.usuario_id === loggedInUser.id);
-          
-          if (isDirectMessage) {
-            list.push({ ...data, id: doc.id } as Notificacao);
-          } else {
-            // General notification role filtering:
-            // Default destination role is 'admin' unless explicitly specified or destinatario_id is 'todos'
-            const destRole = data.destinatario_role || (data.destinatario_id === 'todos' ? 'todos' : 'admin');
-            
-            if (userRole === 'admin' || (userRole as string) === 'super_admin' || userRole === 'director') {
-              // Administrators see admin-level and global notification events
-              if (destRole === 'admin' || destRole === 'todos') {
-                list.push({ ...data, id: doc.id } as Notificacao);
-              }
-            } else if (userRole === 'docente') {
-              // Docentes see only docente-level notifications or general alerts
-              if (destRole === 'docente' || destRole === 'todos') {
-                list.push({ ...data, id: doc.id } as Notificacao);
-              }
-            } else if (userRole === 'estudante') {
-              // Estudantes see only student-level notifications or general alerts
-              if (destRole === 'estudante' || destRole === 'todos') {
-                list.push({ ...data, id: doc.id } as Notificacao);
-              }
-            } else {
-              // Other specific roles (financeiro, encarregado, etc.) see their matching roles or todos
-              if (destRole === userRole || destRole === 'todos') {
-                list.push({ ...data, id: doc.id } as Notificacao);
-              }
-            }
-          }
+        // Tenant relevance
+        const isTenantMatch = !data.tenant_id || data.tenant_id === currentTenantId || data.tenant_id === 'todos' || data.destinatario_id === currentTenantId;
+
+        // Target field strings normalized
+        const destId = (data.destinatario_id || '').toLowerCase();
+        const destEmail = (data.destinatario_email || '').toLowerCase();
+        const userId = (data.usuario_id || '').toLowerCase();
+        const userEmail = (data.usuario_email || '').toLowerCase();
+        const studId = (data.estudante_id || data.aluno_id || '').toLowerCase();
+        const docId = (data.docente_id || '').toLowerCase();
+        const respId = (data.responsavel_id || '').toLowerCase();
+        const targetTurmaId = (data.turma_id || '').toLowerCase();
+
+        // 1. Direct match with any user alias
+        const isDirectTarget = 
+          userAliases.has(destId) ||
+          userAliases.has(destEmail) ||
+          userAliases.has(userId) ||
+          userAliases.has(userEmail) ||
+          userAliases.has(studId) ||
+          userAliases.has(docId) ||
+          userAliases.has(respId) ||
+          (parentChildIds.size > 0 && (parentChildIds.has(destId) || parentChildIds.has(studId) || parentChildIds.has(userId)));
+
+        // 2. Class / Turma match
+        const isTurmaTarget = targetTurmaId ? userTurmaIds.has(targetTurmaId) : false;
+
+        // 3. Role-based broad match
+        const destRole = (data.destinatario_role || (destId === 'todos' ? 'todos' : (destId === 'admin' ? 'admin' : (destId === currentTenantId ? 'admin' : '')))).toLowerCase();
+
+        let isRoleMatch = false;
+        if (destRole === 'todos' || destId === 'todos') {
+          isRoleMatch = true;
+        } else if (isUserAdmin && (destRole === 'admin' || destRole === 'director' || destRole === 'gestor')) {
+          isRoleMatch = true;
+        } else if (isUserDocente && (destRole === 'docente' || destRole === 'professor')) {
+          isRoleMatch = true;
+        } else if (isUserEstudante && (destRole === 'estudante' || destRole === 'aluno')) {
+          isRoleMatch = true;
+        } else if (isUserPai && (destRole === 'pai' || destRole === 'encarregado')) {
+          isRoleMatch = true;
+        } else if (destRole === userRole) {
+          isRoleMatch = true;
+        }
+
+        // Deliver if directly addressed, or if it belongs to tenant and matches user turma/role
+        if (isDirectTarget || (isTenantMatch && (isTurmaTarget || isRoleMatch))) {
+          list.push({ ...data, id: doc.id } as Notificacao);
         }
       });
 
-      // Handle Real-Time Push Toast alert for freshly added notifications
+      // Real-time Push Toast alert for freshly added notifications
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'added') {
           const data = change.doc.data();
           const createdTime = data.created_at ? new Date(data.created_at).getTime() : Date.now();
           if (createdTime > mountTime - 5000 && !data.lido) {
-            const isBelongToTenant = data.destinatario_id === currentTenantId || data.tenant_id === currentTenantId || data.destinatario_id === 'todos';
-            const isDirectMessage = loggedInUser?.id && (data.destinatario_id === loggedInUser.id || data.usuario_id === loggedInUser.id);
-            const destRole = data.destinatario_role || (data.destinatario_id === 'todos' ? 'todos' : 'admin');
+            const destId = (data.destinatario_id || '').toLowerCase();
+            const destEmail = (data.destinatario_email || '').toLowerCase();
+            const userId = (data.usuario_id || '').toLowerCase();
+            const studId = (data.estudante_id || data.aluno_id || '').toLowerCase();
+            const docId = (data.docente_id || '').toLowerCase();
+            const targetTurmaId = (data.turma_id || '').toLowerCase();
+            const destRole = (data.destinatario_role || (destId === 'todos' ? 'todos' : (destId === 'admin' ? 'admin' : ''))).toLowerCase();
+
+            const isDirectTarget = 
+              userAliases.has(destId) || 
+              userAliases.has(destEmail) || 
+              userAliases.has(userId) || 
+              userAliases.has(studId) || 
+              userAliases.has(docId) ||
+              (parentChildIds.size > 0 && (parentChildIds.has(destId) || parentChildIds.has(studId)));
             
-            let shouldShowToast = false;
-            if (isBelongToTenant) {
-              if (isDirectMessage) {
-                shouldShowToast = true;
-              } else {
-                if (userRole === 'admin' || (userRole as string) === 'super_admin' || userRole === 'director') {
-                  if (destRole === 'admin' || destRole === 'todos') shouldShowToast = true;
-                } else if (userRole === 'docente') {
-                  if (destRole === 'docente' || destRole === 'todos') shouldShowToast = true;
-                } else if (userRole === 'estudante') {
-                  if (destRole === 'estudante' || destRole === 'todos') shouldShowToast = true;
-                } else if (destRole === userRole || destRole === 'todos') {
-                  shouldShowToast = true;
-                }
-              }
-            }
+            const isTurmaTarget = targetTurmaId ? userTurmaIds.has(targetTurmaId) : false;
             
-            if (shouldShowToast) {
+            let isRoleMatch = false;
+            if (destRole === 'todos' || destId === 'todos') isRoleMatch = true;
+            else if (isUserAdmin && (destRole === 'admin' || destRole === 'director')) isRoleMatch = true;
+            else if (isUserDocente && destRole === 'docente') isRoleMatch = true;
+            else if (isUserEstudante && destRole === 'estudante') isRoleMatch = true;
+            else if (isUserPai && destRole === 'pai') isRoleMatch = true;
+
+            const isTenantMatch = !data.tenant_id || data.tenant_id === currentTenantId || data.tenant_id === 'todos' || data.destinatario_id === currentTenantId;
+
+            if (isDirectTarget || (isTenantMatch && (isTurmaTarget || isRoleMatch))) {
               setActiveToast({
                 id: change.doc.id,
                 titulo: data.titulo,
@@ -5472,28 +5561,47 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         }
       });
 
-      list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      list.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
       setNotifications(list);
     }, (error) => {
       console.error("Error listening to notifications:", error);
     });
     return () => unsubscribe();
-  }, [currentTenantId, currentUserRole, loggedInUser]);
+  }, [currentTenantId, currentUserRole, loggedInUser, currentUserEmail, rawTeachers, rawStudents, rawTurmas, rawClasses]);
 
   async function markNotificationAsRead(id: string) {
     try {
-      await deleteDoc(doc(db, 'notificacoes', id));
+      await updateDoc(doc(db, 'notificacoes', id), {
+        lido: true,
+        lido_em: new Date().toISOString()
+      });
+      setNotifications(prev => prev.map(n => n.id === id ? { ...n, lido: true } : n));
     } catch (err) {
-      console.error("Error deleting notification:", err);
+      console.error("Error marking notification as read:", err);
     }
   }
 
   async function markAllNotificationsAsRead() {
     try {
       const unread = notifications.filter(n => !n.lido);
-      await Promise.all(unread.map(n => deleteDoc(doc(db, 'notificacoes', n.id))));
+      await Promise.all(
+        unread.map(n => updateDoc(doc(db, 'notificacoes', n.id), {
+          lido: true,
+          lido_em: new Date().toISOString()
+        }))
+      );
+      setNotifications(prev => prev.map(n => ({ ...n, lido: true })));
     } catch (err) {
-      console.error("Error deleting all notifications:", err);
+      console.error("Error marking all notifications as read:", err);
+    }
+  }
+
+  async function deleteNotification(id: string) {
+    try {
+      await deleteDoc(doc(db, 'notificacoes', id));
+      setNotifications(prev => prev.filter(n => n.id !== id));
+    } catch (err) {
+      console.error("Error deleting notification:", err);
     }
   }
 
@@ -6463,6 +6571,31 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           const docRef = await addDoc(collection(db, 'classes'), payload);
           setClasses(prev => [{ ...payload, id: docRef.id }, ...prev]);
         }
+
+        // Dispatch notifications to the assigned teacher, class students, and parents
+        const targetTurmaStudents = rawStudents.filter(s => s.turma_id === horarioForm.turma_id);
+        const assignedTeacher = rawTeachers.find(t => t.id === horarioForm.docente_id);
+        notifyScheduleCreatedOrUpdated({
+          tenant_id: currentTenantId,
+          turma_id: horarioForm.turma_id,
+          turma_nome: selectedTurma?.nome || 'Turma Geral',
+          disciplina_nome: horarioForm.disciplina_nome,
+          docente_id: horarioForm.docente_id,
+          docente_nome: assignedTeacher?.nome,
+          docente_user_id: assignedTeacher?.user_id,
+          data_aula: horarioForm.data,
+          hora_inicio: horarioForm.hora_inicio,
+          hora_fim: horarioForm.hora_fim,
+          sala: horarioForm.sala,
+          students: targetTurmaStudents.map(s => ({
+            id: s.id,
+            user_id: s.user_id,
+            pai_id: (s as any).pai_id,
+            pai_email: (s as any).pai_email,
+            nome: s.nome
+          })),
+          isUpdate: !!editingItem
+        });
       }
 
       else if (modalType === 'feriado') {
@@ -6540,6 +6673,30 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           setExames(prev => [{ ...payload, id: docRef.id }, ...prev]);
           showSystemNotification("Exame/Avaliação agendado(a) com sucesso!", "sucesso");
         }
+
+        // Dispatch notifications to the assigned teacher, class students, and parents
+        const targetTurmaStudents = rawStudents.filter(s => s.turma_id === exameForm.turma_id);
+        notifyExamScheduled({
+          tenant_id: currentTenantId,
+          turma_id: exameForm.turma_id,
+          turma_nome: selectedTurma?.nome || 'Turma Geral',
+          disciplina_nome: exameForm.disciplina_nome,
+          tipo_exame: exameForm.tipo || 'Exame Normal',
+          data_exame: exameForm.data,
+          hora_inicio: exameForm.hora_inicio,
+          hora_fim: exameForm.hora_fim,
+          sala: exameForm.sala,
+          docente_id: exameForm.docente_id,
+          docente_user_id: selectedTeacher?.user_id,
+          students: targetTurmaStudents.map(s => ({
+            id: s.id,
+            user_id: s.user_id,
+            pai_id: (s as any).pai_id,
+            pai_email: (s as any).pai_email,
+            nome: s.nome
+          })),
+          isUpdate: !!editingItem
+        });
       } 
       
       else if (modalType === 'classe_escolar') {
@@ -6719,59 +6876,41 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         if (editingItem) {
           await updateDoc(doc(db, 'pautas', editingItem.id), calculatedPauta);
           
-          const targetStud = students.find(s => s.id === calculatedPauta.estudante_id);
+          const targetStud = rawStudents.find(s => s.id === calculatedPauta.estudante_id);
           const studUser = tenantUsers.find(u => u.id === targetStud?.user_id);
-          const targetClass = classes.find(c => c.id === calculatedPauta.classe_id);
+          const targetClass = rawClasses.find(c => c.id === calculatedPauta.classe_id);
           
-          await addDoc(collection(db, 'notificacoes'), {
-            destinatario_id: currentTenantId,
-            destinatario_role: 'admin',
-            titulo: '⚙️ Nota de Pauta Editada',
-            mensagem: `Atualizada a nota para ${studUser?.nome || 'Estudante'} na disciplina "${targetClass?.nome || 'Geral'}". Nova média: ${calculatedPauta.nota_media} valores (${calculatedPauta.situacao}).`,
-            tipo: 'info',
-            lido: false,
-            created_at: new Date().toISOString()
+          notifyGradePublished({
+            tenant_id: currentTenantId,
+            estudante_id: calculatedPauta.estudante_id,
+            estudante_user_id: targetStud?.user_id,
+            estudante_nome: targetStud?.nome || studUser?.nome || 'Estudante',
+            pai_id: (targetStud as any)?.pai_id,
+            pai_email: (targetStud as any)?.pai_email,
+            disciplina_nome: targetClass?.nome || calculatedPauta.disciplina_nome || 'Geral',
+            nota_media: calculatedPauta.nota_media,
+            situacao: calculatedPauta.situacao,
+            isRetificacao: true
           });
-
-          if (targetStud?.user_id) {
-            await addDoc(collection(db, 'notificacoes'), {
-              destinatario_id: targetStud.user_id,
-              destinatario_role: 'estudante',
-              titulo: '📊 Nota de Pauta Retificada',
-              mensagem: `A sua nota final para a disciplina "${targetClass?.nome || 'Geral'}" foi retificada. Nova Média: ${calculatedPauta.nota_media} valores (${calculatedPauta.situacao}).`,
-              tipo: 'info',
-              lido: false,
-              created_at: new Date().toISOString()
-            });
-          }
         } else {
           await addDoc(collection(db, 'pautas'), { ...calculatedPauta, ...qParams });
           
-          const targetStud = students.find(s => s.id === calculatedPauta.estudante_id);
+          const targetStud = rawStudents.find(s => s.id === calculatedPauta.estudante_id);
           const studUser = tenantUsers.find(u => u.id === targetStud?.user_id);
-          const targetClass = classes.find(c => c.id === calculatedPauta.classe_id);
+          const targetClass = rawClasses.find(c => c.id === calculatedPauta.classe_id);
           
-          await addDoc(collection(db, 'notificacoes'), {
-            destinatario_id: currentTenantId,
-            destinatario_role: 'admin',
-            titulo: '📊 Nova Nota de Pauta Lançada',
-            mensagem: `Lançada nota para ${studUser?.nome || 'Estudante'} na disciplina "${targetClass?.nome || 'Geral'}". Média Final: ${calculatedPauta.nota_media} valores (${calculatedPauta.situacao}).`,
-            tipo: 'sucesso',
-            lido: false,
-            created_at: new Date().toISOString()
+          notifyGradePublished({
+            tenant_id: currentTenantId,
+            estudante_id: calculatedPauta.estudante_id,
+            estudante_user_id: targetStud?.user_id,
+            estudante_nome: targetStud?.nome || studUser?.nome || 'Estudante',
+            pai_id: (targetStud as any)?.pai_id,
+            pai_email: (targetStud as any)?.pai_email,
+            disciplina_nome: targetClass?.nome || calculatedPauta.disciplina_nome || 'Geral',
+            nota_media: calculatedPauta.nota_media,
+            situacao: calculatedPauta.situacao,
+            isRetificacao: false
           });
-
-          if (targetStud?.user_id) {
-            await addDoc(collection(db, 'notificacoes'), {
-              destinatario_id: targetStud.user_id,
-              destinatario_role: 'estudante',
-              titulo: '📊 Nova Nota de Pauta Disponível',
-              mensagem: `A sua nota final para a disciplina "${targetClass?.nome || 'Geral'}" foi publicada. Média: ${calculatedPauta.nota_media} valores (${calculatedPauta.situacao}).`,
-              tipo: 'sucesso',
-              lido: false,
-              created_at: new Date().toISOString()
-            });
-          }
         }
       } 
       
@@ -6784,55 +6923,89 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         if (editingItem) {
           await updateDoc(doc(db, 'processos_aluno', editingItem.id), payload);
           
-          const targetStud = students.find(s => s.id === payload.estudante_id);
+          const targetStud = rawStudents.find(s => s.id === payload.estudante_id);
           const studUser = tenantUsers.find(u => u.id === targetStud?.user_id);
+          const studName = targetStud?.nome || studUser?.nome || 'Estudante';
 
-          await addDoc(collection(db, 'notificacoes'), {
+          sendAppNotification({
+            tenant_id: currentTenantId,
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
+            estudante_id: payload.estudante_id,
             titulo: '⚙️ Dossier/Processo Retificado',
-            mensagem: `Os dados do processo "${payload.tipo}" do estudante ${studUser?.nome || 'Estudante'} foram retificados.`,
+            mensagem: `Os dados do processo "${payload.tipo}" do estudante ${studName} foram retificados.`,
             tipo: 'info',
-            lido: false,
-            created_at: new Date().toISOString()
+            modulo: 'processos'
           });
 
-          if (targetStud?.user_id) {
-            await addDoc(collection(db, 'notificacoes'), {
-              destinatario_id: targetStud.user_id,
+          if (targetStud?.user_id || targetStud?.id) {
+            sendAppNotification({
+              tenant_id: currentTenantId,
+              destinatario_id: targetStud.user_id || targetStud.id,
               destinatario_role: 'estudante',
+              estudante_id: targetStud.id,
               titulo: '📂 Atualização no seu Dossier Escolar',
               mensagem: `O seu processo "${payload.tipo}" foi retificado pela secretaria.`,
               tipo: 'info',
-              lido: false,
-              created_at: new Date().toISOString()
+              modulo: 'processos'
+            });
+          }
+
+          if ((targetStud as any)?.pai_id || (targetStud as any)?.pai_email) {
+            sendAppNotification({
+              tenant_id: currentTenantId,
+              destinatario_id: (targetStud as any).pai_id || (targetStud as any).pai_email,
+              destinatario_role: 'pai',
+              destinatario_email: (targetStud as any).pai_email || '',
+              estudante_id: targetStud?.id,
+              titulo: `📂 Atualização de Dossier (${studName})`,
+              mensagem: `O processo "${payload.tipo}" referente a ${studName} foi atualizado pela escola.`,
+              tipo: 'info',
+              modulo: 'processos'
             });
           }
         } else {
           await addDoc(collection(db, 'processos_aluno'), { ...payload, ...qParams });
           
-          const targetStud = students.find(s => s.id === payload.estudante_id);
+          const targetStud = rawStudents.find(s => s.id === payload.estudante_id);
           const studUser = tenantUsers.find(u => u.id === targetStud?.user_id);
+          const studName = targetStud?.nome || studUser?.nome || 'Estudante';
 
-          await addDoc(collection(db, 'notificacoes'), {
+          sendAppNotification({
+            tenant_id: currentTenantId,
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
+            estudante_id: payload.estudante_id,
             titulo: '📂 Novo Dossier/Processo Registrado',
-            mensagem: `Registrado processo "${payload.tipo}" para o estudante ${studUser?.nome || 'Estudante'}.`,
+            mensagem: `Registrado processo "${payload.tipo}" para o estudante ${studName}.`,
             tipo: 'sucesso',
-            lido: false,
-            created_at: new Date().toISOString()
+            modulo: 'processos'
           });
 
-          if (targetStud?.user_id) {
-            await addDoc(collection(db, 'notificacoes'), {
-              destinatario_id: targetStud.user_id,
+          if (targetStud?.user_id || targetStud?.id) {
+            sendAppNotification({
+              tenant_id: currentTenantId,
+              destinatario_id: targetStud.user_id || targetStud.id,
               destinatario_role: 'estudante',
+              estudante_id: targetStud.id,
               titulo: '📂 Nova Atualização no seu Dossier',
               mensagem: `Foi adicionado um novo registo ao seu dossier escolar: "${payload.tipo}".`,
               tipo: 'info',
-              lido: false,
-              created_at: new Date().toISOString()
+              modulo: 'processos'
+            });
+          }
+
+          if ((targetStud as any)?.pai_id || (targetStud as any)?.pai_email) {
+            sendAppNotification({
+              tenant_id: currentTenantId,
+              destinatario_id: (targetStud as any).pai_id || (targetStud as any).pai_email,
+              destinatario_role: 'pai',
+              destinatario_email: (targetStud as any).pai_email || '',
+              estudante_id: targetStud?.id,
+              titulo: `📂 Novo Registo de Dossier: ${studName}`,
+              mensagem: `Informamos que foi adicionado o registo "${payload.tipo}" ao processo escolar de ${studName}.`,
+              tipo: 'info',
+              modulo: 'processos'
             });
           }
         }
@@ -7979,92 +8152,108 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   return (
                     <>
                       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-4">
-                        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
-                          <School className="w-5 h-5 text-indigo-600 mb-2" />
-                          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Escolas Ativas</p>
-                          <h3 className="text-xl font-black text-slate-900 mt-0.5">{filteredSchools.length}</h3>
+                        <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md hover:border-indigo-300 dark:hover:border-indigo-500/50 transition-all duration-200 group">
+                          <div className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 w-fit mb-2 group-hover:scale-105 transition-transform">
+                            <School className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                          </div>
+                          <p className="text-slate-400 dark:text-slate-400 text-[10px] font-bold uppercase tracking-wider">Escolas Ativas</p>
+                          <h3 className="text-xl font-black text-slate-900 dark:text-white mt-0.5">{filteredSchools.length}</h3>
                         </div>
 
-                        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
-                          <Users className="w-5 h-5 text-blue-600 mb-2" />
-                          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Total Docentes</p>
-                          <h3 className="text-xl font-black text-slate-900 mt-0.5">{filteredTeachers.length}</h3>
+                        <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md hover:border-blue-300 dark:hover:border-blue-500/50 transition-all duration-200 group">
+                          <div className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/40 w-fit mb-2 group-hover:scale-105 transition-transform">
+                            <Users className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                          </div>
+                          <p className="text-slate-400 dark:text-slate-400 text-[10px] font-bold uppercase tracking-wider">Total Docentes</p>
+                          <h3 className="text-xl font-black text-slate-900 dark:text-white mt-0.5">{filteredTeachers.length}</h3>
                         </div>
 
-                        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
-                          <GraduationCap className="w-5 h-5 text-emerald-600 mb-2" />
-                          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Estudantes</p>
-                          <h3 className="text-xl font-black text-slate-900 mt-0.5">{filteredStudents.length}</h3>
+                        <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md hover:border-emerald-300 dark:hover:border-emerald-500/50 transition-all duration-200 group">
+                          <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 w-fit mb-2 group-hover:scale-105 transition-transform">
+                            <GraduationCap className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                          </div>
+                          <p className="text-slate-400 dark:text-slate-400 text-[10px] font-bold uppercase tracking-wider">Estudantes</p>
+                          <h3 className="text-xl font-black text-slate-900 dark:text-white mt-0.5">{filteredStudents.length}</h3>
                         </div>
 
-                        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
-                          <BookOpen className="w-5 h-5 text-amber-600 mb-2" />
-                          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Total Turmas</p>
-                          <h3 className="text-xl font-black text-slate-900 mt-0.5">{filteredTurmas.length}</h3>
+                        <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md hover:border-amber-300 dark:hover:border-amber-500/50 transition-all duration-200 group">
+                          <div className="p-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 w-fit mb-2 group-hover:scale-105 transition-transform">
+                            <BookOpen className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                          </div>
+                          <p className="text-slate-400 dark:text-slate-400 text-[10px] font-bold uppercase tracking-wider">Total Turmas</p>
+                          <h3 className="text-xl font-black text-slate-900 dark:text-white mt-0.5">{filteredTurmas.length}</h3>
                         </div>
 
-                        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
-                          <ShieldCheck className="w-5 h-5 text-purple-600 mb-2" />
-                          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Categorias</p>
-                          <h3 className="text-xl font-black text-slate-900 mt-0.5">{globalCategories.length}</h3>
+                        <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md hover:border-purple-300 dark:hover:border-purple-500/50 transition-all duration-200 group">
+                          <div className="p-2 rounded-xl bg-purple-50 dark:bg-purple-950/40 w-fit mb-2 group-hover:scale-105 transition-transform">
+                            <ShieldCheck className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+                          </div>
+                          <p className="text-slate-400 dark:text-slate-400 text-[10px] font-bold uppercase tracking-wider">Categorias</p>
+                          <h3 className="text-xl font-black text-slate-900 dark:text-white mt-0.5">{globalCategories.length}</h3>
                         </div>
 
-                        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
-                          <UserCheck className="w-5 h-5 text-cyan-600 mb-2" />
-                          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Utilizadores</p>
-                          <h3 className="text-xl font-black text-slate-900 mt-0.5">{tenantUsers.length}</h3>
+                        <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md hover:border-cyan-300 dark:hover:border-cyan-500/50 transition-all duration-200 group">
+                          <div className="p-2 rounded-xl bg-cyan-50 dark:bg-cyan-950/40 w-fit mb-2 group-hover:scale-105 transition-transform">
+                            <UserCheck className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
+                          </div>
+                          <p className="text-slate-400 dark:text-slate-400 text-[10px] font-bold uppercase tracking-wider">Utilizadores</p>
+                          <h3 className="text-xl font-black text-slate-900 dark:text-white mt-0.5">{tenantUsers.length}</h3>
                         </div>
 
                         <div 
                           onClick={() => setActiveTab('atividades')}
-                          className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs cursor-pointer hover:border-indigo-300 transition"
+                          className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs cursor-pointer hover:shadow-md hover:border-amber-400 dark:hover:border-amber-500/50 transition-all duration-200 group"
                         >
-                          <CheckSquare className="w-5 h-5 text-indigo-600 mb-2" />
-                          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Actividades Activas</p>
-                          <h3 className="text-xl font-black text-amber-600 mt-0.5">
+                          <div className="p-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 w-fit mb-2 group-hover:scale-105 transition-transform">
+                            <CheckSquare className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                          </div>
+                          <p className="text-slate-400 dark:text-slate-400 text-[10px] font-bold uppercase tracking-wider">Actividades Activas</p>
+                          <h3 className="text-xl font-black text-amber-600 dark:text-amber-400 mt-0.5">
                             {rawAtividades.filter(a => a.status !== 'Finalizada').length}
                           </h3>
                         </div>
 
-                        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
-                          <Award className="w-5 h-5 text-rose-600 mb-2" />
-                          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Média Geral</p>
-                          <h3 className="text-xl font-black text-indigo-600 mt-0.5">{averageGrade} / 20</h3>
+                        <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md hover:border-rose-300 dark:hover:border-rose-500/50 transition-all duration-200 group">
+                          <div className="p-2 rounded-xl bg-rose-50 dark:bg-rose-950/40 w-fit mb-2 group-hover:scale-105 transition-transform">
+                            <Award className="w-5 h-5 text-rose-600 dark:text-rose-400" />
+                          </div>
+                          <p className="text-slate-400 dark:text-slate-400 text-[10px] font-bold uppercase tracking-wider">Média Geral</p>
+                          <h3 className="text-xl font-black text-indigo-600 dark:text-indigo-400 mt-0.5">{averageGrade} / 20</h3>
                         </div>
                       </div>
 
                       {/* Main Dynamic Charts Section */}
                       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         {/* Dynamic Academic Performance Bar Chart */}
-                        <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-6">
-                          <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                        <div className="lg:col-span-2 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md transition-shadow space-y-6">
+                          <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
                             <div>
-                              <h3 className="font-bold text-slate-900 text-base flex items-center gap-2">
-                                <BarChart3 className="w-5 h-5 text-indigo-600" />
+                              <h3 className="font-bold text-slate-900 dark:text-white text-base flex items-center gap-2">
+                                <BarChart3 className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
                                 Aproveitamento Académico em Tempo Real
                               </h3>
-                              <p className="text-xs text-slate-500 mt-0.5">Situação real dos alunos baseada nas pautas e avaliações registradas.</p>
+                              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Situação real dos alunos baseada nas pautas e avaliações registradas.</p>
                             </div>
-                            <span className="text-xs bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full font-bold border border-indigo-100">
+                            <span className="text-xs bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 px-3 py-1 rounded-full font-bold border border-indigo-100 dark:border-indigo-900/50">
                               {pautaCount} Pautas Avaliadas
                             </span>
                           </div>
 
                           {pautaCount === 0 ? (
-                            <div className="py-12 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                              <FileSpreadsheet className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                              <p className="text-xs font-bold text-slate-500">Nenhum registo de pauta encontrado para os filtros selecionados.</p>
-                              <p className="text-[11px] text-slate-400 mt-1">Selecione outro trimestre ou publique novas notas no módulo de Pautas.</p>
+                            <div className="py-12 text-center bg-slate-50 dark:bg-slate-950/50 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
+                              <FileSpreadsheet className="w-8 h-8 text-slate-300 dark:text-slate-600 mx-auto mb-2" />
+                              <p className="text-xs font-bold text-slate-500 dark:text-slate-400">Nenhum registo de pauta encontrado para os filtros selecionados.</p>
+                              <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">Selecione outro trimestre ou publique novas notas no módulo de Pautas.</p>
                             </div>
                           ) : (
                             <div className="space-y-5">
                               {/* Percentage Progress Bar Breakdown */}
                               <div className="space-y-2">
-                                <div className="flex justify-between text-xs font-bold text-slate-700">
+                                <div className="flex justify-between text-xs font-bold text-slate-700 dark:text-slate-300">
                                   <span>Distribuição de Resultados</span>
                                   <span>100% ({pautaCount} Alunos/Avaliações)</span>
                                 </div>
-                                <div className="h-4 w-full bg-slate-100 rounded-full overflow-hidden flex shadow-inner">
+                                <div className="h-4 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden flex shadow-inner">
                                   <div 
                                     style={{ width: `${(countAprovados / pautaCount) * 100}%` }}
                                     className="bg-emerald-500 h-full transition-all duration-500"
@@ -8085,35 +8274,35 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                               {/* Category Cards */}
                               <div className="grid grid-cols-3 gap-4 pt-2">
-                                <div className="bg-emerald-50/70 border border-emerald-100 p-4 rounded-xl">
+                                <div className="bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/30 hover:border-emerald-300 dark:hover:border-emerald-700 hover:shadow-xs transition-all duration-200 p-4 rounded-xl">
                                   <div className="flex items-center justify-between mb-1">
-                                    <span className="text-xs font-bold text-emerald-800">Aprovados (≥10)</span>
-                                    <CheckCircle className="w-4 h-4 text-emerald-600" />
+                                    <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300">Aprovados (≥10)</span>
+                                    <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                                   </div>
-                                  <p className="text-2xl font-black text-emerald-900">{countAprovados}</p>
-                                  <p className="text-[11px] font-bold text-emerald-700 mt-1">
+                                  <p className="text-2xl font-black text-emerald-900 dark:text-emerald-200">{countAprovados}</p>
+                                  <p className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 mt-1">
                                     {((countAprovados / pautaCount) * 100).toFixed(1)}% do total
                                   </p>
                                 </div>
 
-                                <div className="bg-amber-50/70 border border-amber-100 p-4 rounded-xl">
+                                <div className="bg-amber-50/70 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/30 hover:border-amber-300 dark:hover:border-amber-700 hover:shadow-xs transition-all duration-200 p-4 rounded-xl">
                                   <div className="flex items-center justify-between mb-1">
-                                    <span className="text-xs font-bold text-amber-800">Em Exame (8 - 9.9)</span>
-                                    <AlertCircle className="w-4 h-4 text-amber-600" />
+                                    <span className="text-xs font-bold text-amber-800 dark:text-amber-300">Em Exame (8 - 9.9)</span>
+                                    <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
                                   </div>
-                                  <p className="text-2xl font-black text-amber-900">{countExame}</p>
-                                  <p className="text-[11px] font-bold text-amber-700 mt-1">
+                                  <p className="text-2xl font-black text-amber-900 dark:text-amber-200">{countExame}</p>
+                                  <p className="text-[11px] font-bold text-amber-700 dark:text-amber-400 mt-1">
                                     {((countExame / pautaCount) * 100).toFixed(1)}% do total
                                   </p>
                                 </div>
 
-                                <div className="bg-rose-50/70 border border-rose-100 p-4 rounded-xl">
+                                <div className="bg-rose-50/70 dark:bg-rose-950/20 border border-rose-100 dark:border-rose-900/30 hover:border-rose-300 dark:hover:border-rose-700 hover:shadow-xs transition-all duration-200 p-4 rounded-xl">
                                   <div className="flex items-center justify-between mb-1">
-                                    <span className="text-xs font-bold text-rose-800">Reprovados (&lt;8)</span>
-                                    <XCircle className="w-4 h-4 text-rose-600" />
+                                    <span className="text-xs font-bold text-rose-800 dark:text-rose-300">Reprovados (&lt;8)</span>
+                                    <XCircle className="w-4 h-4 text-rose-600 dark:text-rose-400" />
                                   </div>
-                                  <p className="text-2xl font-black text-rose-900">{countReprovados}</p>
-                                  <p className="text-[11px] font-bold text-rose-700 mt-1">
+                                  <p className="text-2xl font-black text-rose-900 dark:text-rose-200">{countReprovados}</p>
+                                  <p className="text-[11px] font-bold text-rose-700 dark:text-rose-400 mt-1">
                                     {((countReprovados / pautaCount) * 100).toFixed(1)}% do total
                                   </p>
                                 </div>
@@ -8123,14 +8312,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         </div>
 
                         {/* Distribution of Users by Category (Permissões Globais) */}
-                        <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between space-y-4">
+                        <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md transition-shadow flex flex-col justify-between space-y-4">
                           <div>
-                            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
-                              <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                                <ShieldCheck className="w-4 h-4 text-purple-600" />
+                            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3 mb-4">
+                              <h4 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-2">
+                                <ShieldCheck className="w-4 h-4 text-purple-600 dark:text-purple-400" />
                                 Utilizadores por Categoria
                               </h4>
-                              <span className="text-[10px] font-bold text-slate-400 uppercase">Permissões Globais</span>
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Permissões Globais</span>
                             </div>
 
                             <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
@@ -8140,15 +8329,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 const pct = ((count / total) * 100).toFixed(0);
 
                                 return (
-                                  <div key={cat.id} className="space-y-1">
+                                  <div key={cat.id} className="space-y-1 group/cat p-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors">
                                     <div className="flex justify-between items-center text-xs">
-                                      <span className="font-bold text-slate-800">{cat.nome}</span>
-                                      <span className="font-mono text-slate-500">{count} ({pct}%)</span>
+                                      <span className="font-bold text-slate-800 dark:text-slate-200 group-hover/cat:text-purple-600 dark:group-hover/cat:text-purple-400 transition-colors">{cat.nome}</span>
+                                      <span className="font-mono text-slate-500 dark:text-slate-400">{count} ({pct}%)</span>
                                     </div>
-                                    <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                                    <div className="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
                                       <div 
                                         style={{ width: `${pct}%` }}
-                                        className="h-full bg-purple-600 rounded-full transition-all duration-300"
+                                        className="h-full bg-purple-600 dark:bg-purple-500 rounded-full transition-all duration-300"
                                       />
                                     </div>
                                   </div>
@@ -8159,7 +8348,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                           <button 
                             onClick={() => setActiveTab('global_permissions')}
-                            className="w-full bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 font-bold py-2.5 rounded-xl text-xs text-center transition-colors cursor-pointer flex items-center justify-center gap-2"
+                            className="w-full bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 dark:hover:bg-purple-900/50 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/60 font-bold py-2.5 rounded-xl text-xs text-center transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 hover:shadow-xs active:scale-[0.99]"
                           >
                             <ShieldCheck className="w-4 h-4" /> Gerir Permissões Globais
                           </button>
@@ -8169,13 +8358,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       {/* Turma Capacity and Interactive School Map */}
                       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         {/* Turmas Capacity & Fill Visualizer */}
-                        <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
-                          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                            <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                              <BookOpen className="w-4 h-4 text-amber-600" />
+                        <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md transition-shadow space-y-4">
+                          <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+                            <h4 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-2">
+                              <BookOpen className="w-4 h-4 text-amber-600 dark:text-amber-400" />
                               Lotação das Turmas
                             </h4>
-                            <span className="text-[10px] font-bold text-slate-400 uppercase">Capacidade Real</span>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Capacidade Real</span>
                           </div>
 
                           <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
@@ -8185,12 +8374,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               const pct = Math.min(100, Math.round((turmaStudentsCount / maxCap) * 100));
 
                               return (
-                                <div key={turma.id} className="space-y-1">
+                                <div key={turma.id} className="space-y-1.5 p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors border border-transparent hover:border-slate-100 dark:hover:border-slate-800">
                                   <div className="flex justify-between items-center text-xs">
-                                    <span className="font-bold text-slate-800">{turma.nome}</span>
-                                    <span className="font-mono text-slate-500">{turmaStudentsCount} / {maxCap} alunos ({pct}%)</span>
+                                    <span className="font-bold text-slate-800 dark:text-slate-200">{turma.nome}</span>
+                                    <span className="font-mono text-slate-500 dark:text-slate-400">{turmaStudentsCount} / {maxCap} alunos ({pct}%)</span>
                                   </div>
-                                  <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                                  <div className="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
                                     <div 
                                       style={{ width: `${pct}%` }}
                                       className={`h-full rounded-full transition-all duration-300 ${pct >= 90 ? 'bg-rose-500' : pct >= 75 ? 'bg-amber-500' : 'bg-emerald-500'}`}
@@ -8206,12 +8395,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         </div>
 
                         {/* Interactive Geographic School Map */}
-                        <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
-                          <div className="flex justify-between items-center pb-2 border-b border-slate-100">
-                            <p className="text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center gap-1.5">
-                              <MapPin className="w-4 h-4 text-indigo-600 animate-bounce" /> Distribuição Geográfica das Escolas Registadas
+                        <div className="lg:col-span-2 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md transition-shadow space-y-4">
+                          <div className="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-800">
+                            <p className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                              <MapPin className="w-4 h-4 text-indigo-600 dark:text-indigo-400 animate-bounce" /> Distribuição Geográfica das Escolas Registadas
                             </p>
-                            <span className="text-xs bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-full font-bold border border-indigo-100">
+                            <span className="text-xs bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 px-2.5 py-1 rounded-full font-bold border border-indigo-100 dark:border-indigo-900/50">
                               {filteredSchools.length} {filteredSchools.length === 1 ? 'Escola' : 'Escolas'}
                             </span>
                           </div>
@@ -13201,6 +13390,23 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     } else {
                       await addDoc(collection(db, 'assiduidade_logs'), logData);
                     }
+
+                    // Dispatch notification to user and parent if tardy or absent
+                    if (status === 'atrasado' || status === 'falta') {
+                      notifyAttendanceLogged({
+                        tenant_id: currentTenantId,
+                        registro_id: item?.id || '',
+                        user_id: item?.user_id,
+                        nome: resolvedName,
+                        tipo: tipo,
+                        status: status,
+                        data_registro: dateStr,
+                        turma_nome: logData.turma_nome,
+                        pai_id: (item as any)?.pai_id,
+                        pai_email: (item as any)?.pai_email
+                      });
+                    }
+
                     playBeep();
                     showSystemNotification(`Presença registrada com sucesso para ${resolvedName}!`, 'sucesso');
                     loadTenantContext();
@@ -15129,23 +15335,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                     <button
                       onClick={async () => {
-                        try {
-                          const unread = notifications.filter(n => !n.lido);
-                          for (const n of unread) {
-                            if (n.id) await deleteDoc(doc(db, 'notificacoes', n.id));
-                          }
-                          
-                          // Show 6-second popup notification (Rule 3)
-                          const popup = document.createElement('div');
-                          popup.className = 'fixed bottom-5 right-5 bg-indigo-600 text-white font-bold text-xs px-4 py-3 rounded-xl shadow-2xl border border-indigo-500 z-50 flex items-center gap-2 animate-bounce';
-                          popup.innerHTML = `✅ Todas as notificações foram marcadas como lidas e removidas!`;
-                          document.body.appendChild(popup);
-                          setTimeout(() => popup.remove(), 6000);
-
-                          loadTenantContext();
-                        } catch (err: any) {
-                          alert("Erro ao marcar notificações: " + err.message);
-                        }
+                        await markAllNotificationsAsRead();
+                        showSystemNotification("Todas as notificações foram marcadas como lidas!", "sucesso");
                       }}
                       className="bg-indigo-50 hover:bg-indigo-100 text-indigo-600 border border-indigo-200 font-bold text-xs px-3.5 py-2 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
                     >
@@ -15174,8 +15365,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         >
                           <div className="flex gap-3">
                             <div className={`p-2.5 rounded-full shrink-0 ${
-                              n.tipo === 'alerta' 
+                              n.tipo === 'alerta' || (n.tipo as string) === 'erro'
                                 ? 'bg-rose-50 text-rose-600' 
+                                : n.tipo === 'sucesso'
+                                ? 'bg-emerald-50 text-emerald-600'
                                 : 'bg-indigo-50 text-indigo-600'
                             }`}>
                               <Bell className="w-4 h-4" />
@@ -15196,21 +15389,23 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             </div>
                           </div>
 
-                          {isUnread && (
+                          <div className="flex items-center gap-2 self-end md:self-center">
+                            {isUnread && (
+                              <button
+                                onClick={() => markNotificationAsRead(n.id)}
+                                className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] px-3 py-1.5 rounded-lg shrink-0 cursor-pointer transition-colors shadow-xs"
+                              >
+                                Marcar como Lida
+                              </button>
+                            )}
                             <button
-                              onClick={async () => {
-                                try {
-                                  if (n.id) await deleteDoc(doc(db, 'notificacoes', n.id));
-                                  loadTenantContext();
-                                } catch (err: any) {
-                                  alert("Erro ao remover notificação: " + err.message);
-                                }
-                              }}
-                              className="bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-[10px] px-3 py-1.5 rounded-lg shrink-0 cursor-pointer transition-colors shadow-xs"
+                              onClick={() => deleteNotification(n.id)}
+                              title="Remover notificação"
+                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
                             >
-                              Marcar como Lida
+                              <Trash2 className="w-4 h-4" />
                             </button>
-                          )}
+                          </div>
                         </div>
                       );
                     })}

@@ -470,11 +470,30 @@ export interface SmtpConfig {
 
 export interface Notificacao {
   id: string;
-  destinatario_id: string; // 'super_admin', tenantId, or 'todos'
+  destinatario_id: string; // 'super_admin', tenantId, userId, teacherId, studentId, or 'todos'
+  destinatario_role?: 'admin' | 'director' | 'docente' | 'estudante' | 'pai' | 'todos' | string;
+  destinatario_email?: string;
+  usuario_id?: string;
+  usuario_email?: string;
+  tenant_id?: string;
+  estudante_id?: string;
+  aluno_id?: string;
+  docente_id?: string;
+  turma_id?: string;
+  turma_nome?: string;
+  escola_id?: string;
+  disciplina_id?: string;
+  disciplina_nome?: string;
+  atividade_id?: string;
+  exame_id?: string;
+  processo_id?: string;
   titulo: string;
   mensagem: string;
   lido: boolean;
-  tipo: 'info' | 'alerta' | 'limite' | 'sistema' | 'sucesso';
+  lido_em?: string;
+  tipo: 'info' | 'alerta' | 'limite' | 'sistema' | 'sucesso' | 'cadastro';
+  link?: string;
+  modulo?: string;
   created_at: string;
 }
 

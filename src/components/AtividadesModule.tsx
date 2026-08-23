@@ -9,6 +9,7 @@ import {
 import { db } from '../lib/firebase';
 import { collection, addDoc, updateDoc, doc, getDocs, query, where, deleteDoc } from 'firebase/firestore';
 import { sendBrowserNotification } from '../lib/browserNotifications';
+import { sendAppNotification, notifyActivityAssigned } from '../services/notificationDispatcher';
 import { 
   ActividadePendente, SeveridadeActividade, StatusActividade, 
   CategoriaAtribuicaoActividade, Docente, Estudante, Escola, Turma, 
@@ -999,6 +1000,21 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
           turma_id: formTurmaId || null,
           data_prazo: formPrazo || null,
         });
+
+        notifyActivityAssigned({
+          tenant_id: tenantId,
+          actividade_id: selectedActivity.id,
+          titulo: formTitulo.trim(),
+          detalhes: formDetalhes.trim(),
+          severidade: formSeveridade,
+          categoria_atribuicao: formCategoria,
+          responsavel_id: targetUserId || selectedActivity.responsavel_id,
+          responsavel_nome: targetUserName || selectedActivity.responsavel_nome,
+          criado_por_nome: currentUserName,
+          data_prazo: formPrazo || undefined,
+          isUpdate: true
+        });
+
         if (showNotification) showNotification('Actividade actualizada com sucesso.', 'sucesso');
       } else {
         // Create
@@ -1020,7 +1036,22 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
           data_criacao: new Date().toISOString(),
           modulo_origem: 'Criação Manual'
         };
-        await addDoc(collection(db, 'atividades'), newDoc);
+        const docRef = await addDoc(collection(db, 'atividades'), newDoc);
+
+        notifyActivityAssigned({
+          tenant_id: tenantId,
+          actividade_id: docRef.id,
+          titulo: formTitulo.trim(),
+          detalhes: formDetalhes.trim(),
+          severidade: formSeveridade,
+          categoria_atribuicao: formCategoria,
+          responsavel_id: targetUserId,
+          responsavel_nome: targetUserName,
+          criado_por_nome: currentUserName,
+          data_prazo: formPrazo || undefined,
+          isUpdate: false
+        });
+
         if (showNotification) showNotification('Actividade criada com sucesso.', 'sucesso');
       }
 
@@ -1078,6 +1109,19 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
         concluido_por_nome: currentUserName,
         concluido_em: nowIso
       });
+
+      // Dispatch notification that activity was completed
+      if (selectedActivity.criado_por_id && selectedActivity.criado_por_id !== currentUserId) {
+        sendAppNotification({
+          tenant_id: tenantId,
+          destinatario_id: selectedActivity.criado_por_id,
+          destinatario_role: 'admin',
+          titulo: '✅ Actividade Concluída',
+          mensagem: `A tarefa "${selectedActivity.titulo}" foi concluída por ${currentUserName}. Nota: ${notaConclusao.trim()}`,
+          tipo: 'sucesso',
+          modulo: 'atividades'
+        });
+      }
 
       if (showNotification) showNotification('Actividade concluída com sucesso e auditada no sistema!', 'sucesso');
       setIsCompleteModalOpen(false);

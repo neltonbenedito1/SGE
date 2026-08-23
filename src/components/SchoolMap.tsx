@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Search, MapPin, Navigation, Maximize2, Minimize2 } from 'lucide-react';
+import { Search, MapPin, Maximize2, Minimize2 } from 'lucide-react';
 
 interface School {
   id: string;
@@ -49,16 +49,6 @@ const MAP_LAYERS = {
     name: 'Satélite',
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
-  },
-  terrain: {
-    name: 'Terreno',
-    url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
-    attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | Style &copy; OpenTopoMap'
-  },
-  dark: {
-    name: 'Escuro',
-    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
   }
 };
 
@@ -318,36 +308,38 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
   return (
     <div 
       ref={containerRef} 
-      className={`relative border border-slate-150 rounded-2xl overflow-hidden shadow-xs bg-slate-50 ${isFullscreen ? 'p-2 bg-slate-900 w-screen h-screen' : ''}`}
+      className={`relative border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs bg-slate-50 dark:bg-slate-950 ${isFullscreen ? 'p-2 bg-slate-950 w-screen h-screen' : ''}`}
     >
       {/* MAP OVERLAY: Search, Layers and Fullscreen */}
       <div className="absolute top-4 left-4 right-4 z-40 flex flex-wrap gap-2 items-center justify-between pointer-events-none">
         {/* Search Input Box */}
         <div className="relative max-w-xs w-full pointer-events-auto">
-          <div className="bg-white/90 backdrop-blur-md rounded-xl border border-slate-200/80 shadow-md flex items-center p-2">
-            <Search className="w-4 h-4 text-slate-400 ml-1 shrink-0" />
+          <div className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md rounded-xl border border-slate-200/90 dark:border-slate-700/80 shadow-md hover:border-indigo-400 dark:hover:border-indigo-500/60 transition-all duration-200 flex items-center p-2">
+            <Search className="w-4 h-4 text-slate-400 dark:text-slate-500 ml-1 shrink-0" />
             <input
               type="text"
               placeholder="Pesquisar escola no mapa..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-transparent border-0 outline-hidden text-xs text-slate-800 placeholder-slate-400 px-2 py-1 font-semibold focus:ring-0"
+              className="w-full bg-transparent border-0 outline-hidden text-xs text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 px-2 py-1 font-semibold focus:ring-0"
             />
           </div>
 
           {/* Search autocomplete results */}
           {filteredSchools.length > 0 && (
-            <div className="absolute top-full left-0 right-0 mt-1.5 bg-white border border-slate-100 rounded-xl shadow-lg max-h-56 overflow-y-auto divide-y divide-slate-50 z-50">
+            <div className="absolute top-full left-0 right-0 mt-1.5 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl shadow-xl max-h-56 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/60 z-50">
               {filteredSchools.map((s) => (
                 <button
                   key={s.id}
                   onClick={() => handleSelectSchool(s)}
-                  className="w-full text-left p-3 hover:bg-slate-50 flex items-center gap-3 transition-colors text-xs font-semibold text-slate-700 cursor-pointer"
+                  className="w-full text-left p-3 hover:bg-indigo-50/60 dark:hover:bg-indigo-950/40 flex items-center gap-3 transition-colors text-xs font-semibold text-slate-700 dark:text-slate-200 cursor-pointer group"
                 >
-                  <MapPin className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                  <div className="p-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 group-hover:scale-110 transition-transform shrink-0">
+                    <MapPin className="w-3.5 h-3.5" />
+                  </div>
                   <div className="truncate">
-                    <p className="font-bold text-slate-900 truncate">{s.nome}</p>
-                    <p className="text-[10px] text-slate-400 truncate">{s.endereco}</p>
+                    <p className="font-bold text-slate-900 dark:text-white truncate group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">{s.nome}</p>
+                    <p className="text-[10px] text-slate-400 dark:text-slate-400 truncate">{s.endereco}</p>
                   </div>
                 </button>
               ))}
@@ -358,15 +350,15 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
         {/* Controls Overlay */}
         <div className="flex gap-2 items-center pointer-events-auto">
           {/* Map Type Switcher */}
-          <div className="bg-white/90 backdrop-blur-md border border-slate-200/80 shadow-md rounded-xl p-1 flex gap-1 items-center">
+          <div className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200/90 dark:border-slate-700/80 shadow-md rounded-xl p-1 flex gap-1 items-center">
             {(Object.keys(MAP_LAYERS) as Array<keyof typeof MAP_LAYERS>).map((key) => (
               <button
                 key={key}
                 onClick={() => handleLayerChange(key)}
-                className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition-all duration-200 cursor-pointer ${
                   activeLayer === key
-                    ? 'bg-indigo-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:bg-slate-50'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
                 {MAP_LAYERS[key].name}
@@ -377,23 +369,12 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
           {/* Fullscreen Button */}
           <button
             onClick={toggleFullscreen}
-            className="bg-white/90 backdrop-blur-md hover:bg-slate-50 text-slate-700 border border-slate-200/80 rounded-xl p-2.5 shadow-md transition-all cursor-pointer flex items-center justify-center shrink-0"
+            className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 border border-slate-200/90 dark:border-slate-700/80 rounded-xl p-2.5 shadow-md hover:shadow-lg transition-all duration-200 cursor-pointer flex items-center justify-center shrink-0"
             title={isFullscreen ? "Sair da Tela Cheia" : "Tela Cheia"}
           >
-            {isFullscreen ? <Minimize2 className="w-4 h-4 text-indigo-600" /> : <Maximize2 className="w-4 h-4 text-slate-600" />}
+            {isFullscreen ? <Minimize2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" /> : <Maximize2 className="w-4 h-4 text-slate-600 dark:text-slate-300" />}
           </button>
         </div>
-      </div>
-
-      {/* Map Guidelines Overlay */}
-      <div className="absolute bottom-4 right-4 z-40 bg-white/80 backdrop-blur-md text-slate-500 rounded-lg p-2.5 border border-slate-200/50 shadow-xs text-[10px] font-semibold space-y-1 max-w-xs pointer-events-none">
-        <div className="flex items-center gap-1.5 text-slate-700 font-bold mb-1">
-          <Navigation className="w-3.5 h-3.5 text-indigo-600" />
-          <span>Navegação no Mapa</span>
-        </div>
-        <p>• Arraste o cursor para navegar pelo território</p>
-        <p>• Use a roda do mouse ou toque para dar zoom</p>
-        <p>• Clique em qualquer pino para abrir detalhes</p>
       </div>
 
       {/* Loading Canvas Placeholder */}
