@@ -287,9 +287,11 @@ export async function syncLocalDataToFirestore(): Promise<{
   for (const smtp of smtps) {
     try {
       await setDoc(doc(db, 'smtp_configs', smtp.id), smtp);
-      localDb.deleteSmtpConfig(smtp.id);
+      if (smtp.id !== 'system_global') {
+        localDb.deleteSmtpConfig(smtp.id);
+      }
       result.smtpConfigsSynced++;
-      console.log(`[Sync] SMTP Config ${smtp.id} successfully synced and removed from temp DB.`);
+      console.log(`[Sync] SMTP Config ${smtp.id} successfully synced.`);
     } catch (e) {
       console.warn(`[Sync] Failed to sync SMTP config ${smtp.id}:`, e);
       break;

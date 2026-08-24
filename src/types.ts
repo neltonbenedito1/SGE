@@ -468,6 +468,8 @@ export interface SmtpConfig {
   status: 'ativo' | 'inativo';
   updated_at?: string;
   smtp_type?: 'manual' | 'gmail';
+  gmail_token?: string;
+  auth_type?: 'oauth' | 'password';
 }
 
 export interface Notificacao {

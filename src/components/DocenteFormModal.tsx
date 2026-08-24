@@ -298,25 +298,14 @@ export default function DocenteFormModal({
 
     const docenteData: Partial<Docente> = {
       nome: nome.trim(),
-      data_nascimento: dataNascimento || undefined,
       genero,
       nacionalidade,
       estado_civil: estadoCivil,
-      documento_identificacao: documentoIdentificacao.trim() || undefined,
-      nuit: nuit.trim() || undefined,
-      telefone: telefone.trim() || undefined,
-      email: email.trim().toLowerCase() || undefined,
-      endereco: endereco.trim() || undefined,
-      cidade_provincia: cidadeProvincia,
-      foto_url: fotoUrl.trim() || undefined,
-
-      codigo_docente: codigoDocente.trim() || undefined,
       categoria_profissional: categoriaProfissional,
       cargo,
       departamento,
       cursos_lecionados: cursosLecionados,
       especialidade: especialidade.trim() || (formacoes[0]?.curso || 'Docência Geral'),
-      numero_registro: numeroRegistro.trim() || undefined,
       data_admissao: dataAdmissao || new Date().toISOString().split('T')[0],
       data_contratacao: dataAdmissao || new Date().toISOString().split('T')[0],
       tipo_vinculo: tipoVinculo,
@@ -328,6 +317,17 @@ export default function DocenteFormModal({
       dados_em_falta: dadosEmFalta,
       updated_at: new Date().toISOString()
     };
+
+    if (dataNascimento) docenteData.data_nascimento = dataNascimento;
+    if (documentoIdentificacao.trim()) docenteData.documento_identificacao = documentoIdentificacao.trim();
+    if (nuit.trim()) docenteData.nuit = nuit.trim();
+    if (telefone.trim()) docenteData.telefone = telefone.trim();
+    if (email.trim()) docenteData.email = email.trim().toLowerCase();
+    if (endereco.trim()) docenteData.endereco = endereco.trim();
+    if (cidadeProvincia) docenteData.cidade_provincia = cidadeProvincia;
+    if (fotoUrl.trim()) docenteData.foto_url = fotoUrl.trim();
+    if (codigoDocente.trim()) docenteData.codigo_docente = codigoDocente.trim();
+    if (numeroRegistro.trim()) docenteData.numero_registro = numeroRegistro.trim();
 
     await onSave(docenteData, {
       email: email.trim().toLowerCase(),

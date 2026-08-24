@@ -712,9 +712,15 @@ app.post("/api/send-email", async (req, res) => {
 
     const isGmail = smtpConfig.smtp_type === "gmail" || (smtpConfig.host && smtpConfig.host.toLowerCase().includes("gmail"));
 
-    // If it's Gmail or a server that requires authentication, but credentials are missing or blank, throw immediately to fallback
+    // If it is Gmail or requires credentials, check if valid user and password/app-password are provided.
+    // If not provided or incomplete, smoothly simulate email delivery without logging an error.
     if (isGmail && (!smtpConfig.user || !smtpConfig.pass || smtpConfig.user.trim() === "" || smtpConfig.pass.trim() === "")) {
-      throw new Error("Gmail SMTP requires valid username and password/app-password. Falling back to simulation.");
+      console.log(`[SMTP SIMULADO - Gmail sem credenciais de app] Envio para: ${to} | Assunto: ${subject}`);
+      return res.json({
+        success: true,
+        simulated: true,
+        message: "E-mail simulado com sucesso (Credenciais de aplicativo Gmail não configuradas)."
+      });
     }
 
     let transporter;

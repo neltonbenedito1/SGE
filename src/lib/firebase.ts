@@ -6,13 +6,12 @@
 import { initializeApp, getApps } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword, signOut } from "firebase/auth";
 import { 
-  getFirestore, 
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   collection, 
   doc, 
-  setDoc, 
   getDocs, 
-  query, 
-  where,
   getDocFromServer,
   writeBatch
 } from "firebase/firestore";
@@ -28,9 +27,19 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-export const db = (configData as any).firestoreDatabaseId 
-  ? getFirestore(app, (configData as any).firestoreDatabaseId)
-  : getFirestore(app);
+const firestoreDbId = (configData as any).firestoreDatabaseId || undefined;
+
+export const db = initializeFirestore(
+  app,
+  {
+    experimentalAutoDetectLongPolling: true,
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager()
+    })
+  },
+  firestoreDbId
+);
+
 export const auth = getAuth(app);
 
 /**
@@ -77,13 +86,20 @@ export async function registerUserInFirebaseAuth(email: string, password?: strin
   }
 }
 
-// Validation check on database initialization as requested by guidelines
+// Validation check on database initialization with resilient error absorption
 async function testConnection() {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.info("Firebase client is currently offline or initial connection is pending.");
+  } catch (error: any) {
+    if (
+      error?.code === 'unavailable' ||
+      error?.message?.includes('the client is offline') ||
+      error?.message?.includes('Could not reach Cloud Firestore backend') ||
+      error?.message?.includes('offline')
+    ) {
+      console.info("[Firestore] Client initialized with offline caching and auto-fallback transport.");
+    } else {
+      console.info("[Firestore] Connection status:", error?.message || error);
     }
   }
 }
@@ -95,6 +111,11 @@ export async function seedDatabaseIfEmpty() {
     const plansRef = collection(db, "planos");
     const plansSnapshot = await getDocs(plansRef);
     
+    // Only seed if empty
+    if (!plansSnapshot.empty) {
+      return;
+    }
+
     console.log("Seeding/updating database with high-fidelity SaaS structures...");
     const batch = writeBatch(db);
 

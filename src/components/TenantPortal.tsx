@@ -57,6 +57,7 @@ import {
 import { ValidarPresencaModal } from './ValidarPresencaModal';
 import { StudentQrDisplay } from './StudentQrDisplay';
 import { generateStudentQrPayload, generateQrDataUrl } from '../utils/qrCodeHelper';
+import { EmailTemplates, createMimeMessage, createGmailRawPayload } from '../lib/emailUtils';
 import DocenteFormModal from './DocenteFormModal';
 import ProcessoIndividualModule from './ProcessoIndividualModule';
 import { 
@@ -4663,10 +4664,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       const usr = tenantUsers.find(u => u.id === teacher.user_id);
       const email = teacher.email || usr?.email;
       if (email) {
+        const tmpl = EmailTemplates.teacherMissingData({
+          teacherName: teacher.nome || usr?.nome || 'Teacher',
+          missingDetails: (teacher.dados_em_falta || []).join(', ') || 'Qualifications or Documentation'
+        });
         await queueOrSendEmail(
           email,
-          'Aviso: Atualização de Dados Cadastrais e Documentos Pendentes',
-          `Prezado(a) Docente ${teacher.nome || usr?.nome},\n\nConstatamos que existem dados ou documentos pendentes em seu cadastro institucional (${(teacher.dados_em_falta || []).join(', ') || 'Formação ou Documentação'}).\n\nPor favor, entre em contato com a Direção Pedagógica/Secretaria para regularizar o seu dossier.\n\nAtenciosamente,\nDireção da Escola`
+          tmpl.subject,
+          tmpl.body
         );
       }
       showSystemNotification(`Notificação de pendência emitida com sucesso para "${teacher.nome || usr?.nome}".`, 'sucesso');
@@ -4972,10 +4977,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   `Aluno ${usr?.nome || 'Estudante'} reativado com sucesso.`
                 );
 
+                const tmpl = EmailTemplates.studentReactivation({
+                  studentName: usr?.nome || 'Student'
+                });
                 await queueOrSendEmail(
-                  usr?.email || 'geral@escola.ac.mz',
-                  '📢 Reativação de Aluno no Portal Escolar',
-                  `Estimado(a) encarregado(a),\n\nInformamos que a matrícula do(a) estudante "${usr?.nome || 'Estudante'}" foi reativada no nosso SGE.\n\nAtenciosamente,\nDireção da Escola`
+                  usr?.email || 'general@school.edu',
+                  tmpl.subject,
+                  tmpl.body
                 );
                 
                 const popup = document.createElement('div');
@@ -6093,10 +6101,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
             // 3. Email notification (Rule 6.1)
             if (newDirectorUser.email) {
+              const tmpl = EmailTemplates.directorAppointment({
+                directorName: newDirectorUser.nome || 'Director',
+                schoolName: escolaForm.nome || 'School'
+              });
               await queueOrSendEmail(
                 newDirectorUser.email,
-                '🎓 Nomeação de Cargo - Diretor(a) de Escola',
-                `Prezado(a) ${newDirectorUser.nome},\n\nInformamos que foi oficialmente nomeado(a) como Diretor(a) da escola "${escolaForm.nome}".\n\nEm conformidade com a sua nova atribuição, o seu perfil de acesso e privilégios no Portal SGE foram atualizados para "Directores e Gestores Escolares".\n\nPor favor, aceda ao portal para visualizar as suas novas ferramentas de gestão escolar.\n\nAtenciosamente,\nAdministração Escolar`
+                tmpl.subject,
+                tmpl.body
               );
             }
 
@@ -10290,10 +10302,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                         });
                                                       }
 
+                                                      const tmplReminder = EmailTemplates.tuitionReminder({
+                                                        studentName: usr?.nome || "Student",
+                                                        description: f.descricao,
+                                                        dueDate: new Date(f.data_vencimento).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }),
+                                                        amountFormatted: f.valor.toLocaleString("pt-MZ", { style: "currency", currency: "MZN" })
+                                                      });
                                                       await queueOrSendEmail(
-                                                        usr?.email || 'geral@escola.ac.mz',
-                                                        '⏳ Lembrete de Pagamento de Mensalidade - SGE',
-                                                        `Prezado Encarregado / Estudante,\n\nRelembramos que a mensalidade escolar "${f.descricao}" do aluno ${usr?.nome || 'Estudante'} com vencimento em ${new Date(f.data_vencimento).toLocaleDateString('pt-BR')} no valor de ${f.valor.toLocaleString('pt-MZ', { style: 'currency', currency: 'MZN' })} está aguardando pagamento.\n\nPor favor, efetue o pagamento para regularizar a situação financeira.\n\nAtenciosamente,\nDireção Financeira`
+                                                        usr?.email || "general@school.edu",
+                                                        tmplReminder.subject,
+                                                        tmplReminder.body
                                                       );
 
                                                       const popup = document.createElement('div');
@@ -10326,10 +10344,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                         `Pagamento confirmado para factura "${f.descricao}" no valor de MZN ${f.valor}.`
                                                       );
 
+                                                      const tmplReceipt = EmailTemplates.paymentReceipt({
+                                                        studentName: usr?.nome || "Student",
+                                                        description: f.descricao,
+                                                        amountFormatted: f.valor.toLocaleString("pt-MZ", { style: "currency", currency: "MZN" })
+                                                      });
                                                       await queueOrSendEmail(
-                                                        usr?.email || 'geral@escola.ac.mz',
-                                                        '🧾 Recibo de Pagamento - SGE',
-                                                        `Estimado encarregado,\n\nConfirmamos com sucesso a receção do pagamento da factura "${f.descricao}" no valor de ${f.valor.toLocaleString('pt-MZ', { style: 'currency', currency: 'MZN' })} para o aluno ${usr?.nome}.\n\nObrigado pela sua colaboração.\nAtenciosamente,\nSecretaria Académica`
+                                                        usr?.email || "general@school.edu",
+                                                        tmplReceipt.subject,
+                                                        tmplReceipt.body
                                                       );
 
                                                       loadTenantContext();
@@ -16566,10 +16589,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                   // Send notification alerts to Parents and Teachers (Rule 1.1)
                   const parentEmail = tenantUsers.find(u => u.id === studentToDeactivate.user_id)?.email || 'encarregado@portal.ac.mz';
+                  const deactTmpl = EmailTemplates.studentDeactivation({
+                    studentName: studName,
+                    reason: deactivateReason
+                  });
                   await queueOrSendEmail(
                     parentEmail,
-                    '⚠️ Desativação de Matrícula - SGE',
-                    `Estimado Encarregado(a),\n\nComunicamos que a matrícula do(a) estudante "${studName}" foi temporariamente desactivada no Portal SGE.\nMotivo: ${deactivateReason}\n\nPara qualquer esclarecimento, por favor contacte a direcção escolar.\n\nAtenciosamente,\nDirecção da Escola`
+                    deactTmpl.subject,
+                    deactTmpl.body
                   );
 
                   showSystemNotification(`Aluno ${studName} desactivado. Notificações enviadas aos responsáveis.`, 'sucesso');
@@ -16697,10 +16724,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   const admins = tenantUsers.filter(u => u.tipo === 'admin' || u.tipo === 'director');
                   for (const admin of admins) {
                     if (admin.email) {
+                      const adminTmpl = EmailTemplates.studentDropoutAdmin({
+                        studentName: studName,
+                        enrollmentNo: s.numero_matricula || "N/A",
+                        reason: dropoutReason
+                      });
                       await queueOrSendEmail(
                         admin.email,
-                        `⚠️ Alerta: Desistência de Aluno - ${studName}`,
-                        `Prezado(a) Administrador(a),\n\nInformamos que o(a) estudante "${studName}" (Nº Matrícula: ${s.numero_matricula}) desistiu oficialmente dos estudos. O acesso deste aluno ao portal escolar foi suspenso automaticamente.\n\nAtenciosamente,\nPortal SGE`
+                        adminTmpl.subject,
+                        adminTmpl.body
                       );
                     }
                     if (admin.id !== loggedInUser?.id) {
@@ -16725,10 +16757,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       const teacherUser = tenantUsers.find(u => u.id === teacherObj.user_id);
                       if (teacherUser) {
                         if (teacherUser.email) {
+                          const teacherTmpl = EmailTemplates.studentDropoutTeacher({
+                            studentName: studName,
+                            className: studentTurma?.nome || "Class"
+                          });
                           await queueOrSendEmail(
                             teacherUser.email,
-                            `📢 Notificação Pedagógica: Desistência de Aluno - ${studName}`,
-                            `Estimado(a) Docente,\n\nInformamos que o(a) estudante "${studName}" da turma "${studentTurma?.nome || 'Turma'}", para a qual leciona, foi registrado(a) no sistema como desistente dos estudos. Por favor, desconsidere-o nas próximas avaliações e pautas.\n\nAtenciosamente,\nSGE`
+                            teacherTmpl.subject,
+                            teacherTmpl.body
                           );
                         }
                         await addDoc(collection(db, 'notificacoes'), {
@@ -16748,10 +16784,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   const parentUser = tenantUsers.find(u => u.id === s.pai_id);
                   if (parentUser) {
                     if (parentUser.email) {
+                      const parentTmpl = EmailTemplates.studentDropoutParent({
+                        studentName: studName
+                      });
                       await queueOrSendEmail(
                         parentUser.email,
-                        `⚠️ Comunicado Oficial: Desistência de Estudos - ${studName}`,
-                        `Estimado(a) Encarregado(a) de Educação,\n\nConfirmamos o registro no SGE de que o(a) estudante "${studName}" desistiu dos estudos nesta instituição. De acordo com os procedimentos internos, o acesso do estudante ao portal escolar foi suspenso.\n\nSe esta informação estiver incorreta ou desejar reverter este processo, por favor dirija-se à secretaria escolar de imediato.\n\nAtenciosamente,\nDireção Pedagógica`
+                        parentTmpl.subject,
+                        parentTmpl.body
                       );
                     }
                     await addDoc(collection(db, 'notificacoes'), {
@@ -16908,10 +16947,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     });
 
                     if (oldDTUser.email) {
+                      const outTmpl = EmailTemplates.transferOutDT({
+                        studentName: studName,
+                        className: oldTurma?.nome || "N/A",
+                        destinationSchoolName
+                      });
                       await queueOrSendEmail(
                         oldDTUser.email,
-                        '🔄 Saída de Aluno por Transferência - SGE',
-                        `Estimado(a) Professor(a),\n\nInformamos que o(a) estudante "${studName}" foi transferido(a) da sua turma (${oldTurma?.nome || 'N/A'}) para a instituição "${destinationSchoolName}".\n\nAtenciosamente,\nSGE`
+                        outTmpl.subject,
+                        outTmpl.body
                       );
                     }
                   }
@@ -16928,20 +16972,29 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     });
 
                     if (newDTUser.email) {
+                      const inTmpl = EmailTemplates.transferInDT({
+                        studentName: studName,
+                        className: newTurma?.nome || "N/A",
+                        originalSchoolName
+                      });
                       await queueOrSendEmail(
                         newDTUser.email,
-                        '🔄 Novo Aluno Recebido - SGE',
-                        `Estimado(a) Professor(a),\n\nInformamos que o(a) estudante "${studName}" foi adicionado(a) à sua turma (${newTurma?.nome || 'N/A'}) por transferência interna da escola "${originalSchoolName}".\n\nAtenciosamente,\nSGE`
+                        inTmpl.subject,
+                        inTmpl.body
                       );
                     }
                   }
 
                   // Send email alert to parent/guardian
                   const parentEmail = tenantUsers.find(u => u.id === studentToTransfer.user_id)?.email || 'encarregado@portal.ac.mz';
+                  const guardTmpl = EmailTemplates.transferGuardian({
+                    studentName: studName,
+                    destinationSchoolName
+                  });
                   await queueOrSendEmail(
                     parentEmail,
-                    '🔄 Guia de Transferência Académica - SGE',
-                    `Estimado Encarregado(a),\n\nConfirmamos a transferência interna do(a) estudante "${studName}" com destino à instituição "${destinationSchoolName}".\nTodos os registros académicos e notas foram sincronizados automaticamente.\n\nAtenciosamente,\nSecretaria Escolar`
+                    guardTmpl.subject,
+                    guardTmpl.body
                   );
 
                   showSystemNotification(`Aluno ${studName} transferido com sucesso!`, 'sucesso');
@@ -17091,10 +17144,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   );
 
                   // Send email notification to parent (Rule 6.1)
+                  const invTmpl = EmailTemplates.newInvoiceIssued({
+                    description: faturaForm.descricao,
+                    amountFormatted: faturaForm.valor.toLocaleString("pt-MZ", { style: "currency", currency: "MZN" }),
+                    dueDate: new Date(faturaForm.data_vencimento).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })
+                  });
                   await queueOrSendEmail(
-                    usr?.email || 'geral@escola.ac.mz',
-                    '🧾 Nova Factura Emitida - Portal Escolar',
-                    `Estimado encarregado,\n\nInformamos que foi emitida uma nova fatura de "${faturaForm.descricao}" no valor de ${faturaForm.valor.toLocaleString('pt-MZ', { style: 'currency', currency: 'MZN' })}, com vencimento em ${new Date(faturaForm.data_vencimento).toLocaleDateString('pt-BR')}.\n\nPoderá efectuar o pagamento directamente na secretaria da escola ou pelo portal.\n\nAtenciosamente,\nDepartamento Financeiro`
+                    usr?.email || "general@school.edu",
+                    invTmpl.subject,
+                    invTmpl.body
                   );
 
                   // Trigger 6-second popup notification (Rule 3)

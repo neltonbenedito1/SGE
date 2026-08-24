@@ -36,6 +36,17 @@ export interface AtividadesModuleProps {
 
 const ITEMS_PER_PAGE = 25;
 
+// Helper to remove any undefined properties before sending to Firestore
+function cleanDataForFirestore<T extends Record<string, any>>(obj: T): Record<string, any> {
+  const clean: Record<string, any> = {};
+  Object.keys(obj).forEach((key) => {
+    if (obj[key] !== undefined) {
+      clean[key] = obj[key];
+    }
+  });
+  return clean;
+}
+
 export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
   tenantId,
   loggedInUser,
@@ -581,12 +592,12 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
       
       if (action === 'apagar') {
         for (const actId of selectedActivityIds) {
-          await deleteDoc(doc(db, 'atividades_pendentes', actId));
+          await deleteDoc(doc(db, 'atividades', actId));
         }
         showNotification?.(`${count} actividade(s) apagada(s) com sucesso!`, 'sucesso');
       } else if (action === 'suspender') {
         for (const actId of selectedActivityIds) {
-          await updateDoc(doc(db, 'atividades_pendentes', actId), {
+          await updateDoc(doc(db, 'atividades', actId), {
             status: 'Suspensa',
             updated_at: new Date().toISOString()
           });
@@ -594,7 +605,7 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
         showNotification?.(`${count} actividade(s) suspensa(s) com sucesso!`, 'sucesso');
       } else if (action === 'restaurar') {
         for (const actId of selectedActivityIds) {
-          await updateDoc(doc(db, 'atividades_pendentes', actId), {
+          await updateDoc(doc(db, 'atividades', actId), {
             status: 'Pendente',
             concluido_em: null,
             data_finalizacao: null,
@@ -678,7 +689,7 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
         const dedupKey = `scan_turma_docente_${turma.id}`;
         if (!existingDedupKeys.has(dedupKey) && !turma.docente_id) {
           const school = schools.find(s => s.id === turma.escola_id);
-          newItemsToAdd.push({
+          const itemPayload: Record<string, any> = {
             tenant_id: tenantId,
             titulo: `Atribuição de Professor Titular: Turma ${turma.nome}`,
             detalhes: `A turma ${turma.nome} (${turma.nivel}) na escola "${school?.nome || 'Instituição'}" necessita da nomeação do professor titular de turma.`,
@@ -691,11 +702,14 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
             criado_por_nome: 'Varredura Automática do Sistema',
             categoria_atribuicao: 'Directores',
             modulo_origem: 'Gestão de Turmas',
-            escola_id: turma.escola_id,
             turma_id: turma.id,
             dedup_key: dedupKey,
             data_criacao: new Date().toISOString()
-          });
+          };
+          if (turma.escola_id) {
+            itemPayload.escola_id = turma.escola_id;
+          }
+          newItemsToAdd.push(itemPayload as any);
         }
       });
 
@@ -703,7 +717,7 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
       schools.forEach(school => {
         const dedupKey = `scan_escola_diretor_${school.id}`;
         if (!existingDedupKeys.has(dedupKey) && !school.diretor_id) {
-          newItemsToAdd.push({
+          const itemPayload: Record<string, any> = {
             tenant_id: tenantId,
             titulo: `Nomeação de Director Escolar: ${school.nome}`,
             detalhes: `A escola "${school.nome}" está cadastrada sem a atribuição formal do Director Institucional responsável.`,
@@ -716,10 +730,13 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
             criado_por_nome: 'Varredura Automática do Sistema',
             categoria_atribuicao: 'Administradores',
             modulo_origem: 'Gestão Escolar',
-            escola_id: school.id,
             dedup_key: dedupKey,
             data_criacao: new Date().toISOString()
-          });
+          };
+          if (school.id) {
+            itemPayload.escola_id = school.id;
+          }
+          newItemsToAdd.push(itemPayload as any);
         }
       });
 
@@ -911,7 +928,8 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
       // Batch save new activities to Firestore
       if (newItemsToAdd.length > 0) {
         for (const item of newItemsToAdd) {
-          await addDoc(collection(db, 'atividades'), item);
+          const cleanItem = cleanDataForFirestore(item);
+          await addDoc(collection(db, 'atividades'), cleanItem);
           sendBrowserNotification({
             title: '📋 Nova Actividade Pendente',
             body: `${item.titulo} (${item.modulo_origem})`,
@@ -989,17 +1007,18 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
       if (isEditModalOpen && selectedActivity) {
         // Update
         const ref = doc(db, 'atividades', selectedActivity.id);
-        await updateDoc(ref, {
+        const updatePayload: Record<string, any> = {
           titulo: formTitulo.trim(),
           detalhes: formDetalhes.trim(),
           severidade: formSeveridade,
           categoria_atribuicao: formCategoria,
           responsavel_id: targetUserId || selectedActivity.responsavel_id,
           responsavel_nome: targetUserName || selectedActivity.responsavel_nome,
-          escola_id: formEscolaId || null,
-          turma_id: formTurmaId || null,
-          data_prazo: formPrazo || null,
-        });
+          escola_id: formEscolaId.trim() || null,
+          turma_id: formTurmaId.trim() || null,
+          data_prazo: formPrazo.trim() || null,
+        };
+        await updateDoc(ref, cleanDataForFirestore(updatePayload));
 
         notifyActivityAssigned({
           tenant_id: tenantId,
@@ -1011,14 +1030,14 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
           responsavel_id: targetUserId || selectedActivity.responsavel_id,
           responsavel_nome: targetUserName || selectedActivity.responsavel_nome,
           criado_por_nome: currentUserName,
-          data_prazo: formPrazo || undefined,
+          data_prazo: formPrazo.trim() || undefined,
           isUpdate: true
         });
 
         if (showNotification) showNotification('Actividade actualizada com sucesso.', 'sucesso');
       } else {
         // Create
-        const newDoc: Omit<ActividadePendente, 'id'> = {
+        const rawNewDoc: Record<string, any> = {
           tenant_id: tenantId,
           titulo: formTitulo.trim(),
           detalhes: formDetalhes.trim(),
@@ -1030,13 +1049,22 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
           responsavel_cargo: formCategoria === 'Todos' ? 'Geral' : formCategoria,
           criado_por_id: currentUserId,
           criado_por_nome: currentUserName,
-          escola_id: formEscolaId || undefined,
-          turma_id: formTurmaId || undefined,
-          data_prazo: formPrazo || undefined,
           data_criacao: new Date().toISOString(),
           modulo_origem: 'Criação Manual'
         };
-        const docRef = await addDoc(collection(db, 'atividades'), newDoc);
+
+        if (formEscolaId && formEscolaId.trim()) {
+          rawNewDoc.escola_id = formEscolaId.trim();
+        }
+        if (formTurmaId && formTurmaId.trim()) {
+          rawNewDoc.turma_id = formTurmaId.trim();
+        }
+        if (formPrazo && formPrazo.trim()) {
+          rawNewDoc.data_prazo = formPrazo.trim();
+        }
+
+        const cleanDoc = cleanDataForFirestore(rawNewDoc);
+        const docRef = await addDoc(collection(db, 'atividades'), cleanDoc);
 
         notifyActivityAssigned({
           tenant_id: tenantId,
@@ -1048,7 +1076,7 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
           responsavel_id: targetUserId,
           responsavel_nome: targetUserName,
           criado_por_nome: currentUserName,
-          data_prazo: formPrazo || undefined,
+          data_prazo: formPrazo.trim() || undefined,
           isUpdate: false
         });
 

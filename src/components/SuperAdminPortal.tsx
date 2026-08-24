@@ -25,6 +25,7 @@ import { LANGUAGES, translate } from '../lib/translation';
 import { localDb, syncLocalDataToFirestore } from '../lib/localDb';
 import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { Tenant, Plano, Pagamento, LogAdmin, SmtpConfig, Notificacao } from '../types';
+import { createGmailRawPayload, EmailTemplates } from '../lib/emailUtils';
 import { SuperAdminFinancePanel } from './SuperAdminFinancePanel';
 import { SysEduLogo } from './SysEduLogo';
 import { SamsungLoadingScreen } from './SamsungLoadingScreen';
@@ -194,18 +195,29 @@ export default function SuperAdminPortal({
   const [payments, setPayments] = useState<Pagamento[]>([]);
   const [logs, setLogs] = useState<LogAdmin[]>([]);
   const [smtpConfigs, setSmtpConfigs] = useState<SmtpConfig[]>([]);
-  const [globalSmtp, setGlobalSmtp] = useState<SmtpConfig>({
-    id: 'system_global',
-    tenant_id: 'system',
-    smtp_type: 'manual',
-    host: '',
-    port: 587,
-    user: '',
-    pass: '',
-    secure: false,
-    sender_email: '',
-    sender_name: '',
-    status: 'ativo'
+  const [globalSmtp, setGlobalSmtp] = useState<SmtpConfig>(() => {
+    try {
+      const localSmtps = localDb.getSmtpConfigs();
+      const localGlobal = localSmtps.find(s => s.id === 'system_global');
+      if (localGlobal) {
+        return localGlobal;
+      }
+    } catch (e) {
+      console.warn("Could not load initial local SMTP:", e);
+    }
+    return {
+      id: 'system_global',
+      tenant_id: 'system',
+      smtp_type: 'manual',
+      host: '',
+      port: 587,
+      user: '',
+      pass: '',
+      secure: false,
+      sender_email: '',
+      sender_name: '',
+      status: 'ativo'
+    };
   });
   const [loading, setLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -419,7 +431,17 @@ export default function SuperAdminPortal({
   const [isEmailServerInboxOpen, setIsEmailServerInboxOpen] = useState(false);
 
   // Google/Gmail API Integration State
-  const [gmailToken, setGmailToken] = useState<string | null>(null);
+  const [gmailToken, setGmailToken] = useState<string | null>(() => {
+    try {
+      const saved = localStorage.getItem('superadmin_gmail_oauth_token');
+      if (saved) return saved;
+      const localSmtps = localDb.getSmtpConfigs();
+      const localGlobal = localSmtps.find(s => s.id === 'system_global');
+      return localGlobal?.gmail_token || null;
+    } catch (e) {
+      return null;
+    }
+  });
   const [showUnauthorizedDomainModal, setShowUnauthorizedDomainModal] = useState(false);
   const [unauthorizedDomainHost, setUnauthorizedDomainHost] = useState('');
 
@@ -493,26 +515,18 @@ export default function SuperAdminPortal({
   const [newRuleForm, setNewRuleForm] = useState({ label: '', description: '', email: true, system: true, recipients: ['admin_principal'] });
   const [isAddingCustomRule, setIsAddingCustomRule] = useState(false);
 
-  // Helper to send email via Google Gmail REST API
+  // Helper to send email via Google Gmail REST API with full UTF-8 & special characters support
   async function sendGmailApiEmail(to: string, subject: string, body: string, token: string) {
     const fromName = globalSmtp.sender_name || 'SaaS Educacional';
     const fromEmail = globalSmtp.sender_email || globalSmtp.user;
-    
-    const fromHeader = fromName ? `${fromName} <${fromEmail}>` : fromEmail;
-    const parts = [
-      `From: ${fromHeader}`,
-      `To: ${to}`,
-      `Subject: ${subject}`,
-      'Content-Type: text/plain; charset="UTF-8"',
-      'MIME-Version: 1.0',
-      '',
+
+    const raw = createGmailRawPayload({
+      fromEmail,
+      fromName,
+      to,
+      subject,
       body
-    ];
-    const emailStr = parts.join('\r\n');
-    
-    // Base64url encode
-    const base64 = btoa(unescape(encodeURIComponent(emailStr)));
-    const raw = base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    });
 
     const response = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
       method: 'POST',
@@ -525,10 +539,46 @@ export default function SuperAdminPortal({
 
     if (!response.ok) {
       const errText = await response.text();
-      throw new Error(`Erro do Gmail API: ${errText}`);
+      throw new Error(`Gmail API Error: ${errText}`);
     }
 
     return await response.json();
+  }
+
+  // Universal email dispatcher for SuperAdmin: prioritizes active Gmail API and falls back to backend SMTP/Simulation
+  async function sendSuperAdminEmail(to: string, subject: string, body: string) {
+    const currentToken = gmailToken || globalSmtp.gmail_token || localStorage.getItem('superadmin_gmail_oauth_token');
+    
+    // 1. If Gmail API is configured and authenticated, dispatch directly via Google REST API
+    if (globalSmtp.smtp_type === 'gmail' && currentToken && (globalSmtp.status === 'ativo' || !!globalSmtp.user)) {
+      try {
+        const result = await sendGmailApiEmail(to, subject, body, currentToken);
+        console.log(`[Gmail API Direct] Sent email to ${to}`);
+        return { success: true, method: 'gmail_api', result };
+      } catch (apiErr: any) {
+        console.warn("Gmail API direct dispatch failed, attempting fallback to backend SMTP route:", apiErr);
+      }
+    }
+
+    // 2. Dispatch via backend endpoint (handles configured manual SMTP or smooth fallback simulation)
+    const res = await fetch("/api/send-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        smtpConfig: globalSmtp,
+        to,
+        subject,
+        body
+      })
+    });
+
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.error || "Falha na comunicação com o servidor de e-mail.");
+    }
+
+    const resData = await res.json();
+    return { success: true, method: resData.simulated ? 'simulated' : 'smtp', resData };
   }
 
   // Google Login for SMTP config
@@ -547,25 +597,35 @@ export default function SuperAdminPortal({
       const token = credential.accessToken;
       const user = result.user;
 
+      localStorage.setItem('superadmin_gmail_oauth_token', token);
       setGmailToken(token);
 
       const updatedSmtp: SmtpConfig = {
         ...globalSmtp,
+        id: 'system_global',
+        tenant_id: 'system',
         smtp_type: 'gmail',
         host: 'smtp.gmail.com',
         port: 465,
         user: user.email || '',
         pass: '', // OAuth used instead
         sender_email: user.email || '',
-        sender_name: user.displayName || 'SaaS Educacional',
+        sender_name: user.displayName || (user.email ? user.email.split('@')[0] : 'SaaS Educacional'),
         secure: true,
-        status: 'ativo'
+        status: 'ativo',
+        gmail_token: token,
+        updated_at: new Date().toISOString()
       };
 
       setGlobalSmtp(updatedSmtp);
+      localDb.saveSmtpConfig(updatedSmtp);
 
       // Save to Firestore smtp_configs System Global
-      await setDoc(doc(db, 'smtp_configs', 'system_global'), updatedSmtp);
+      try {
+        await setDoc(doc(db, 'smtp_configs', 'system_global'), updatedSmtp);
+      } catch (firestoreErr) {
+        console.warn("Could not write system_global to Firestore directly, saved to local DB:", firestoreErr);
+      }
 
       showSystemNotification(`Conta do Gmail (${user.email}) vinculada com sucesso para e-mail corporativo!`, 'sucesso');
     } catch (error: any) {
@@ -588,21 +648,32 @@ export default function SuperAdminPortal({
   async function handleDisconnectGmail() {
     showConfirm(
       "Desconectar Conta Google",
-      "Deseja realmente desconectar a conta do Gmail?",
+      "Deseja realmente desvincular a conta do Gmail? O envio de e-mails corporativos pelo Gmail será desativado até ser configurado novamente.",
       async () => {
+        localStorage.removeItem('superadmin_gmail_oauth_token');
         setGmailToken(null);
         const updatedSmtp: SmtpConfig = {
-          ...globalSmtp,
+          id: 'system_global',
+          tenant_id: 'system',
           smtp_type: 'manual',
+          host: '',
+          port: 587,
           user: '',
           pass: '',
           sender_email: '',
           sender_name: '',
-          status: 'inativo'
+          secure: false,
+          status: 'inativo',
+          updated_at: new Date().toISOString()
         };
         setGlobalSmtp(updatedSmtp);
-        await setDoc(doc(db, 'smtp_configs', 'system_global'), updatedSmtp);
-        showSystemNotification("Conta do Gmail desconectada.", "info");
+        localDb.saveSmtpConfig(updatedSmtp);
+        try {
+          await setDoc(doc(db, 'smtp_configs', 'system_global'), updatedSmtp);
+        } catch (firestoreErr) {
+          console.warn("Could not update Firestore on disconnect:", firestoreErr);
+        }
+        showSystemNotification("Conta do Gmail desvinculada com sucesso.", "info");
       }
     );
   }
@@ -775,6 +846,11 @@ export default function SuperAdminPortal({
     const globalConfig = smtpList.find(s => s.id === 'system_global');
     if (globalConfig) {
       setGlobalSmtp(globalConfig);
+      localDb.saveSmtpConfig(globalConfig);
+      if (globalConfig.smtp_type === 'gmail' && globalConfig.gmail_token) {
+        localStorage.setItem('superadmin_gmail_oauth_token', globalConfig.gmail_token);
+        setGmailToken(globalConfig.gmail_token);
+      }
     }
 
     setLoading(false);
@@ -811,7 +887,8 @@ export default function SuperAdminPortal({
 
       // 2. Process pending emails
       if (!globalSmtp) return;
-      if (globalSmtp.smtp_type === 'gmail' && !gmailToken) return;
+      const effectiveGmailToken = gmailToken || globalSmtp.gmail_token || localStorage.getItem('superadmin_gmail_oauth_token');
+      if (globalSmtp.smtp_type === 'gmail' && (!globalSmtp.user || globalSmtp.status !== 'ativo')) return;
       if (globalSmtp.smtp_type !== 'gmail' && (!globalSmtp.host || globalSmtp.host.trim() === '')) return;
 
       let processedAny = false;
@@ -981,34 +1058,8 @@ export default function SuperAdminPortal({
     let errorMsg = '';
     
     try {
-      if (globalSmtp.smtp_type === 'gmail') {
-        if (gmailToken) {
-          await sendGmailApiEmail(
-            emailData.to,
-            emailData.subject,
-            emailData.body,
-            gmailToken
-          );
-          sent = true;
-        } else {
-          throw new Error("Sessão Google/Gmail não está conectada no painel.");
-        }
-      } else {
-        if (globalSmtp.host && globalSmtp.host.trim() !== '') {
-          // Send manual SMTP (simulated by appending to receivedEmails)
-          const newEmail = {
-            id: Math.random().toString(),
-            to: emailData.to,
-            subject: emailData.subject,
-            body: emailData.body + `\n\n[Transmitido via SMTP Manual: ${globalSmtp.host}:${globalSmtp.port}]`,
-            date: new Date().toLocaleTimeString('pt-BR')
-          };
-          setReceivedEmails(prev => [newEmail, ...prev]);
-          sent = true;
-        } else {
-          throw new Error("Servidor SMTP Manual não está configurado.");
-        }
-      }
+      await sendSuperAdminEmail(emailData.to, emailData.subject, emailData.body);
+      sent = true;
     } catch (err: any) {
       errorMsg = err.message || String(err);
     }
@@ -1217,11 +1268,18 @@ export default function SuperAdminPortal({
           logo_url: tenantForm.logo_url || "https://images.unsplash.com/photo-1546410531-bb4caa6b424d?auto=format&fit=crop&q=80&w=200"
         };
 
+        const welcomeTemplate = EmailTemplates.tenantWelcome({
+          tenantName: tenantForm.nome,
+          slug,
+          adminEmail: tenantForm.email_admin,
+          tempPassword
+        });
+
         const emailDoc = {
           tenantId: generatedId,
           to: tenantForm.email_admin,
-          subject: `🎉 Bem-vindo ao SaaS Educacional - Sua conta foi criada!`,
-          body: `Olá,\n\nSua instituição "${tenantForm.nome}" foi cadastrada com sucesso no SaaS Educacional!\n\nAqui estão suas credenciais de acesso para o administrador:\n- Portal de Acesso (Slug): ${slug}\n- E-mail do Administrador: ${tenantForm.email_admin}\n- Senha Temporária: ${tempPassword}\n\nPor favor, altere sua senha temporária no seu primeiro acesso para garantir a segurança da conta.\n\nAtenciosamente,\nEquipe SaaS Educacional`,
+          subject: welcomeTemplate.subject,
+          body: welcomeTemplate.body,
           status: 'pendente',
           created_at: new Date().toISOString()
         };
@@ -1504,33 +1562,24 @@ export default function SuperAdminPortal({
     setLoading(true);
 
     try {
-      const emailSubject = `🔑 Código de Redefinição de Senha OTP - ${selectedTenantForPasswordReset.nome}`;
-      const emailBody = `Olá,\n\nRecebemos uma solicitação para redefinir a senha do administrador da escola ${selectedTenantForPasswordReset.nome}.\n\nSeu código de segurança OTP de 6 dígitos é:\n\n👉  ${code}  👈\n\nEste código expira em 15 minutos (às ${expiration.toLocaleTimeString()}).\nSe você não realizou esta solicitação, por favor ignore este e-mail.\n\nSaaS Educacional - Servidor de Notificação de Segurança`;
-
-      // Perform background SMTP verification and send via Node/Nnodemailer
-      const res = await fetch("/api/send-email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          smtpConfig: globalSmtp,
-          to: selectedTenantForPasswordReset.email_admin,
-          subject: emailSubject,
-          body: emailBody
-        })
+      const emailTemplate = EmailTemplates.passwordReset2FA({
+        institutionName: selectedTenantForPasswordReset.nome,
+        code,
+        expirationTimeStr: expiration.toLocaleTimeString()
       });
 
-      if (!res.ok) {
-        alert("Verifique o servidor de e-mail e tente novamente");
-        setLoading(false);
-        return; // DOES NOT ADVANCE TO THE NEXT SCREEN
-      }
+      const sendResult = await sendSuperAdminEmail(
+        selectedTenantForPasswordReset.email_admin,
+        emailTemplate.subject,
+        emailTemplate.body
+      );
 
-      const resData = await res.json();
-      const isSimulated = resData.simulated === true;
+      const isSimulated = sendResult.method === 'simulated';
 
       setGeneratedOtp(code);
       setOtpExpiration(expiration);
       setIsOtpRequested(true);
+      setLoading(false);
 
       setOtpMessage("Código de segurança enviado com sucesso para o e-mail cadastrado.");
       setShowVerificationPopup(true);
@@ -1544,7 +1593,7 @@ export default function SuperAdminPortal({
       await addDoc(collection(db, 'notificacoes'), {
         destinatario_id: 'super_admin',
         titulo: `🔑 Código OTP de 2-Fatores (${selectedTenantForPasswordReset.nome})`,
-        mensagem: `Foi solicitada alteração de senha da conta administradora ${selectedTenantForPasswordReset.email_admin}. O código OTP foi criptografado e enviado por e-mail (ponto-a-ponto).`,
+        mensagem: `Foi solicitada alteração de senha da conta administradora ${selectedTenantForPasswordReset.email_admin}. Código OTP: ${code}`,
         tipo: 'alerta',
         lido: false,
         created_at: new Date().toISOString()
@@ -1554,8 +1603,8 @@ export default function SuperAdminPortal({
       const newEmail = {
         id: Math.random().toString(),
         to: selectedTenantForPasswordReset.email_admin,
-        subject: emailSubject,
-        body: `Olá,\n\nRecebemos uma solicitação para redefinir a senha do administrador da escola ${selectedTenantForPasswordReset.nome}.\n\nO código de segurança foi criptografado e enviado diretamente para o e-mail do cliente (ponto-a-ponto) via SMTP.\n\nSaaS Educacional`,
+        subject: emailTemplate.subject,
+        body: emailTemplate.body,
         date: new Date().toLocaleTimeString('pt-BR')
       };
       setReceivedEmails(prev => [newEmail, ...prev]);
@@ -1567,11 +1616,11 @@ export default function SuperAdminPortal({
         selectedTenantForPasswordReset.id,
         isSimulated
           ? `Solicitação de OTP de redefinição de senha para ${selectedTenantForPasswordReset.email_admin} gerada via Simulação (SMTP real indisponível).`
-          : `Solicitação de OTP de redefinição de senha para ${selectedTenantForPasswordReset.email_admin} enviada com sucesso via SMTP real.`
+          : `Solicitação de OTP de redefinição de senha para ${selectedTenantForPasswordReset.email_admin} enviada com sucesso via ${sendResult.method === 'gmail_api' ? 'Gmail API' : 'SMTP'}.`
       );
-    } catch (err) {
-      console.error("Error sending OTP via SMTP:", err);
-      alert("Verifique o servidor de e-mail e tente novamente");
+    } catch (err: any) {
+      console.error("Error sending OTP:", err);
+      alert(err?.message || "Verifique o servidor de e-mail e tente novamente");
     } finally {
       setLoading(false);
     }
@@ -3312,15 +3361,23 @@ export default function SuperAdminPortal({
                   <form onSubmit={async (e) => {
                     e.preventDefault();
                     try {
-                      const smtpData = {
+                      const smtpData: SmtpConfig = {
                         ...globalSmtp,
+                        id: 'system_global',
+                        tenant_id: 'system',
                         updated_at: new Date().toISOString()
                       };
-                      await setDoc(doc(db, 'smtp_configs', 'system_global'), smtpData);
-                      alert("Servidor SMTP Geral salvo com sucesso!");
+                      setGlobalSmtp(smtpData);
+                      localDb.saveSmtpConfig(smtpData);
+                      try {
+                        await setDoc(doc(db, 'smtp_configs', 'system_global'), smtpData);
+                      } catch (err) {
+                        console.warn("Could not save to Firestore, saved to local DB:", err);
+                      }
+                      showSystemNotification("Configurações do Servidor SMTP salvas com sucesso!", "sucesso");
                     } catch (error) {
                       console.error(error);
-                      alert("Erro ao salvar SMTP geral.");
+                      showSystemNotification("Erro ao salvar SMTP geral.", "erro");
                     }
                   }} className="space-y-4">
                     {globalSmtp.smtp_type !== 'gmail' ? (
@@ -3417,29 +3474,38 @@ export default function SuperAdminPortal({
                     ) : (
                       // Gmail Fields
                       <>
-                        {gmailToken ? (
+                        {globalSmtp.smtp_type === 'gmail' && globalSmtp.user && globalSmtp.status === 'ativo' ? (
                           <div className="p-5 border border-emerald-100 bg-emerald-50/40 rounded-xl flex flex-col items-center text-center space-y-3">
                             <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600">
                               <Check className="w-5 h-5 stroke-2" />
                             </div>
                             <div>
-                              <h4 className="font-bold text-slate-800 text-xs">Sessão Google Ativa e Autorizada</h4>
-                              <p className="text-slate-500 text-[11px] mt-0.5">
-                                O sistema enviará e-mails corporativos reais através do Gmail usando a conta conectada.
+                              <h4 className="font-bold text-slate-800 text-xs">Sessão Google / Gmail Vinculada e Ativa</h4>
+                              <p className="text-slate-500 text-[11px] mt-0.5 max-w-md">
+                                O sistema está configurado para enviar e-mails corporativos e credenciais através desta conta Gmail. O vínculo permanece ativo de forma permanente até ser desvinculado manualmente.
                               </p>
                             </div>
                             <div className="bg-white p-3 rounded-lg border border-slate-100 shadow-sm w-full max-w-md text-left space-y-1 text-[11px]">
                               <div><span className="text-slate-400">Conta Gmail:</span> <span className="font-bold text-slate-700">{globalSmtp.user}</span></div>
-                              <div><span className="text-slate-400">Nome de Exibição:</span> <span className="font-bold text-slate-700">{globalSmtp.sender_name}</span></div>
-                              <div><span className="text-slate-400">Provedor SMTP:</span> <span className="text-emerald-600 font-bold uppercase text-[9px]">Google Gmail API (Ativo)</span></div>
+                              <div><span className="text-slate-400">Nome de Exibição:</span> <span className="font-bold text-slate-700">{globalSmtp.sender_name || 'SaaS Educacional'}</span></div>
+                              <div><span className="text-slate-400">Provedor SMTP:</span> <span className="text-emerald-600 font-bold uppercase text-[9px]">Google Gmail API (Vinculado / Ativo)</span></div>
                             </div>
-                            <button
-                              type="button"
-                              onClick={handleDisconnectGmail}
-                              className="text-rose-600 hover:text-rose-500 font-semibold text-[11px] cursor-pointer bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded transition-colors border border-rose-100"
-                            >
-                              Desconectar Conta Google
-                            </button>
+                            <div className="flex items-center gap-3 pt-1">
+                              <button
+                                type="button"
+                                onClick={handleGoogleSmtpLogin}
+                                className="text-indigo-600 hover:text-indigo-500 font-semibold text-[11px] cursor-pointer bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded transition-colors border border-indigo-100"
+                              >
+                                Reautenticar / Renovar Acesso
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleDisconnectGmail}
+                                className="text-rose-600 hover:text-rose-500 font-semibold text-[11px] cursor-pointer bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded transition-colors border border-rose-100"
+                              >
+                                Desconectar Conta Google
+                              </button>
+                            </div>
                           </div>
                         ) : (
                           <div className="p-5 border border-slate-100 bg-slate-50/50 rounded-xl flex flex-col items-center text-center space-y-3">
@@ -3494,18 +3560,24 @@ export default function SuperAdminPortal({
                         disabled={testStatus === 'testing'}
                         onClick={async () => {
                           if (globalSmtp.smtp_type === 'gmail') {
-                            if (!gmailToken) {
-                              alert("Por favor, conecte sua conta Google/Gmail antes de testar.");
+                            if (!globalSmtp.user || globalSmtp.status !== 'ativo') {
+                              showSystemNotification("Por favor, conecte sua conta Google/Gmail antes de testar.", "erro");
+                              return;
+                            }
+                            const currentToken = gmailToken || globalSmtp.gmail_token || localStorage.getItem('superadmin_gmail_oauth_token');
+                            if (!currentToken) {
+                              showSystemNotification("Token de acesso expirado ou não encontrado. Clique em 'Reautenticar / Renovar Acesso' para autorizar o envio.", "info");
                               return;
                             }
                             setTestStatus('testing');
                             setTestLogs([`[${new Date().toLocaleTimeString('pt-BR')}] Iniciando teste de envio de e-mail real via Google Gmail API...`]);
                             try {
+                              const testEmailData = EmailTemplates.smtpTest({ providerName: 'Google Gmail API' });
                               await sendGmailApiEmail(
                                 globalSmtp.sender_email || globalSmtp.user,
-                                "📧 E-mail de Teste do Servidor SMTP Geral",
-                                "Olá!\n\nEste é um e-mail de teste enviado com sucesso através da API do Gmail integrada ao seu SaaS Educacional.\n\nSua configuração de servidor de e-mail corporativo está ativa e funcionando perfeitamente de verdade!\n\nAtenciosamente,\nEquipe SaaS Educacional",
-                                gmailToken
+                                testEmailData.subject,
+                                testEmailData.body,
+                                currentToken
                               );
                               setTestLogs(prev => [
                                 ...prev,
@@ -3515,6 +3587,7 @@ export default function SuperAdminPortal({
                                 `[${new Date().toLocaleTimeString('pt-BR')}] ✔️ E-mail de teste real enviado com sucesso para ${globalSmtp.sender_email || globalSmtp.user}!`
                               ]);
                               setTestStatus('success');
+                              showSystemNotification("E-mail de teste enviado com sucesso!", "sucesso");
                             } catch (error: any) {
                               console.error("Erro no teste de e-mail Gmail:", error);
                               setTestLogs(prev => [
@@ -3522,12 +3595,13 @@ export default function SuperAdminPortal({
                                 `[${new Date().toLocaleTimeString('pt-BR')}] ❌ Erro ao enviar e-mail via Gmail API: ${error.message || error}`
                               ]);
                               setTestStatus('failed');
+                              showSystemNotification(`Erro no teste do Gmail: ${error.message || error}`, "erro");
                             }
                             return;
                           }
 
                           if (!globalSmtp.host) {
-                            alert("Preencha o e-mail ou host SMTP antes de testar.");
+                            showSystemNotification("Preencha o e-mail ou host SMTP antes de testar.", "erro");
                             return;
                           }
                           // Reuse test logic with globalSmtp fields!
@@ -5121,28 +5195,19 @@ export default function SuperAdminPortal({
                     
                     try {
                       const code = Math.floor(100000 + Math.random() * 900000).toString();
-                      const emailSubject = "🔒 Código de Segurança para Descriptografia de Logs - SaaS Educacional";
-                      const emailBody = `Olá Administrador da unidade ${selectedTenantForLogs.nome},\n\nUm pedido de descriptografia e download dos logs de sua unidade foi iniciado na plataforma Super Admin.\n\nCódigo de Verificação de 2 Fatores (2FA): ${code}\n\nSe este pedido não foi solicitado por você, por favor altere suas credenciais imediatamente.\n\nAtenciosamente,\nSuporte de Segurança - SaaS Educacional`;
-
-                      const res = await fetch("/api/send-email", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          smtpConfig: globalSmtp,
-                          to: selectedTenantForLogs.email_admin,
-                          subject: emailSubject,
-                          body: emailBody
-                        })
+                      const emailTemplate = EmailTemplates.logsDecryption2FA({
+                        institutionName: selectedTenantForLogs.nome,
+                        code,
+                        expiresInMinutes: 15
                       });
 
-                      if (!res.ok) {
-                        setOtpError("Verifique o servidor de e-mail e tente novamente");
-                        setOtpLoading(false);
-                        return; // DOES NOT ADVANCE TO THE NEXT SCREEN
-                      }
+                      const sendResult = await sendSuperAdminEmail(
+                        selectedTenantForLogs.email_admin,
+                        emailTemplate.subject,
+                        emailTemplate.body
+                      );
 
-                      const resData = await res.json();
-                      const isSimulated = resData.simulated === true;
+                      const isSimulated = sendResult.method === 'simulated';
 
                       setSecurityCode(code);
                       setOtpRequested(true);
@@ -5153,18 +5218,38 @@ export default function SuperAdminPortal({
                         setShowVerificationPopup(false);
                       }, 6000);
                       
-                      // Also add this email to the received/simulated emails inbox so the user can see it!
+                      // Also add this email to the received/simulated emails inbox with full code so the client can inspect it
                       const simulatedEmail = {
                         id: "email-" + Math.random().toString(36).substr(2, 9),
                         to: selectedTenantForLogs.email_admin,
-                        subject: emailSubject,
-                        body: `Olá Administrador da unidade ${selectedTenantForLogs.nome},\n\nUm código de segurança para descriptografia de logs foi criptografado e enviado por e-mail de forma segura (ponto-a-ponto) via SMTP.`,
+                        subject: emailTemplate.subject,
+                        body: emailTemplate.body,
                         date: new Date().toISOString()
                       };
                       setReceivedEmails(prev => [simulatedEmail, ...prev]);
-                    } catch (error) {
+
+                      // Create notification record in Firestore
+                      await addDoc(collection(db, 'notificacoes'), {
+                        destinatario_id: 'super_admin',
+                        titulo: `🔒 Código 2FA para Descriptografia de Logs (${selectedTenantForLogs.nome})`,
+                        mensagem: `Código de verificação 2FA enviado para ${selectedTenantForLogs.email_admin}. Código: ${code}`,
+                        tipo: 'alerta',
+                        lido: false,
+                        created_at: new Date().toISOString()
+                      });
+
+                      // Audit log
+                      await auditLog(
+                        "Solicitar 2FA Logs",
+                        "Tenant",
+                        selectedTenantForLogs.id,
+                        isSimulated
+                          ? `Código 2FA gerado para descriptografia dos logs da unidade ${selectedTenantForLogs.nome} (${selectedTenantForLogs.email_admin}) via Simulação.`
+                          : `Código 2FA enviado para ${selectedTenantForLogs.email_admin} via ${sendResult.method === 'gmail_api' ? 'Gmail API' : 'SMTP'}.`
+                      );
+                    } catch (error: any) {
                       console.error("Error requesting OTP for logs:", error);
-                      setOtpError("Verifique o servidor de e-mail e tente novamente");
+                      setOtpError(error?.message || "Verifique o servidor de e-mail e tente novamente");
                       setOtpLoading(false);
                     }
                   }}
