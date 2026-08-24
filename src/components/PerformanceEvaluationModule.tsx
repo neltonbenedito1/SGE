@@ -5,7 +5,6 @@ import {
   Calendar, Star, FileText, ChevronRight, UserCheck, ShieldCheck, Sparkles,
   BarChart2, PieChart as PieChartIcon, Eye, Trophy, Medal, BookOpenCheck
 } from 'lucide-react';
-import { jsPDF } from 'jspdf';
 import { db } from '../lib/firebase';
 import { collection, addDoc, getDocs, query, where } from 'firebase/firestore';
 
@@ -528,10 +527,13 @@ export function PerformanceEvaluationModule({
   };
 
   // --- ACTION: EXPORT PDF REPORT ---
-  const handleExportPerformancePDF = () => {
+  const handleExportPerformancePDF = async () => {
     setIsExportingPDF(true);
     try {
-      const doc = new jsPDF();
+      const jspdfModule = await import('jspdf');
+      const jsPDFClass = jspdfModule.jsPDF;
+      const JsPdfCtor = (jsPDFClass as any)?.jsPDF || jsPDFClass;
+      const doc = new JsPdfCtor();
       doc.setFontSize(16);
       doc.setTextColor(13, 27, 61);
       doc.text("SysEdu - Relatório Oficial de Avaliação de Desempenho", 14, 20);

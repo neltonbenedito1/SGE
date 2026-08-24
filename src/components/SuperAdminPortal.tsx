@@ -4,7 +4,6 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { jsPDF } from 'jspdf';
 import { 
   collection, 
   getDocs, 
@@ -5204,14 +5203,16 @@ export default function SuperAdminPortal({
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
+                      onClick={async () => {
                         if (enteredCode === securityCode || enteredCode === '123456') {
                           // Validation successful!
                           setOtpVerified(true);
                           setIsOtpModalOpen(false);
                           
                           // Generate PDF!
-                          const JsPdfCtor = (jsPDF as any)?.jsPDF || jsPDF;
+                          const jspdfModule = await import('jspdf');
+                          const jsPDFClass = jspdfModule.jsPDF;
+                          const JsPdfCtor = (jsPDFClass as any)?.jsPDF || jsPDFClass;
                           const doc = new JsPdfCtor();
 
                           // 1. Watermark with System Name & Logo

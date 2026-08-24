@@ -4,7 +4,6 @@
  */
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import * as XLSX from 'xlsx';
 import { motion } from 'motion/react';
 import { 
   collection, 
@@ -157,6 +156,7 @@ import LanguageSwitcher from './LanguageSwitcher';
 import { SysEduLogo } from './SysEduLogo';
 import { SearchableDropdown } from './SearchableDropdown';
 import { SamsungLoadingScreen } from './SamsungLoadingScreen';
+import { sendBrowserNotification, playNotificationSound } from '../lib/browserNotifications';
 
 const WORLD_COUNTRIES = [
   { name: "Angola", code: "AO" },
@@ -729,7 +729,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     }
   }, [activeTab, loggedInUser?.id]);
 
-  const handleExportModuleData = () => {
+  const handleExportModuleData = async () => {
     try {
       let dataToExport: any[] = [];
       let filename = `export-${activeTab}.xlsx`;
@@ -775,6 +775,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       }
 
       // Convert and download
+      const XLSX = await import('xlsx');
       const worksheet = XLSX.utils.json_to_sheet(dataToExport);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, "Dados");
@@ -1634,6 +1635,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 telefone: target.telefone || '',
                 email: target.email || '',
                 diretor_id: target.diretor_id || '',
+                diretor_pedagogico_id: target.diretor_pedagogico_id || '',
+                data_fundacao: target.data_fundacao || '',
                 ativo: target.ativo ?? true,
                 latitude: String(target.latitude || ''),
                 longitude: String(target.longitude || ''),
@@ -2525,7 +2528,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           disabled: !isCreationAllowed,
           onClick: () => {
             setEditingItem(null);
-            setEscolaForm({ nome: '', provincia_id: provinces[0]?.id || '', endereco: '', telefone: '', email: '', diretor_id: '', ativo: true, latitude: '', longitude: '', logo_url: '', controlar_assiduidade: false, tolerancia_manha: '07:15', tolerancia_tarde: '12:15', tolerancia_noite: '18:15' });
+            setEscolaForm({ nome: '', provincia_id: provinces[0]?.id || '', endereco: '', telefone: '', email: '', diretor_id: '', diretor_pedagogico_id: '', data_fundacao: '', ativo: true, latitude: '', longitude: '', logo_url: '', controlar_assiduidade: false, tolerancia_manha: '07:15', tolerancia_tarde: '12:15', tolerancia_noite: '18:15' });
             setModalType('escola');
             setIsModalOpen(true);
           }
@@ -3036,7 +3039,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
   // Dynamic Forms State
   const [provinciaForm, setProvinciaForm] = useState(() => getSavedFormDraft('draft_provincia', { nome: '', codigo: '' }));
-  const [escolaForm, setEscolaForm] = useState(() => getSavedFormDraft('draft_escola', { nome: '', provincia_id: '', endereco: '', telefone: '', email: '', diretor_id: '', ativo: true, latitude: '', longitude: '', logo_url: '', controlar_assiduidade: false, tolerancia_manha: '07:15', tolerancia_tarde: '12:15', tolerancia_noite: '18:15' }));
+  const [escolaForm, setEscolaForm] = useState(() => getSavedFormDraft('draft_escola', { nome: '', provincia_id: '', endereco: '', telefone: '', email: '', diretor_id: '', diretor_pedagogico_id: '', data_fundacao: '', ativo: true, latitude: '', longitude: '', logo_url: '', controlar_assiduidade: false, tolerancia_manha: '07:15', tolerancia_tarde: '12:15', tolerancia_noite: '18:15' }));
   const [teacherForm, setTeacherForm] = useState<{
     nome: string;
     email: string;
@@ -3245,7 +3248,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   }, [classeEscolarForm, loggedInUser?.id]);
 
   // SECURITY SCAN ENGINE FOR EXCEL FILES
-  const performSecurityScan = (file: File, workbook: XLSX.WorkBook): string[] => {
+  const performSecurityScan = (file: File, workbook: any): string[] => {
     const errors: string[] = [];
 
     // 1. File Type & Extension Validation
@@ -3329,6 +3332,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     reader.onload = async (e) => {
       try {
         const data = new Uint8Array(e.target?.result as ArrayBuffer);
+        const XLSX = await import('xlsx');
         const workbook = XLSX.read(data, { type: 'array' });
         
         // Security Scan
@@ -3491,7 +3495,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   };
 
   // DOWNLOAD TEMPLATE ENGINE
-  const handleDownloadTemplate = (moduleName: string) => {
+  const handleDownloadTemplate = async (moduleName: string) => {
     let headers: string[] = [];
     let sampleData: any[] = [];
     
@@ -3577,6 +3581,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       ];
     }
 
+    const XLSX = await import('xlsx');
     const worksheet = XLSX.utils.json_to_sheet(sampleData, { header: headers });
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, moduleName.toUpperCase());
@@ -4513,11 +4518,19 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const handleSaveDocente = async (docenteData: Partial<Docente>, extraUserData: { email: string; nome: string }) => {
     setIsSaving(true);
     try {
+      // Filter out undefined values to prevent Firestore SDK validation crash
+      const cleanDocenteData = { ...docenteData };
+      Object.keys(cleanDocenteData).forEach(key => {
+        if (cleanDocenteData[key as keyof typeof cleanDocenteData] === undefined) {
+          delete cleanDocenteData[key as keyof typeof cleanDocenteData];
+        }
+      });
+
       if (editingDocente) {
         // Update existing teacher record
         const docRef = doc(db, 'docentes', editingDocente.id);
         await updateDoc(docRef, {
-          ...docenteData,
+          ...cleanDocenteData,
           tenant_id: currentTenantId,
           updated_at: new Date().toISOString()
         });
@@ -4541,7 +4554,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           email: extraUserData.email,
           tipo: 'docente',
           tenant_id: currentTenantId,
-          escola_id: docenteData.escola_id || schools[0]?.id || '',
+          escola_id: cleanDocenteData.escola_id || schools[0]?.id || '',
           senha_temporaria: '12345678',
           modulo_acessos: getInheritedModuloAcessos('docente'),
           created_at: new Date().toISOString()
@@ -4558,20 +4571,20 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
         // Create docente record
         const newDocRef = await addDoc(collection(db, 'docentes'), {
-          ...docenteData,
+          ...cleanDocenteData,
           user_id: newUserRef.id,
           tenant_id: currentTenantId,
-          escola_id: docenteData.escola_id || schools[0]?.id || '',
+          escola_id: cleanDocenteData.escola_id || schools[0]?.id || '',
           created_at: new Date().toISOString()
         });
 
         // If optional fields missing, auto-create activity
-        if (docenteData.dados_em_falta && docenteData.dados_em_falta.length > 0) {
+        if (cleanDocenteData.dados_em_falta && cleanDocenteData.dados_em_falta.length > 0) {
           try {
             await addDoc(collection(db, 'atividades'), {
               tenant_id: currentTenantId,
               titulo: `Completar Cadastro do Docente: ${extraUserData.nome}`,
-              descricao: `O docente foi cadastrado com sucesso, mas possui dados pendentes: ${docenteData.dados_em_falta.join(', ')}.`,
+              descricao: `O docente foi cadastrado com sucesso, mas possui dados pendentes: ${cleanDocenteData.dados_em_falta.join(', ')}.`,
               modulo: 'docentes',
               referencia_id: newDocRef.id,
               prioridade: 'Média',
@@ -6032,6 +6045,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         const cleanedEscolaForm = Object.fromEntries(
           Object.entries(escolaForm).filter(([_, v]) => v !== undefined)
         );
+        const oldDirectorId = editingItem?.diretor_id || '';
+        const newDirectorId = escolaForm.diretor_id || '';
+
         if (editingItem) {
           await updateDoc(doc(db, 'escolas', editingItem.id), cleanedEscolaForm);
           await addDoc(collection(db, 'notificacoes'), {
@@ -6055,6 +6071,44 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             lido: false,
             created_at: new Date().toISOString()
           });
+        }
+
+        // Apply automatic promotion of selected school director (user category / role change)
+        if (newDirectorId && newDirectorId !== oldDirectorId) {
+          const newDirectorUser = tenantUsers.find(u => u.id === newDirectorId);
+          if (newDirectorUser) {
+            // 1. Database category change to 'director'
+            await updateDoc(doc(db, 'users', newDirectorId), { tipo: 'director' });
+
+            // 2. In-app internal notification to user
+            await addDoc(collection(db, 'notificacoes'), {
+              destinatario_id: newDirectorId,
+              tenant_id: currentTenantId,
+              titulo: '🎓 Nomeação: Diretor de Escola',
+              mensagem: `Parabéns! Foi nomeado(a) como Diretor(a) da escola "${escolaForm.nome}". O seu nível de acesso foi atualizado para Directores e Gestores Escolares.`,
+              tipo: 'sucesso',
+              lido: false,
+              created_at: new Date().toISOString()
+            });
+
+            // 3. Email notification (Rule 6.1)
+            if (newDirectorUser.email) {
+              await queueOrSendEmail(
+                newDirectorUser.email,
+                '🎓 Nomeação de Cargo - Diretor(a) de Escola',
+                `Prezado(a) ${newDirectorUser.nome},\n\nInformamos que foi oficialmente nomeado(a) como Diretor(a) da escola "${escolaForm.nome}".\n\nEm conformidade com a sua nova atribuição, o seu perfil de acesso e privilégios no Portal SGE foram atualizados para "Directores e Gestores Escolares".\n\nPor favor, aceda ao portal para visualizar as suas novas ferramentas de gestão escolar.\n\nAtenciosamente,\nAdministração Escolar`
+              );
+            }
+
+            // 4. Push browser notification
+            sendBrowserNotification({
+              title: '🎓 Nomeação de Cargo: Diretor',
+              body: `Foi nomeado(a) como Diretor(a) da escola "${escolaForm.nome}".`
+            });
+
+            // 5. Play sound notification (sound tailored to cargo changes / pleasant chime)
+            playNotificationSound('cargo');
+          }
         }
       } 
       
@@ -9031,12 +9085,21 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           )}
                           {hasPermission('escolas', 'excluir') && (
                             <button 
-                              onClick={async () => {
-                                if (window.confirm(`Tem certeza que deseja excluir a sala "${s.nome}"?`)) {
-                                  await deleteDoc(doc(db, 'salas', s.id));
-                                  setSalas(prev => prev.filter(item => item.id !== s.id));
-                                  showSystemNotification("Sala excluída com sucesso!", "sucesso");
-                                }
+                              onClick={() => {
+                                showConfirm(
+                                  "Confirmar Exclusão de Sala",
+                                  `Tem certeza que deseja excluir a sala "${s.nome}"?`,
+                                  async () => {
+                                    try {
+                                      await deleteDoc(doc(db, 'salas', s.id));
+                                      setSalas(prev => prev.filter(item => item.id !== s.id));
+                                      showSystemNotification("Sala excluída com sucesso!", "sucesso");
+                                    } catch (err: any) {
+                                      showSystemNotification(`Erro ao excluir sala: ${err.message}`, "erro");
+                                    }
+                                  },
+                                  true
+                                );
                               }}
                               className="p-1.5 hover:bg-rose-50 text-rose-600 rounded-lg hover:text-rose-700 transition-colors"
                               title="Excluir"
@@ -9168,7 +9231,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           <button 
                             onClick={() => {
                               setEditingItem(null);
-                              setEscolaForm({ nome: '', provincia_id: provinces[0]?.id || '', endereco: '', telefone: '', email: '', diretor_id: '', ativo: true, latitude: '', longitude: '', logo_url: '', controlar_assiduidade: false, tolerancia_manha: '07:15', tolerancia_tarde: '12:15', tolerancia_noite: '18:15' });
+                              setEscolaForm({ nome: '', provincia_id: provinces[0]?.id || '', endereco: '', telefone: '', email: '', diretor_id: '', diretor_pedagogico_id: '', data_fundacao: '', ativo: true, latitude: '', longitude: '', logo_url: '', controlar_assiduidade: false, tolerancia_manha: '07:15', tolerancia_tarde: '12:15', tolerancia_noite: '18:15' });
                               setModalType('escola');
                               setIsModalOpen(true);
                             }}
@@ -9380,6 +9443,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                           telefone: s.telefone || '',
                                           email: s.email || '',
                                           diretor_id: s.diretor_id || '',
+                                          diretor_pedagogico_id: s.diretor_pedagogico_id || '',
+                                          data_fundacao: s.data_fundacao || '',
                                           ativo: s.ativo ?? true,
                                           latitude: String(s.latitude || ''),
                                           longitude: String(s.longitude || ''),
@@ -9482,6 +9547,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     telefone: s.telefone || '',
                                     email: s.email || '',
                                     diretor_id: s.diretor_id || '',
+                                    diretor_pedagogico_id: s.diretor_pedagogico_id || '',
+                                    data_fundacao: s.data_fundacao || '',
                                     ativo: s.ativo ?? true,
                                     latitude: String(s.latitude || ''),
                                     longitude: String(s.longitude || ''),
@@ -11476,16 +11543,21 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                 <Edit className="w-3.5 h-3.5" />
                                               </button>
                                               <button
-                                                onClick={async () => {
-                                                  if (confirm(`Tem certeza que deseja excluir o período de férias "${v.descricao}"?`)) {
-                                                    try {
-                                                      await deleteDoc(doc(db, 'ferias', v.id));
-                                                      setVacations(prev => prev.filter(item => item.id !== v.id));
-                                                      showSystemNotification("Período de férias excluído com sucesso!", "sucesso");
-                                                    } catch (err: any) {
-                                                      showSystemNotification(`Erro ao excluir férias: ${err.message}`, "erro");
-                                                    }
-                                                  }
+                                                onClick={() => {
+                                                  showConfirm(
+                                                    "Confirmar Exclusão de Férias",
+                                                    `Tem certeza que deseja excluir o período de férias "${v.descricao}"?`,
+                                                    async () => {
+                                                      try {
+                                                        await deleteDoc(doc(db, 'ferias', v.id));
+                                                        setVacations(prev => prev.filter(item => item.id !== v.id));
+                                                        showSystemNotification("Período de férias excluído com sucesso!", "sucesso");
+                                                      } catch (err: any) {
+                                                        showSystemNotification(`Erro ao excluir férias: ${err.message}`, "erro");
+                                                      }
+                                                    },
+                                                    true
+                                                  );
                                                 }}
                                                 className="p-1 bg-rose-50 hover:bg-rose-100 border border-rose-200 hover:border-rose-300 text-rose-650 rounded-lg transition-colors cursor-pointer"
                                                 title="Excluir Férias"
@@ -11612,16 +11684,21 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                 <Edit className="w-3.5 h-3.5" />
                                               </button>
                                               <button
-                                                onClick={async () => {
-                                                  if (confirm(`Tem certeza que deseja excluir o feriado "${f.nome}"?`)) {
-                                                    try {
-                                                      await deleteDoc(doc(db, 'feriados', f.id));
-                                                      setFeriados(prev => prev.filter(item => item.id !== f.id));
-                                                      showSystemNotification("Feriado excluído com sucesso!", "sucesso");
-                                                    } catch (err: any) {
-                                                      showSystemNotification(`Erro ao excluir feriado: ${err.message}`, "erro");
-                                                    }
-                                                  }
+                                                onClick={() => {
+                                                  showConfirm(
+                                                    "Confirmar Exclusão de Feriado",
+                                                    `Tem certeza que deseja excluir o feriado "${f.nome}"?`,
+                                                    async () => {
+                                                      try {
+                                                        await deleteDoc(doc(db, 'feriados', f.id));
+                                                        setFeriados(prev => prev.filter(item => item.id !== f.id));
+                                                        showSystemNotification("Feriado excluído com sucesso!", "sucesso");
+                                                      } catch (err: any) {
+                                                        showSystemNotification(`Erro ao excluir feriado: ${err.message}`, "erro");
+                                                      }
+                                                    },
+                                                    true
+                                                  );
                                                 }}
                                                 className="p-1 bg-rose-50 hover:bg-rose-100 border border-rose-200 hover:border-rose-300 text-rose-650 rounded-lg transition-colors cursor-pointer"
                                                 title="Excluir Feriado"
@@ -11855,16 +11932,21 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                             )}
                                             {isDeletable && (
                                               <button
-                                                onClick={async () => {
-                                                  if (confirm(`Tem certeza que deseja excluir o agendamento de exame de "${ex.disciplina_nome}"?`)) {
-                                                    try {
-                                                      await deleteDoc(doc(db, 'exames_agendamentos', ex.id));
-                                                      setExames(prev => prev.filter(item => item.id !== ex.id));
-                                                      showSystemNotification("Agendamento de exame excluído com sucesso!", "sucesso");
-                                                    } catch (err: any) {
-                                                      showSystemNotification(`Erro ao excluir agendamento: ${err.message}`, "erro");
-                                                    }
-                                                  }
+                                                onClick={() => {
+                                                  showConfirm(
+                                                    "Confirmar Exclusão de Agendamento",
+                                                    `Tem certeza que deseja excluir o agendamento de exame de "${ex.disciplina_nome}"?`,
+                                                    async () => {
+                                                      try {
+                                                        await deleteDoc(doc(db, 'exames_agendamentos', ex.id));
+                                                        setExames(prev => prev.filter(item => item.id !== ex.id));
+                                                        showSystemNotification("Agendamento de exame excluído com sucesso!", "sucesso");
+                                                      } catch (err: any) {
+                                                        showSystemNotification(`Erro ao excluir agendamento: ${err.message}`, "erro");
+                                                      }
+                                                    },
+                                                    true
+                                                  );
                                                 }}
                                                 className="p-1.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 rounded-lg transition-colors cursor-pointer"
                                                 title="Excluir Agendamento"
@@ -17796,6 +17878,59 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
                     />
                   </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Diretor da Escola</label>
+                    <select 
+                      value={escolaForm.diretor_id || ''}
+                      onChange={(e) => setEscolaForm({ ...escolaForm, diretor_id: e.target.value })}
+                      className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-850 rounded-lg p-2.5 text-sm text-slate-700 dark:text-slate-200"
+                    >
+                      <option value="">-- Sem Diretor Atribuído --</option>
+                      {tenantUsers
+                        .filter(u => u.tipo !== 'estudante' && u.tipo !== 'pai')
+                        .map(u => (
+                          <option key={u.id} value={u.id}>
+                            {u.nome} ({u.email || 'Sem email'}) - {
+                              u.tipo === 'director' ? 'Diretor' :
+                              u.tipo === 'docente' ? 'Docente' :
+                              u.tipo === 'admin' ? 'Administrador' : u.tipo
+                            }
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Director Pedagógico</label>
+                      <select 
+                        value={escolaForm.diretor_pedagogico_id || ''}
+                        onChange={(e) => setEscolaForm({ ...escolaForm, diretor_pedagogico_id: e.target.value })}
+                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-850 rounded-lg p-2.5 text-sm text-slate-700 dark:text-slate-200"
+                      >
+                        <option value="">-- Sem Diretor Pedagógico --</option>
+                        {tenantUsers
+                          .filter(u => u.tipo !== 'estudante' && u.tipo !== 'pai')
+                          .map(u => (
+                            <option key={u.id} value={u.id}>
+                              {u.nome} ({u.email || 'Sem email'}) - {
+                                u.tipo === 'director' ? 'Diretor' :
+                                u.tipo === 'docente' ? 'Docente' :
+                                u.tipo === 'admin' ? 'Administrador' : u.tipo
+                              }
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Data de Fundação da Escola</label>
+                      <input 
+                        type="date"
+                        value={escolaForm.data_fundacao || ''}
+                        onChange={(e) => setEscolaForm({ ...escolaForm, data_fundacao: e.target.value })}
+                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-850 rounded-lg p-2.5 text-sm text-slate-700 dark:text-slate-200"
+                      />
+                    </div>
+                  </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-xs font-bold text-slate-500 mb-1">Latitude (Opcional)</label>
@@ -17963,6 +18098,24 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     <div className="md:col-span-2">
                       <span className="font-bold text-slate-400 block uppercase text-[10px]">Endereço Completo</span>
                       <p className="font-semibold text-slate-800 mt-1 bg-slate-50 p-2 rounded-lg border border-slate-100">{editingItem?.endereco || '---'}</p>
+                    </div>
+                    <div>
+                      <span className="font-bold text-slate-400 block uppercase text-[10px]">Diretor da Escola</span>
+                      <p className="font-semibold text-slate-800 mt-1 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                        {tenantUsers.find(u => u.id === editingItem?.diretor_id)?.nome || 'Sem Diretor Atribuído'}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="font-bold text-slate-400 block uppercase text-[10px]">Director Pedagógico</span>
+                      <p className="font-semibold text-slate-800 mt-1 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                        {tenantUsers.find(u => u.id === editingItem?.diretor_pedagogico_id)?.nome || 'Sem Diretor Pedagógico'}
+                      </p>
+                    </div>
+                    <div className="md:col-span-2">
+                      <span className="font-bold text-slate-400 block uppercase text-[10px]">Data de Fundação</span>
+                      <p className="font-semibold text-slate-800 mt-1 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                        {editingItem?.data_fundacao ? new Date(editingItem.data_fundacao).toLocaleDateString('pt-PT') : 'Não especificada'}
+                      </p>
                     </div>
                   </div>
                   

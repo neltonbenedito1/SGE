@@ -121,6 +121,8 @@ export interface Escola {
   telefone: string;
   email: string;
   diretor_id: string;
+  diretor_pedagogico_id?: string;
+  data_fundacao?: string;
   ativo: boolean;
   latitude?: string | number;
   longitude?: string | number;

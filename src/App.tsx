@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { seedDatabaseIfEmpty, db, auth, registerUserInFirebaseAuth } from './lib/firebase';
 import { 
   signInWithEmailAndPassword, 
@@ -20,8 +20,10 @@ import {
   where
 } from 'firebase/firestore';
 import { Tenant, Plano } from './types';
-import SuperAdminPortal from './components/SuperAdminPortal';
-import TenantPortal from './components/TenantPortal';
+
+const SuperAdminPortal = lazy(() => import('./components/SuperAdminPortal'));
+const TenantPortal = lazy(() => import('./components/TenantPortal'));
+
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { SysEduLogo } from './components/SysEduLogo';
 import BrandbookView from './components/BrandbookView';
@@ -1791,39 +1793,43 @@ const clientSideCache: Record<string, any> = {
       {/* VIEW: SUPER ADMIN PANEL (CAMADA 1) */}
       {currentView === 'superadmin' && (
         <ErrorBoundary fallbackTitle="Erro ao carregar o Painel de Controlo Global">
-          <SuperAdminPortal 
-            onLogout={handleLogout} 
-            activeTheme={activeTheme}
-            onChangeTheme={handleThemeChange}
-            systemLang={systemLang}
-            onChangeLanguage={(lang) => {
-              setSystemLanguage(lang);
-              setSystemLang(lang);
-            }}
-          />
+          <Suspense fallback={<SamsungLoadingScreen message="A carregar painel global..." />}>
+            <SuperAdminPortal 
+              onLogout={handleLogout} 
+              activeTheme={activeTheme}
+              onChangeTheme={handleThemeChange}
+              systemLang={systemLang}
+              onChangeLanguage={(lang) => {
+                setSystemLanguage(lang);
+                setSystemLang(lang);
+              }}
+            />
+          </Suspense>
         </ErrorBoundary>
       )}
 
       {/* VIEW: TENANT PORTAL PANEL (CAMADA 2) */}
       {currentView === 'tenant' && (
         <ErrorBoundary fallbackTitle="Erro ao carregar o Portal Académico">
-          <TenantPortal 
-            currentTenantId={selectedTenantId}
-            currentUserRole={selectedRole}
-            currentUserEmail={getUserSessionCookie()?.email || ""}
-            onLogout={handleLogout}
-            activeTheme={activeTheme}
-            onChangeTheme={handleThemeChange}
-            systemLang={systemLang}
-            onChangeLanguage={(lang) => {
-              setSystemLanguage(lang);
-              setSystemLang(lang);
-              const session = getUserSessionCookie();
-              if (session?.id) {
-                SessionStateService.savePreference(session.id, 'language', lang);
-              }
-            }}
-          />
+          <Suspense fallback={<SamsungLoadingScreen message="A carregar portal académico..." />}>
+            <TenantPortal 
+              currentTenantId={selectedTenantId}
+              currentUserRole={selectedRole}
+              currentUserEmail={getUserSessionCookie()?.email || ""}
+              onLogout={handleLogout}
+              activeTheme={activeTheme}
+              onChangeTheme={handleThemeChange}
+              systemLang={systemLang}
+              onChangeLanguage={(lang) => {
+                setSystemLanguage(lang);
+                setSystemLang(lang);
+                const session = getUserSessionCookie();
+                if (session?.id) {
+                  SessionStateService.savePreference(session.id, 'language', lang);
+                }
+              }}
+            />
+          </Suspense>
         </ErrorBoundary>
       )}
 

@@ -12,7 +12,6 @@ import {
 } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, getDocs, addDoc, query, orderBy, getDoc, doc } from 'firebase/firestore';
-import { jsPDF } from 'jspdf';
 import { ActividadePendente } from '../types';
 import { PerformanceEvaluationModule } from './PerformanceEvaluationModule';
 
@@ -575,10 +574,12 @@ export function AnalyticsModule({
 
 
   // --- EXPORT TO PDF VIA JSPDF (Section 3.4) ---
-  const exportToPDF = () => {
+  const exportToPDF = async () => {
     logAnalyticsAction("Exportou PDF", `Gerou relatório executivo PDF para a instituição.`);
     
-    const JsPdfCtor = (jsPDF as any)?.jsPDF || jsPDF;
+    const jspdfModule = await import('jspdf');
+    const jsPDFClass = jspdfModule.jsPDF;
+    const JsPdfCtor = (jsPDFClass as any)?.jsPDF || jsPDFClass;
     const doc = new JsPdfCtor();
     
     // Header Style
@@ -756,10 +757,12 @@ export function AnalyticsModule({
     }
   };
 
-  const downloadSpecificReportPDF = (rep: MonthlyReport) => {
+  const downloadSpecificReportPDF = async (rep: MonthlyReport) => {
     logAnalyticsAction("Exportou PDF Relatório", `Descarregou o relatório de ${rep.mes} ${rep.ano} em formato PDF`);
     
-    const JsPdfCtor = (jsPDF as any)?.jsPDF || jsPDF;
+    const jspdfModule = await import('jspdf');
+    const jsPDFClass = jspdfModule.jsPDF;
+    const JsPdfCtor = (jsPDFClass as any)?.jsPDF || jsPDFClass;
     const doc = new JsPdfCtor();
     doc.setFillColor(15, 23, 42); // slate 900
     doc.rect(0, 0, 210, 45, 'F');

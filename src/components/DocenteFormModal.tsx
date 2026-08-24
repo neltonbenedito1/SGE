@@ -188,6 +188,8 @@ export default function DocenteFormModal({
 
   // Load editing docente
   useEffect(() => {
+    if (!isOpen) return;
+    
     if (editingDocente) {
       const linkedUser = tenantUsers.find(u => u.id === editingDocente.user_id);
       setNome(editingDocente.nome || linkedUser?.nome || '');
@@ -264,7 +266,7 @@ export default function DocenteFormModal({
         }
       ]);
     }
-  }, [editingDocente, schools, isOpen]);
+  }, [editingDocente, isOpen]);
 
   // Compute Missing Items for Activity generation
   const computeMissingData = (): string[] => {
