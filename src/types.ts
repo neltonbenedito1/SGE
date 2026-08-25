@@ -622,6 +622,36 @@ export interface AgendamentoExame {
   created_at?: string;
 }
 
+// Error Logging & Diagnostics Entities
+export type ErrorSeverity = 'critico' | 'erro' | 'aviso' | 'info';
+export type ErrorStatus = 'aberto' | 'investigando' | 'resolvido' | 'ignorado';
+export type ErrorOrigem = 'super_admin' | 'tenant_admin' | 'tenant_portal' | 'api' | 'auth' | 'sistema';
+
+export interface LogErro {
+  id: string;
+  origem: ErrorOrigem;
+  tenant_id?: string;
+  tenant_nome?: string;
+  usuario_id?: string;
+  usuario_email?: string;
+  usuario_nome?: string;
+  usuario_tipo?: string;
+  modulo?: string;
+  acao?: string;
+  mensagem: string;
+  stack_trace?: string;
+  severidade: ErrorSeverity;
+  status: ErrorStatus;
+  url?: string;
+  user_agent?: string;
+  ip?: string;
+  detalhes?: Record<string, any>;
+  resolvido_por?: string;
+  resolvido_em?: string;
+  notas_resolucao?: string;
+  created_at: string;
+}
+
 
 
 

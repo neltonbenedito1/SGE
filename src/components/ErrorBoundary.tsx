@@ -1,5 +1,6 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { logSystemError } from '../services/errorLoggingService';
 
 interface Props {
   children: ReactNode;
@@ -23,6 +24,17 @@ export class ErrorBoundary extends Component<Props, State> {
 
   public override componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('ErrorBoundary caught an error:', error, errorInfo);
+    logSystemError({
+      origem: 'sistema',
+      severidade: 'erro',
+      modulo: 'React ErrorBoundary',
+      acao: 'Render Exception',
+      mensagem: error?.message || 'Erro ao renderizar componente',
+      stack_trace: error?.stack || errorInfo.componentStack || undefined,
+      detalhes: {
+        componentStack: errorInfo.componentStack
+      }
+    });
   }
 
   private handleReset = () => {

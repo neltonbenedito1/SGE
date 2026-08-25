@@ -58,6 +58,7 @@ import { ValidarPresencaModal } from './ValidarPresencaModal';
 import { StudentQrDisplay } from './StudentQrDisplay';
 import { generateStudentQrPayload, generateQrDataUrl } from '../utils/qrCodeHelper';
 import { EmailTemplates, createMimeMessage, createGmailRawPayload } from '../lib/emailUtils';
+import { logSystemError } from '../services/errorLoggingService';
 import DocenteFormModal from './DocenteFormModal';
 import ProcessoIndividualModule from './ProcessoIndividualModule';
 import { 
@@ -4719,6 +4720,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           created_at: new Date().toISOString()
         });
 
+        logSystemError({
+          origem: 'tenant_portal',
+          severidade: 'aviso',
+          modulo: 'E-mail / Notificações Tenant',
+          acao: 'Fila de E-mails Pendentes',
+          tenant_id: currentTenantId,
+          tenant_nome: tenant?.nome,
+          mensagem: `Tentativa de envio de e-mail para ${to} retida na fila: nenhum servidor SMTP ativo configurado na unidade.`,
+          detalhes: { to, subject }
+        });
+
         setSmtpWarningMsg(`O e-mail para ${to} está pendente na fila porque não há servidor SMTP configurado.`);
       } else {
         // If SMTP is active, we simulate transmission and add it to the received emails list
@@ -4732,8 +4744,18 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       }
       
       loadTenantContext();
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error queueing or sending email:", err);
+      logSystemError({
+        origem: 'tenant_portal',
+        severidade: 'erro',
+        modulo: 'E-mail / Notificações Tenant',
+        acao: 'queueOrSendEmail',
+        tenant_id: currentTenantId,
+        tenant_nome: tenant?.nome,
+        mensagem: `Falha ao enfileirar ou despachar e-mail para ${to}: ${err?.message || err}`,
+        stack_trace: err?.stack
+      });
     }
   }
 
