@@ -22,7 +22,7 @@
         "nome": { "type": "string" },
         "slug": { "type": "string" },
         "plano_id": { "type": "string" },
-        "status": { "type": "string", "enum": ["ativo", "suspenso", "cancelado"] },
+        "status": { "type": "string", "enum": ["ativo", "suspenso", "cancelado", "pendente_pagamento"] },
         "data_vencimento": { "type": "string" },
         "data_renovacao": { "type": "string" },
         "created_at": { "type": "string", "format": "date-time" }
@@ -61,16 +61,17 @@
     },
     "User": {
       "title": "User",
-      "description": "Tenant-specific user record with role permissions",
+      "description": "Tenant-specific user record with role permissions and custom claims reference",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "tenant_id": { "type": "string" },
         "email": { "type": "string" },
         "nome": { "type": "string" },
-        "tipo": { "type": "string", "enum": ["admin", "director", "docente", "pai", "estudante"] },
+        "tipo": { "type": "string", "enum": ["admin", "director", "docente", "pai", "estudante", "finance", "super_admin"] },
         "permissoes": { "type": "array" },
         "ativo": { "type": "boolean" },
+        "mustChangePassword": { "type": "boolean" },
         "created_at": { "type": "string" }
       },
       "required": ["id", "tenant_id", "email", "nome", "tipo", "ativo"]
@@ -92,83 +93,39 @@
       },
       "required": ["id", "tenant_id", "provincia_id", "nome", "ativo"]
     },
-    "Notificacao": {
-      "title": "Notificacao",
-      "description": "System notification records for tenants and super admin",
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable append-only audit trail",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "destinatario_id": { "type": "string" },
-        "titulo": { "type": "string" },
-        "mensagem": { "type": "string" },
-        "lido": { "type": "boolean" },
-        "tipo": { "type": "string", "enum": ["info", "alerta", "limite", "sistema", "sucesso"] },
-        "created_at": { "type": "string" }
-      },
-      "required": ["id", "destinatario_id", "titulo", "mensagem", "lido", "tipo", "created_at"]
-    },
-    "Livro": {
-      "title": "Livro",
-      "description": "Educational library book",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
+        "actor_id": { "type": "string" },
+        "actor_email": { "type": "string" },
+        "actor_role": { "type": "string" },
+        "action": { "type": "string" },
+        "entity": { "type": "string" },
+        "entity_id": { "type": "string" },
         "tenant_id": { "type": "string" },
-        "titulo": { "type": "string" },
-        "autor": { "type": "string" },
-        "editora": { "type": "string" },
-        "numero_paginas": { "type": "number" },
-        "capa_url": { "type": "string" },
-        "categoria": { "type": "string" },
-        "sinopse": { "type": "string" },
-        "idioma": { "type": "string" },
-        "isbn": { "type": "string" },
-        "criado_por": { "type": "string" },
-        "escola_origem": { "type": "string" },
-        "criado_em": { "type": "string" },
-        "atualizado_em": { "type": "string" },
-        "destaque": { "type": "boolean" }
+        "timestamp": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "tenant_id", "titulo", "autor", "editora", "numero_paginas", "criado_por", "escola_origem", "criado_em"]
+      "required": ["id", "actor_id", "action", "entity", "entity_id", "tenant_id", "timestamp"]
     },
-    "Edicao": {
-      "title": "Edicao",
-      "description": "PDF book edition/version",
+    "LogErro": {
+      "title": "LogErro",
+      "description": "Structured system diagnostics and error log",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "livro_id": { "type": "string" },
-        "numero_edicao": { "type": "number" },
-        "pdf_url": { "type": "string" },
-        "tamanho_ficheiro": { "type": "number" },
-        "notas_da_edicao": { "type": "string" },
-        "adicionado_por": { "type": "string" },
-        "adicionado_em": { "type": "string" },
-        "ativa": { "type": "boolean" }
+        "origem": { "type": "string" },
+        "mensagem": { "type": "string" },
+        "severidade": { "type": "string" },
+        "status": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "livro_id", "numero_edicao", "pdf_url", "tamanho_ficheiro", "adicionado_por", "adicionado_em", "ativa"]
-    },
-    "HistoricoLeitura": {
-      "title": "HistoricoLeitura",
-      "description": "Reading progress history of a user on a book edition",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "utilizador_id": { "type": "string" },
-        "livro_id": { "type": "string" },
-        "edicao_id": { "type": "string" },
-        "ultima_pagina_lida": { "type": "number" },
-        "percentual_concluido": { "type": "number" },
-        "ultima_leitura_em": { "type": "string" }
-      },
-      "required": ["id", "utilizador_id", "livro_id", "edicao_id", "ultima_pagina_lida", "percentual_concluido", "ultima_leitura_em"]
+      "required": ["id", "origem", "mensagem", "severidade", "status", "created_at"]
     }
   },
   "firestore": {
-    "/notificacoes/{id}": {
-      "schema": { "$ref": "#/entities/Notificacao" },
-      "description": "System-wide notifications"
-    },
     "/superusers/{id}": {
       "schema": { "$ref": "#/entities/SuperUser" },
       "description": "Super admin metadata"
@@ -185,25 +142,21 @@
       "schema": { "$ref": "#/entities/Pagamento" },
       "description": "SaaS tenant payment records"
     },
-    "/tenants/{tenantId}/users/{id}": {
+    "/users/{id}": {
       "schema": { "$ref": "#/entities/User" },
-      "description": "Users inside a tenant scope"
+      "description": "System users with role and tenant isolation"
     },
-    "/tenants/{tenantId}/escolas/{id}": {
+    "/escolas/{id}": {
       "schema": { "$ref": "#/entities/Escola" },
-      "description": "Schools in a tenant scope"
+      "description": "Schools within tenants"
     },
-    "/tenants/{tenantId}/livros/{id}": {
-      "schema": { "$ref": "#/entities/Livro" },
-      "description": "Transversal books available in the institution"
+    "/audit_logs/{id}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Immutable audit entries"
     },
-    "/tenants/{tenantId}/livros/{livroId}/edicoes/{id}": {
-      "schema": { "$ref": "#/entities/Edicao" },
-      "description": "Editions/versions of a book"
-    },
-    "/tenants/{tenantId}/historicoLeitura/{id}": {
-      "schema": { "$ref": "#/entities/HistoricoLeitura" },
-      "description": "User reading history records"
+    "/logs_erros/{id}": {
+      "schema": { "$ref": "#/entities/LogErro" },
+      "description": "System runtime diagnostics"
     }
   }
 }

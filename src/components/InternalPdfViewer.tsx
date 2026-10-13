@@ -214,9 +214,9 @@ export const InternalPdfViewer: React.FC<InternalPdfViewerProps> = ({
       try {
         let loadingTask;
 
-        // Support base64 PDFs nicely
-        if (pdfUrl.startsWith('data:application/pdf;base64,') || pdfUrl.startsWith('data:binary/octet-stream;base64,')) {
-          const base64Data = pdfUrl.substring(pdfUrl.indexOf(',') + 1);
+        // Support base64 PDFs nicely (handling any data URL with base64)
+        if (pdfUrl.startsWith('data:') && pdfUrl.includes(';base64,')) {
+          const base64Data = pdfUrl.substring(pdfUrl.indexOf(';base64,') + 8);
           const binaryString = atob(base64Data);
           const len = binaryString.length;
           const bytes = new Uint8Array(len);
@@ -566,6 +566,14 @@ export const InternalPdfViewer: React.FC<InternalPdfViewerProps> = ({
                     }}
                     className="rounded-xl shadow-2xl bg-white border border-slate-700/30 transition-all duration-300"
                   />
+                  <div 
+                    aria-hidden="true" 
+                    className="absolute inset-0 pointer-events-none flex items-center justify-center opacity-10 select-none overflow-hidden"
+                  >
+                    <p className="rotate-[-25deg] text-xs font-mono text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                      {bookTitle} • Licenciado via SysEdu
+                    </p>
+                  </div>
                 </div>
               </div>
             ) : (

@@ -51,6 +51,20 @@ export function subscribeToErrorLogs(callback: ErrorListener): () => void {
 }
 
 /**
+ * Scrubs sensitive personally identifiable information (PII), secrets, and tokens from error messages
+ */
+export function sanitizePii(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/(password|senha|pwd|pass|secret|token|api_key|authorization)[:=]\s*["']?[^"'&\s]+/gi, '$1=***REDACTED***')
+    .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, (email) => {
+      const parts = email.split('@');
+      return `${parts[0][0]}***@${parts[1]}`;
+    })
+    .replace(/bearer\s+[a-zA-Z0-9._\-]+/gi, 'Bearer ***REDACTED***');
+}
+
+/**
  * Central logger for system errors across SuperAdmin, Tenants, API, and Global Handlers
  */
 export async function logSystemError(params: {
@@ -68,10 +82,13 @@ export async function logSystemError(params: {
   stack_trace?: string;
   detalhes?: Record<string, any>;
 }): Promise<LogErro> {
+  const sanitizedMsg = sanitizePii(params.mensagem || 'Erro desconhecido');
+  const sanitizedStack = params.stack_trace ? sanitizePii(params.stack_trace) : (new Error().stack ? sanitizePii(new Error().stack!) : '');
+
   const newLog: LogErro = {
     id: 'err_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
     origem: params.origem || 'sistema',
-    mensagem: params.mensagem || 'Erro desconhecido',
+    mensagem: sanitizedMsg,
     severidade: params.severidade || 'erro',
     status: 'aberto',
     modulo: params.modulo || 'Geral',
@@ -79,11 +96,11 @@ export async function logSystemError(params: {
     tenant_id: params.tenant_id,
     tenant_nome: params.tenant_nome,
     usuario_id: params.usuario_id,
-    usuario_email: params.usuario_email,
+    usuario_email: params.usuario_email ? sanitizePii(params.usuario_email) : undefined,
     usuario_nome: params.usuario_nome,
     usuario_tipo: params.usuario_tipo,
-    stack_trace: params.stack_trace || (new Error().stack),
-    url: typeof window !== 'undefined' ? window.location.href : '',
+    stack_trace: sanitizedStack,
+    url: typeof window !== 'undefined' ? window.location.pathname : '',
     user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
     detalhes: params.detalhes || {},
     created_at: new Date().toISOString()

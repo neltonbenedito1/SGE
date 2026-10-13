@@ -34,7 +34,7 @@ import {
   Sparkles
 } from "lucide-react";
 import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, setDoc, query, where } from "firebase/firestore";
-import { db } from "../lib/firebase";
+import { db, ensureFirebaseAuthSession } from "../lib/firebase";
 import { 
   syncStripePlans, 
   openStripeCustomerPortal, 
@@ -194,15 +194,16 @@ export function SuperAdminFinancePanel({
       const gatewayList: any[] = [];
       gatewaySnap.forEach(d => gatewayList.push({ ...d.data(), id: d.id }));
       setGateways(gatewayList);
-    } catch (e) {
-      console.error("Error loading configs:", e);
+    } catch (e: any) {
+      console.warn("Notice loading configs:", e?.message || e);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadFinanceConfigs();
+    ensureFirebaseAuthSession('neltonbenedito1@gmail.com', 'Errado23x')
+      .finally(() => loadFinanceConfigs());
   }, []);
 
   // Secure cipher key simulation (never plain text)

@@ -253,3 +253,41 @@ export const EmailTemplates = {
     body: `Hello ${params.name},\n\nYour account on the School Portal has been created successfully${params.roleName ? ` as ${params.roleName}` : ''}!\n\nYour login credentials:\n- Email: ${params.email}\n- Temporary Password: ${params.tempPassword}\n\nPlease log in and update your temporary password to secure your account.\n\nBest regards,\nSchool Administration Team`
   })
 };
+
+/**
+ * Dispatches an email directly using Google Gmail REST API v1
+ */
+export async function sendGmailViaRestApi(options: {
+  to: string;
+  subject: string;
+  body: string;
+  token: string;
+  fromName?: string;
+  fromEmail?: string;
+}) {
+  const { to, subject, body, token, fromName, fromEmail } = options;
+  const raw = createGmailRawPayload({
+    fromEmail: fromEmail || 'noreply@sysedu.mz',
+    fromName: fromName || 'SysEdu',
+    to,
+    subject,
+    body
+  });
+
+  const response = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ raw })
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Gmail API Error: ${errText}`);
+  }
+
+  return await response.json();
+}
+

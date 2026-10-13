@@ -413,6 +413,15 @@ export interface ActividadePendente {
   historico_auditoria?: ActividadeAuditoria[];
 }
 
+export interface IntervaloHorario {
+  id: string;
+  nome: string;
+  turno: 'manha' | 'tarde' | 'noite' | 'todos';
+  hora_inicio: string;
+  hora_fim: string;
+  ativo: boolean;
+}
+
 export interface TenantConfig {
   id: string;
   tenant_id: string;
@@ -449,10 +458,47 @@ export interface TenantConfig {
   pautas_peso_trabalhos?: number;
   pautas_nota_aprovacao?: number;
   pautas_nota_admissao?: number;
+  pautas_arredondamento?: 'padrao' | 'cima' | 'baixo';
   faturacao_multa_atraso?: number;
   faturacao_taxa_reavaliacao?: number;
   faturacao_taxas_adicionais?: number;
   faturacao_multa_margem?: number;
+  dia_vencimento_padrao?: number;
+  // Configurações modulares adicionais
+  horarios_duracao_minutos?: number;
+  horarios_dias_letivos?: number;
+  horarios_hora_inicio_manha?: string;
+  horarios_hora_inicio_tarde?: string;
+  horarios_hora_inicio_noite?: string;
+  horarios_intervalos?: IntervaloHorario[];
+  assiduidade_minima_aprovacao?: number; // Ex: 75 (%)
+  prazo_justificativa_dias?: number;     // Ex: 5 dias
+  limite_faltas_alerta?: number;         // Ex: 3 faltas
+  biblioteca_prazo_dias?: number;        // Ex: 15 dias
+  biblioteca_limite_livros?: number;     // Ex: 3 livros
+  biblioteca_multa_diaria?: number;      // Ex: 20 MZN
+  biblioteca_permitir_renovacao?: boolean;
+  biblioteca_permitir_download?: boolean;
+  capacidade_padrao_turma?: number;      // Ex: 30 alunos
+  prefixo_matricula?: string;            // Ex: "MAT"
+  idade_minima_matricula?: number;       // Ex: 5 anos
+  carga_horaria_maxima_docente?: number; // Ex: 32 horas semanais
+  limite_turmas_docente?: number;        // Ex: 6 turmas
+  disciplinas_carga_horaria_padrao?: number; // Ex: 4 horas semanais
+  disciplinas_permitir_semestrais?: boolean;
+  financeiro_formas_pagamento?: string[]; // Ex: ["M-Pesa", "E-Mola", "Transferência", "Dinheiro"]
+  financeiro_taxa_juros_diario?: number;  // Ex: 0.1%
+  relatorios_cabecalho_oficial?: string;
+  relatorios_rodape_oficial?: string;
+  relatorios_formato_exportacao?: 'pdf' | 'excel' | 'ambos';
+  relatorios_orientacao_padrao?: 'retrato' | 'paisagem';
+  notificacoes_canais?: { email: boolean; push: boolean; sistema: boolean };
+  notificacoes_modelo_falta?: string;
+  notificacoes_modelo_cobranca?: string;
+  tamanho_minimo_senha?: number;         // Ex: 8 caracteres
+  exigir_alteracao_primeiro_login?: boolean;
+  tempo_inatividade_sessao_minutos?: number; // Ex: 60 minutos
+  tentativas_maximas_login?: number;     // Ex: 5 tentativas
 }
 
 export interface SmtpConfig {
@@ -622,33 +668,31 @@ export interface AgendamentoExame {
   created_at?: string;
 }
 
-// Error Logging & Diagnostics Entities
 export type ErrorSeverity = 'critico' | 'erro' | 'aviso' | 'info';
 export type ErrorStatus = 'aberto' | 'investigando' | 'resolvido' | 'ignorado';
-export type ErrorOrigem = 'super_admin' | 'tenant_admin' | 'tenant_portal' | 'api' | 'auth' | 'sistema';
+export type ErrorOrigem = 'super_admin' | 'tenant' | 'api' | 'auth' | 'email' | 'financeiro' | 'sistema' | 'rede';
 
 export interface LogErro {
   id: string;
   origem: ErrorOrigem;
+  mensagem: string;
+  severidade: ErrorSeverity;
+  status: ErrorStatus;
+  modulo: string;
+  acao: string;
   tenant_id?: string;
   tenant_nome?: string;
   usuario_id?: string;
   usuario_email?: string;
   usuario_nome?: string;
   usuario_tipo?: string;
-  modulo?: string;
-  acao?: string;
-  mensagem: string;
   stack_trace?: string;
-  severidade: ErrorSeverity;
-  status: ErrorStatus;
   url?: string;
   user_agent?: string;
-  ip?: string;
   detalhes?: Record<string, any>;
   resolvido_por?: string;
-  resolvido_em?: string;
-  notas_resolucao?: string;
+  resolvido_em?: string | null;
+  notas_resolucao?: string | null;
   created_at: string;
 }
 

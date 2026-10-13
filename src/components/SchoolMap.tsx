@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Search, MapPin, Maximize2, Minimize2 } from 'lucide-react';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
 interface School {
   id: string;
@@ -59,7 +61,7 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
   const markersRef = useRef<Record<string, any>>({});
   const tileLayerRef = useRef<any>(null);
   
-  const [leafletLoaded, setLeafletLoaded] = useState(false);
+  const [leafletLoaded, setLeafletLoaded] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeLayer, setActiveLayer] = useState<keyof typeof MAP_LAYERS>('streets');
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -91,38 +93,9 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
     return [baseCoords[0] + latJitter, baseCoords[1] + lngJitter];
   };
 
-  // 1. Dynamic Leaflet CDN Loader
+  // 1. Initialize Map Instance
   useEffect(() => {
-    if ((window as any).L) {
-      setLeafletLoaded(true);
-      return;
-    }
-
-    // Load CSS
-    const link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-    link.integrity = 'sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=';
-    link.crossOrigin = '';
-    document.head.appendChild(link);
-
-    // Load JS
-    const script = document.createElement('script');
-    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-    script.integrity = 'sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=';
-    script.crossOrigin = '';
-    script.onload = () => {
-      setLeafletLoaded(true);
-    };
-    document.body.appendChild(script);
-  }, []);
-
-  // 2. Initialize Map Instance
-  useEffect(() => {
-    if (!leafletLoaded || !mapRef.current) return;
-
-    const L = (window as any).L;
-    if (!L) return;
+    if (!mapRef.current) return;
 
     // Destroy existing instance if any
     if (leafletMapInstance.current) {
@@ -144,18 +117,44 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
       position: 'topright'
     }).addTo(map);
 
+    // Initial tile layer
+    const layerInfo = MAP_LAYERS[activeLayer];
+    tileLayerRef.current = L.tileLayer(layerInfo.url, {
+      attribution: layerInfo.attribution,
+      subdomains: 'abc',
+      maxZoom: 19
+    }).addTo(map);
+
+    // Ensure map tiles and dimensions calculate accurately across tabs/renders
+    const resizeTimer1 = setTimeout(() => {
+      map.invalidateSize();
+    }, 100);
+    const resizeTimer2 = setTimeout(() => {
+      map.invalidateSize();
+    }, 400);
+
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && mapRef.current) {
+      ro = new ResizeObserver(() => {
+        map.invalidateSize();
+      });
+      ro.observe(mapRef.current);
+    }
+
     return () => {
+      clearTimeout(resizeTimer1);
+      clearTimeout(resizeTimer2);
+      if (ro) ro.disconnect();
       if (leafletMapInstance.current) {
         leafletMapInstance.current.remove();
         leafletMapInstance.current = null;
       }
     };
-  }, [leafletLoaded]);
+  }, []);
 
-  // 3. Tile Layer Switcher
+  // 2. Tile Layer Switcher
   useEffect(() => {
-    if (!leafletLoaded || !leafletMapInstance.current) return;
-    const L = (window as any).L;
+    if (!leafletMapInstance.current) return;
     const map = leafletMapInstance.current;
 
     if (tileLayerRef.current) {
@@ -165,16 +164,14 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
     const layerInfo = MAP_LAYERS[activeLayer];
     tileLayerRef.current = L.tileLayer(layerInfo.url, {
       attribution: layerInfo.attribution,
-      subdomains: 'abcd',
-      maxZoom: 20
+      subdomains: 'abc',
+      maxZoom: 19
     }).addTo(map);
-  }, [leafletLoaded, activeLayer]);
+  }, [activeLayer]);
 
-  // 4. Render Markers & Zoom to Fit Bounds / Selected School
+  // 3. Render Markers & Zoom to Fit Bounds / Selected School
   useEffect(() => {
-    if (!leafletLoaded || !leafletMapInstance.current) return;
-
-    const L = (window as any).L;
+    if (!leafletMapInstance.current) return;
     const map = leafletMapInstance.current;
 
     // Clear old markers

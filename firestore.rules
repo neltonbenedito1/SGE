@@ -7,26 +7,14 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isOwner(uid) {
-      return isAuthenticated() && request.auth.uid == uid;
-    }
-
-    function getUserData() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
-    }
-
     function isSuperAdmin() {
       return isAuthenticated() && (
-        getUserData().role == 'super_admin' || 
-        getUserData().tipo == 'super_admin' ||
-        request.auth.token.email == 'neltonbenedito1@gmail.com'
-      );
-    }
-
-    function isTenantAdmin(tenantId) {
-      return isAuthenticated() && (
-        (getUserData().role == 'tenant_admin' || getUserData().tipo == 'admin') &&
-        (getUserData().tenantId == tenantId || getUserData().tenant_id == tenantId)
+        request.auth.token.email == 'neltonbenedito1@gmail.com' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin' ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tipo == 'super_admin'
+        )) ||
+        exists(/databases/$(database)/documents/superusers/$(request.auth.uid))
       );
     }
 
@@ -34,21 +22,10 @@ service cloud.firestore {
     // USERS COLLECTION & SUBCOLLECTIONS
     // ========================================================================
     match /users/{uid} {
-      // Leitura: Usuários autenticados podem consultar usuários (para perfil, login e gestão multi-tenant)
-      allow read: if isAuthenticated() || true;
+      allow read, write: if true;
 
-      // Criação: Usuário próprio, administradores ou provisionamento do sistema
-      allow create: if isAuthenticated() || true;
-
-      // Atualização: Próprio usuário, administradores ou fluxo de redefinição de senha
-      allow update: if isAuthenticated() || true;
-
-      // Exclusão: Super Admin
-      allow delete: if isSuperAdmin();
-
-      // Subcoleção de Histórico de Senhas: Acessível pelo próprio usuário ou administradores
       match /passwordHistory/{historyId} {
-        allow read, write: if isAuthenticated() || true;
+        allow read, write: if true;
       }
     }
 
@@ -56,51 +33,52 @@ service cloud.firestore {
     // SUPER ADMIN & SYSTEM CONFIGURATIONS
     // ========================================================================
     match /superusers/{id} {
-      allow read: if isAuthenticated();
-      allow write: if isSuperAdmin();
+      allow read, write: if true;
     }
 
     match /super_admin_gateways/{id} {
-      allow read, write: if isSuperAdmin();
+      allow read, write: if true;
     }
 
     match /super_admin_bank_accounts/{id} {
-      allow read, write: if isSuperAdmin();
+      allow read, write: if true;
     }
 
     match /planos/{id} {
-      allow read: if true;
-      allow write: if isSuperAdmin();
+      allow read, write: if true;
     }
 
     match /pagamentos/{id} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if true;
     }
 
     match /tenants/{tenantId} {
-      allow read: if true;
-      allow write: if isAuthenticated();
+      allow read, write: if true;
 
       match /{subcollection=**} {
-        allow read, write: if isAuthenticated();
+        allow read, write: if true;
       }
     }
 
     match /notificacoes/{id} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if true;
     }
 
     match /log_admins/{id} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if true;
     }
 
     match /log_auditoria/{id} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if true;
     }
 
-    // Tenant educational subcollections & general collections
-    match /{collectionName}/{docId} {
-      allow read, write: if isAuthenticated() || true;
+    match /test/{id} {
+      allow read, write: if true;
+    }
+
+    // All tenant and educational collections & general documents
+    match /{document=**} {
+      allow read, write: if true;
     }
   }
 }

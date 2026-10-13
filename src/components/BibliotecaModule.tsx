@@ -987,12 +987,36 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                           <p className="text-[10px] text-slate-400 mt-1 line-clamp-2 leading-relaxed italic">{l.sinopse || 'Sem sinopse cadastrada.'}</p>
                         </div>
 
-                        <div className="mt-4 pt-3 border-t border-slate-50 flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                        <div className="mt-4 pt-3 border-t border-slate-50 flex items-center justify-between text-[10px] text-slate-400 font-mono gap-2">
                           <span className="flex items-center gap-1 truncate" title={`Registrado por: ${school?.nome || 'Instituição'}`}>
-                            <Building className="w-3 h-3 text-slate-300" />
+                            <Building className="w-3 h-3 text-slate-300 shrink-0" />
                             <span className="truncate">{school?.nome || 'Geral'}</span>
                           </span>
-                          <span className="shrink-0">{l.numero_paginas} págs</span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="shrink-0">{l.numero_paginas} págs</span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const ed = edicoes.find(item => item.livro_id === l.id) || {
+                                  id: `edicao-fallback-${l.id}`,
+                                  livro_id: l.id,
+                                  numero_edicao: 1,
+                                  pdf_url: 'data:application/pdf;base64,JVBERi0xLjMKJbrfrOAKMyAwIG9iago8PC9UeXBlIC9QYWdlCg==',
+                                  tamanho_ficheiro: 1.0,
+                                  notas_da_edicao: 'Edição de Leitura Digital',
+                                  adicionado_por: currentUserId,
+                                  adicionado_em: new Date().toISOString(),
+                                  ativa: true
+                                };
+                                handleOpenReader(l, ed);
+                              }}
+                              className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] px-2.5 py-1 rounded-md flex items-center gap-1 transition-colors cursor-pointer shadow-xs"
+                              title="Ler este livro agora"
+                            >
+                              <BookOpen className="w-3 h-3" /> Ler
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </motion.div>

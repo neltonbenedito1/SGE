@@ -1,0 +1,204 @@
+{
+  "visao_geral": {
+    "stack": {
+      "frontend": "React 19.0.1, Vite 6.2.3, TypeScript 5.8.2",
+      "estilizacao": "Tailwind CSS 4.1.14",
+      "animacoes": "Motion para React (motion/react) 12.23.24",
+      "persistencia_e_auth": "Firebase Firestore 12.15.0, Firebase Authentication",
+      "backend_servidor": "Express 4.21.2, Node.js, tsx 4.21.0, esbuild 0.25.0",
+      "envio_email": "Nodemailer 9.0.3",
+      "pagamentos": "Stripe SDK 22.4.0, @stripe/stripe-js 9.12.1",
+      "pdf_e_qrcode": "jsPDF 4.2.1, qrcode 1.5.4, jsQR 1.4.0",
+      "internacionalizacao": "i18next 26.4.0, react-i18next 17.0.12"
+    },
+    "scripts": {
+      "dev": "tsx server.ts",
+      "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+      "preview": "vite preview",
+      "clean": "rm -rf dist server.js",
+      "lint": "tsc --noEmit"
+    },
+    "variaveis_ambiente": [
+      "GEMINI_API_KEY",
+      "APP_URL",
+      "VITE_STRIPE_PUBLISHABLE_KEY",
+      "STRIPE_SECRET_KEY",
+      "STRIPE_WEBHOOK_SECRET"
+    ],
+    "arquitetura": "SPA React sobre Vite com roteamento reativo baseado em estado unificado. Backend Express.js atuando como barreira de segurança e proxy para operações críticas (disparo real de SMTP, traduções por IA e integrações financeiras Stripe)."
+  },
+  "arvore_arquivos": {
+    "raiz": {
+      ".env.example": "Modelo das variáveis de ambiente obrigatórias.",
+      ".gitignore": "Arquivos e pastas ignoradas pelo Git.",
+      "COOKIE_POLICY_SUMMARY.md": "Termos simplificados de uso de cookies em conformidade com LGPD.",
+      "Logo2.png": "Logo principal estático do sistema.",
+      "firebase-applet-config.json": "Configurações do cliente Firebase.",
+      "firebase-blueprint.json": "Estrutura conceitual estruturada das entidades Firestore.",
+      "firestore.rules": "Regras de segurança robustas do Firestore baseadas em funções e isolamento.",
+      "index.html": "Ponto de entrada HTML indexado como PWA.",
+      "metadata.json": "Metadados de privilégios do applet no AI Studio.",
+      "package.json": "Declarações de dependências e scripts de execução npm.",
+      "server.ts": "Servidor backend integrado Express contendo as rotas de tradução, faturamento e SMTP.",
+      "tsconfig.json": "Regras de compilação do TypeScript.",
+      "vite.config.ts": "Configurações do Vite e Tailwind v4."
+    },
+    "src": {
+      "main.tsx": "Bootstrapping do React, injeção do i18n e interceptadores de erro globais.",
+      "App.tsx": "Gerenciador principal de views do sistema (Landing, Login, Onboarding e Portais).",
+      "types.ts": "Tipos e interfaces globais do TypeScript mapeados a partir do banco de dados.",
+      "index.css": "Estilização geral, variáveis de temas (Claro/Escuro/Esmeralda/Amber) e redefinições de componentes.",
+      "vite-env.d.ts": "Tipos nativos do ambiente de compilação Vite."
+    },
+    "src_components": {
+      "AnalyticsModule.tsx": "Visualização reativa de gráficos de desempenho usando Recharts.",
+      "AtividadesModule.tsx": "Módulo de controle e prazos de tarefas administrativas e escolares.",
+      "BibliotecaModule.tsx": "Plataforma de visualização de livros e edições de PDFs acadêmicos.",
+      "BrandbookView.tsx": "Página demonstrativa dos guias visuais e tipográficos oficiais.",
+      "CookieBanner.tsx": "Banner de consentimento de privacidade flutuante para novas sessões.",
+      "CookiePolicyModal.tsx": "Termos jurídicos detalhados sobre manipulação de Cookies.",
+      "DocenteFormModal.tsx": "Formulário em abas para cadastro e edição minuciosa de professores.",
+      "ErrorBoundary.tsx": "Contenedor React para captura de erros e quebras em renderizações.",
+      "ErrorLogsModule.tsx": "Terminal administrativo de depuração de logs e falhas do sistema.",
+      "GlobalPermissionsModule.tsx": "Matriz interativa de edição de permissões administrativas por cargos.",
+      "InternalPdfViewer.tsx": "Visualizador de PDFs integrado com bloqueio de salvamento direto.",
+      "LanguageSwitcher.tsx": "Dropdown flutuante rápido para troca manual de localidade.",
+      "MandatoryPasswordResetModal.tsx": "Modal reativo que força o reset de senha no primeiro login.",
+      "NotificationSettingsModule.tsx": "Painel de regras e destinatários de alertas de e-mail acadêmicos.",
+      "PerformanceEvaluationModule.tsx": "Módulo de avaliação docente pelo corpo pedagógico.",
+      "ProcessoIndividualModule.tsx": "Gerenciador de dossiês, transferências e suspensões de alunos.",
+      "SamsungLoadingScreen.tsx": "Animação interativa de tela de carregamento.",
+      "SchoolMap.tsx": "Mapa de localização geográfica de escolas credenciadas.",
+      "SearchableDropdown.tsx": "Dropdown aprimorado com pesquisa interna reativa.",
+      "StripeCheckoutStatus.tsx": "Validador e exibidor de comprovantes de pagamento do Stripe Checkout.",
+      "StripePricingCards.tsx": "Cards informativos e interativos de precificação de planos SaaS.",
+      "StudentQrDisplay.tsx": "Visualizador de crachá estudantil dinâmico e código QR.",
+      "SuperAdminFinancePanel.tsx": "Indicadores financeiros SaaS agregados para o administrador.",
+      "SuperAdminPortal.tsx": "Painel master contendo faturamento global, auditoria e console de erros.",
+      "SysEduLogo.tsx": "SVG vetorial parametrizável do logotipo SysEdu.",
+      "TenantPortal.tsx": "Módulo geral contendo toda a lógica escolar de turmas, alunos e notas do inquilino.",
+      "UserPermissionsChecklist.tsx": "Indicador gráfico em checkboxes de níveis de permissões de leitura/escrita.",
+      "ValidarPresencaModal.tsx": "Scanner de presença estudantil integrado com ativação de webcam."
+    }
+  },
+  "rotas_e_telas": [
+    {
+      "view": "landing",
+      "componente": "App.tsx",
+      "layout_pai": "Nenhum",
+      "permissao": "Visitante",
+      "dados": "Lista de planos e tenants públicos cadastrados no banco de dados.",
+      "componentes_usados": ["SysEduLogo", "StripePricingCards", "CookieBanner"]
+    },
+    {
+      "view": "superadmin",
+      "componente": "SuperAdminPortal.tsx",
+      "layout_pai": "App.tsx",
+      "permissao": "super_admin, finance",
+      "dados": "Clientes, Planos, Relatório SaaS, Auditoria de Segurança e Diagnósticos de Erros.",
+      "componentes_usados": ["SysEduLogo", "SuperAdminFinancePanel", "ErrorLogsModule", "CookiePolicyModal"]
+    },
+    {
+      "view": "tenant",
+      "componente": "TenantPortal.tsx",
+      "layout_pai": "App.tsx",
+      "permissao": "admin, director, docente, pai, estudante",
+      "dados": "Informações da instituição específica de ensino do usuário autenticado.",
+      "componentes_usados": ["DocenteFormModal", "ProcessoIndividualModule", "StudentQrDisplay", "ValidarPresencaModal", "InternalPdfViewer", "SearchableDropdown"]
+    },
+    {
+      "view": "brandbook",
+      "componente": "BrandbookView.tsx",
+      "layout_pai": "App.tsx",
+      "permissao": "Desenvolvedor / Administrador",
+      "dados": "Tokens e padrões de estilos visuais da marca.",
+      "componentes_usados": ["SysEduLogo"]
+    }
+  ],
+  "design_system": {
+    "tokens": {
+      "fontes": {
+        "sans": "\"Inter\", ui-sans-serif, system-ui, sans-serif",
+        "poppins": "\"Poppins\", sans-serif",
+        "mono": "\"JetBrains Mono\", ui-monospace, SFMono-Regular, monospace"
+      },
+      "cores_marca": {
+        "azul_marinho": "#0D1B3D",
+        "azul_primario": "#1E66F5",
+        "verde_agua": "#10B981"
+      },
+      "temas": {
+        "claro_slate": {
+          "--theme-bg": "#F4F6F9",
+          "--theme-bg-secondary": "#E5E7EB",
+          "--theme-card": "#FFFFFF",
+          "--theme-sidebar": "#FFFFFF",
+          "--theme-navbar": "#F3F4F6",
+          "--theme-text": "#1F2937",
+          "--theme-text-muted": "#4B5563",
+          "--theme-border": "rgba(0,0,0,0.12)",
+          "--btn-primary": "#2563EB",
+          "--btn-primary-hover": "#1D4ED8"
+        },
+        "escuro_dark": {
+          "--theme-bg": "#0F1115",
+          "--theme-bg-secondary": "#161B22",
+          "--theme-card": "#1E242C",
+          "--theme-sidebar": "#12161C",
+          "--theme-navbar": "#161B22",
+          "--theme-text": "#FFFFFF",
+          "--theme-text-muted": "#D1D5DB",
+          "--theme-border": "rgba(255,255,255,0.12)",
+          "--btn-primary": "#2563EB",
+          "--btn-primary-hover": "#1D4ED8"
+        }
+      }
+    },
+    "valores_hardcoded": {
+      "cores": {
+        "indigo-600": "Usado extensivamente como cor principal padrão em botões e seleções nos componentes do portal administrativo.",
+        "theme-color": "#0f172a em index.html como cor padrão de barra de ferramentas mobile."
+      },
+      "zoom": "zoom: 0.8 configurado globalmente em src/index.css para maior densidade visual."
+    },
+    "responsividade": {
+      "breakpoints": "Utiliza os breakpoints padrões do Tailwind CSS (sm, md, lg, xl, 2xl) em grids de cartões e telas.",
+      "sidebar_drawer": "Ocultado automaticamente em telas móveis (hidden md:flex) e controlado por botão sanduíche de Menu."
+    }
+  },
+  "dados_e_backend": {
+    "colecoes_firestore": {
+      "tenants": "Cadastro e controle de faturas e planos de instituições escolares clientes.",
+      "users": "Usuários com credenciais unificadas atrelados a um tenant_id (RBAC integrado).",
+      "escolas": "Escolas pertencentes a um tenant.",
+      "docentes": "Registro cadastral acadêmico e dados pessoais de professores.",
+      "estudantes": "Alunos cadastrados em turmas, vinculados a faturas mensais e responsáveis legais.",
+      "pautas": "Notas escolares trimestrais parametrizadas por trimestres e disciplinas.",
+      "logs_erros": "Console técnico de log e telemetria de exceções de JavaScript de usuários para depuração."
+    },
+    "seguranca": {
+      "regras_firestore": "firestore.rules garante isolamento estrito de inquilinos (Multi-tenant isolation) comparando o campo request.auth.uid com a entidade tenant_id correspondente.",
+      "sessoes": "Inatividade expira automaticamente em 30 minutos nas chamadas da API server-side Express (/api/auth/session/verify) para proteção de dados sensíveis."
+    }
+  },
+  "guia_alteracao_em_massa": {
+    "alterar_cor_primaria": {
+      "instrucoes": "Altere as propriedades --btn-primary e --theme-link no arquivo src/index.css. Modifique também o arquivo src/components/SysEduLogo.tsx para corresponder à nova cor.",
+      "regex_busca": "text-indigo-600|bg-indigo-600|hover:bg-indigo-500",
+      "risco": "ALTO - Necessário validar contraste visual e acessibilidade mínima WCAG AA (4.5:1)."
+    },
+    "alterar_cantos_arredondados": {
+      "instrucoes": "Busque e substitua as classes de radius padrões do Tailwind.",
+      "regex_busca": "rounded-2xl|rounded-3xl|rounded-xl",
+      "risco": "BAIXO - puramente estético."
+    },
+    "mudar_fontes": {
+      "instrucoes": "Modifique as variáveis --font-sans e --font-poppins no arquivo src/index.css e atualize o cabeçalho @import url de fontes do Google Fonts.",
+      "risco": "MÉDIO - Requer verificar o alinhamento de textos longos e botões."
+    }
+  },
+  "divida_tecnica": {
+    "monolito_tenant_portal": "O arquivo src/components/TenantPortal.tsx possui mais de 20.800 linhas, concentrando lógica de dados escolares, gráficos, downloads em Excel e dezenas de modais de formulários. Deve ser quebrado em submódulos.",
+    "simulacao_silenciosa_email": "Na ausência de SMTP ativo, os e-mails são simulados com logs no terminal do servidor de forma silenciosa para o usuário, o que pode mascarar falhas operacionais no dia a dia."
+  }
+}

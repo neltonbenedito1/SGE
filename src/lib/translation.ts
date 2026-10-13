@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { auth } from './firebase';
+
 export const LANGUAGES = [
   { code: "pt", name: "Português", flag: "🇵🇹" },
   { code: "en", name: "English", flag: "🇺🇸" },
@@ -415,11 +417,17 @@ export async function fetchAiTranslation(text: string, targetLanguageCode: strin
   const targetLanguage = LANGUAGES.find(l => l.code === targetLanguageCode)?.name || targetLanguageCode;
   
   try {
+    const token = await auth.currentUser?.getIdToken().catch(() => null);
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
     const response = await fetch("/api/translate", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify({
         text,
         targetLanguage,

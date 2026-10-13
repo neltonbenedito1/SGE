@@ -10,8 +10,12 @@ interface MandatoryPasswordResetModalProps {
     role?: string;
     tipo?: string;
     tenant_id?: string;
+    tenantId?: string;
+    senha_temporaria?: string;
+    senha?: string;
+    currentPassword?: string;
   };
-  onSuccess: () => void;
+  onSuccess: (updatedUser?: any) => void;
 }
 
 export function MandatoryPasswordResetModal({ user, onSuccess }: MandatoryPasswordResetModalProps) {
@@ -47,16 +51,17 @@ export function MandatoryPasswordResetModal({ user, onSuccess }: MandatoryPasswo
 
     setLoading(true);
     try {
-      await authSecurityService.changePassword({
+      const res = await authSecurityService.changePassword({
         targetUid: user.id,
         newPassword: newPassword,
+        currentPassword: user.currentPassword || user.senha_temporaria || user.senha,
         callerUid: user.id,
         callerRole: user.role || user.tipo || 'user',
-        callerTenantId: user.tenant_id,
+        callerTenantId: user.tenant_id || user.tenantId,
         email: user.email
       });
 
-      onSuccess();
+      onSuccess(res.user);
     } catch (err: any) {
       console.error('[MandatoryPasswordResetModal] Error:', err);
       setErrorMsg(err.message || 'Erro ao redefinir senha. Tente novamente.');

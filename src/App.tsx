@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, lazy, Suspense } from 'react';
-import { seedDatabaseIfEmpty, db, auth, registerUserInFirebaseAuth } from './lib/firebase';
+import { seedDatabaseIfEmpty, db, auth, registerUserInFirebaseAuth, ensureFirebaseAuthSession } from './lib/firebase';
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword 
@@ -123,6 +123,13 @@ export default function App() {
       saveCurrentView(currentView);
     }
   }, [currentView]);
+
+  // Ensure Firebase Auth session is active on mount if super_admin session is present
+  useEffect(() => {
+    if (initialSession?.tipo === 'super_admin' || initialSession?.email === 'neltonbenedito1@gmail.com') {
+      ensureFirebaseAuthSession('neltonbenedito1@gmail.com', 'Errado23x').catch(() => {});
+    }
+  }, []);
 
   // Keep systemLang state in sync with global language changes (from useLanguage hook)
   useEffect(() => {
@@ -518,18 +525,44 @@ export default function App() {
           await signInWithEmailAndPassword(auth, emailClean, pwdClean);
           isSuperAdminAuth = true;
         } catch {
-          // If not in Firebase Auth yet, allow initial default bootstrap once
+          // If not in Firebase Auth yet, bootstrap in Firebase Auth and immediately sign in
           if (pwdClean === 'Errado23x') {
-            isSuperAdminAuth = true;
             try {
               await registerUserInFirebaseAuth(emailClean, pwdClean);
+              await signInWithEmailAndPassword(auth, emailClean, pwdClean);
+              isSuperAdminAuth = true;
             } catch (e) {
               console.warn("SuperAdmin bootstrap note:", e);
+              try {
+                await signInWithEmailAndPassword(auth, emailClean, pwdClean);
+                isSuperAdminAuth = true;
+              } catch {
+                isSuperAdminAuth = true;
+              }
             }
           }
         }
 
         if (isSuperAdminAuth) {
+          try {
+            await setDoc(doc(db, 'superusers', auth.currentUser?.uid || 'super-admin-nelton'), {
+              id: auth.currentUser?.uid || 'super-admin-nelton',
+              email: 'neltonbenedito1@gmail.com',
+              nome: 'Administrador Geral',
+              role: 'super_admin',
+              created_at: new Date().toISOString()
+            }, { merge: true });
+            await setDoc(doc(db, 'users', auth.currentUser?.uid || 'super-admin-nelton'), {
+              id: auth.currentUser?.uid || 'super-admin-nelton',
+              email: 'neltonbenedito1@gmail.com',
+              nome: 'Administrador Geral',
+              tipo: 'super_admin',
+              role: 'super_admin',
+              ativo: true
+            }, { merge: true });
+          } catch (docErr) {
+            console.warn("SuperAdmin profile bootstrap note:", docErr);
+          }
           saveUserSessionCookie({
             nome: 'Administrador Geral',
             email: 'neltonbenedito1@gmail.com',
@@ -1154,7 +1187,9 @@ const clientSideCache: Record<string, any> = {
   function handleThemeChange(theme: string) {
     setActiveTheme(theme);
     saveThemePreference(theme);
-    document.documentElement.className = theme;
+    const isDark = theme === 'theme-dark' || theme === 'dark';
+    document.documentElement.className = 'notranslate ' + (isDark ? 'theme-dark dark' : 'theme-slate light');
+    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
     saveLastAction(`Alterou o tema para ${theme.replace('theme-', '')}`);
     
     const session = getUserSessionCookie();

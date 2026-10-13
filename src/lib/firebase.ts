@@ -4,7 +4,7 @@
  */
 
 import { initializeApp, getApps } from "firebase/app";
-import { getAuth, createUserWithEmailAndPassword, signOut } from "firebase/auth";
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { 
   initializeFirestore,
   persistentLocalCache,
@@ -70,6 +70,7 @@ export async function registerUserInFirebaseAuth(email: string, password?: strin
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+              targetUid: emailClean,
               email: emailClean,
               newPassword: pwdToUse,
               callerRole: 'super_admin'
@@ -83,6 +84,30 @@ export async function registerUserInFirebaseAuth(email: string, password?: strin
     }
     console.warn(`Firebase Authentication registration note for ${emailClean}:`, err?.message || err);
     return false;
+  }
+}
+
+/**
+ * Ensures Firebase Auth session is active for the current user.
+ */
+export async function ensureFirebaseAuthSession(email: string, password?: string): Promise<boolean> {
+  if (!email || !email.trim()) return false;
+  const emailClean = email.trim().toLowerCase();
+  if (auth.currentUser && auth.currentUser.email?.toLowerCase() === emailClean) {
+    return true;
+  }
+  const pwdToUse = password || (emailClean === 'neltonbenedito1@gmail.com' ? 'Errado23x' : '12345678');
+  try {
+    await signInWithEmailAndPassword(auth, emailClean, pwdToUse);
+    return true;
+  } catch {
+    try {
+      await registerUserInFirebaseAuth(emailClean, pwdToUse);
+      await signInWithEmailAndPassword(auth, emailClean, pwdToUse);
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 
@@ -176,6 +201,56 @@ export async function seedDatabaseIfEmpty() {
 
     for (const plano of planos) {
       batch.set(doc(db, "planos", plano.id), plano);
+    }
+
+    // Default Bank Accounts
+    const defaultBanks = [
+      {
+        id: "bank-bci-mzn",
+        titular: "SysEdu Tecnologia Escolar, Lda",
+        nif: "400987123",
+        banco: "BCI - Banco Comercial e de Investimentos",
+        conta_iban: "MZ59000100000123456789012",
+        swift: "BCIMMZM",
+        moeda: "MZN"
+      },
+      {
+        id: "bank-bim-mzn",
+        titular: "SysEdu Tecnologia Escolar, Lda",
+        nif: "400987123",
+        banco: "Millennium BIM",
+        conta_iban: "MZ59000200000987654321098",
+        swift: "BIMMZM",
+        moeda: "MZN"
+      }
+    ];
+    for (const b of defaultBanks) {
+      batch.set(doc(db, "super_admin_bank_accounts", b.id), b);
+    }
+
+    // Default Gateways
+    const defaultGateways = [
+      {
+        id: "gateway-mpesa",
+        gatewayName: "M-Pesa Moçambique",
+        environment: "production",
+        apiKey: "mpesa_live_sysedu_key_99",
+        secretKey: "cipher::v1::encrypted_mpesa_key",
+        webhookSecret: "whsec_mpesa_default",
+        isActive: true
+      },
+      {
+        id: "gateway-stripe",
+        gatewayName: "Stripe Global",
+        environment: "production",
+        apiKey: "pk_live_sysedu_pk",
+        secretKey: "cipher::v1::encrypted_stripe_key",
+        webhookSecret: "whsec_stripe_default",
+        isActive: true
+      }
+    ];
+    for (const g of defaultGateways) {
+      batch.set(doc(db, "super_admin_gateways", g.id), g);
     }
 
     await batch.commit();

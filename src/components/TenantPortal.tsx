@@ -56,9 +56,9 @@ import {
 } from '../services/notificationDispatcher';
 import { ValidarPresencaModal } from './ValidarPresencaModal';
 import { StudentQrDisplay } from './StudentQrDisplay';
+import { ModuloConfiguracoes, DEFAULT_INTERVALOS } from './ModuloConfiguracoes';
 import { generateStudentQrPayload, generateQrDataUrl } from '../utils/qrCodeHelper';
 import { EmailTemplates, createMimeMessage, createGmailRawPayload } from '../lib/emailUtils';
-import { logSystemError } from '../services/errorLoggingService';
 import DocenteFormModal from './DocenteFormModal';
 import ProcessoIndividualModule from './ProcessoIndividualModule';
 import { 
@@ -1291,46 +1291,71 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     return h * 60 + m;
   };
 
-  const OFFICIAL_BREAKS = [
-    { name: 'Manhã', start: parseTimeToMinutes('09:15'), end: parseTimeToMinutes('09:30'), label: '09:15 às 09:30' },
-    { name: 'Tarde', start: parseTimeToMinutes('14:15'), end: parseTimeToMinutes('14:30'), label: '14:15 às 14:30' },
-    { name: 'Noite', start: parseTimeToMinutes('20:15'), end: parseTimeToMinutes('20:30'), label: '20:15 às 20:30' },
-  ];
+  // Official breaks computed dynamically from tenant configuration
+  const activeConfiguredBreaks = useMemo(() => {
+    if (config?.horarios_intervalos && config.horarios_intervalos.length > 0) {
+      return config.horarios_intervalos
+        .filter(it => it.ativo !== false)
+        .map(it => ({
+          name: it.nome,
+          turno: it.turno,
+          start: parseTimeToMinutes(it.hora_inicio),
+          end: parseTimeToMinutes(it.hora_fim),
+          label: `${it.hora_inicio} às ${it.hora_fim}`,
+          slotStr: `${it.hora_inicio} - ${it.hora_fim}`
+        }));
+    }
+    return [
+      { name: 'Recreio da Manhã', turno: 'manha', start: parseTimeToMinutes('09:15'), end: parseTimeToMinutes('09:30'), label: '09:15 às 09:30', slotStr: '09:15 - 09:30' },
+      { name: 'Recreio da Tarde', turno: 'tarde', start: parseTimeToMinutes('14:15'), end: parseTimeToMinutes('14:30'), label: '14:15 às 14:30', slotStr: '14:15 - 14:30' },
+      { name: 'Intervalo da Noite', turno: 'noite', start: parseTimeToMinutes('20:15'), end: parseTimeToMinutes('20:30'), label: '20:15 às 20:30', slotStr: '20:15 - 20:30' },
+    ];
+  }, [config?.horarios_intervalos]);
 
   const getShiftDefaultSlots = (turn: 'manha' | 'tarde' | 'noite'): string[] => {
+    // Collect active configured breaks for this turn
+    const turnBreaks = activeConfiguredBreaks.filter(b => b.turno === turn || b.turno === 'todos');
+    const breakSlots = turnBreaks.map(b => b.slotStr);
+
+    let baseSlots: string[] = [];
     if (turn === 'manha') {
-      return [
+      baseSlots = [
         "07:00 - 07:45",
         "07:45 - 08:30",
         "08:30 - 09:15",
-        "09:15 - 09:30",
         "09:30 - 10:15",
         "10:15 - 11:00",
         "11:00 - 11:45",
         "11:45 - 12:30"
       ];
     } else if (turn === 'tarde') {
-      return [
+      baseSlots = [
         "12:00 - 12:45",
         "12:45 - 13:30",
         "13:30 - 14:15",
-        "14:15 - 14:30",
         "14:30 - 15:15",
         "15:15 - 16:00",
         "16:00 - 16:45",
         "16:45 - 17:30"
       ];
     } else {
-      return [
+      baseSlots = [
         "18:00 - 18:45",
         "18:45 - 19:30",
         "19:30 - 20:15",
-        "20:15 - 20:30",
         "20:30 - 21:15",
         "21:15 - 22:00",
         "22:00 - 22:45"
       ];
     }
+
+    const merged = Array.from(new Set([...baseSlots, ...breakSlots])).sort((a, b) => {
+      const aStart = a.split(' - ')[0] || '';
+      const bStart = b.split(' - ')[0] || '';
+      return aStart.localeCompare(bStart);
+    });
+
+    return merged;
   };
 
   const checkScheduleConflictDetails = (
@@ -1352,16 +1377,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     }
 
     const duration = pEnd - pStart;
-    if (duration < 45) {
-      return { conflict: true, reason: 'A duração de uma aula deve ser de pelo menos 45 minutos.' };
+    const minDuration = config?.horarios_duracao_minutos || 45;
+    if (duration < minDuration) {
+      return { conflict: true, reason: `A duração de uma aula deve ser de pelo menos ${minDuration} minutos.` };
     }
 
     // 1. Check official break overlap
-    const breakHit = OFFICIAL_BREAKS.find(b => pStart < b.end && pEnd > b.start);
+    const breakHit = activeConfiguredBreaks.find(b => pStart < b.end && pEnd > b.start);
     if (breakHit) {
       return {
         conflict: true,
-        reason: `Horário inválido! O período selecionado (${pStartStr} - ${pEndStr}) sobrepõe o intervalo de recreio oficial da ${breakHit.name} (${breakHit.label}).`
+        reason: `Horário inválido! O período selecionado (${pStartStr} - ${pEndStr}) sobrepõe o intervalo de recreio oficial "${breakHit.name}" (${breakHit.label}).`
       };
     }
 
@@ -4374,7 +4400,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       setSchools(escList);
 
       const usersList: User[] = [];
-      usersSnap.forEach(d => usersList.push({ ...d.data() as User, id: d.id }));
+      const seenUserEmails = new Set<string>();
+      usersSnap.forEach(d => {
+        const u = { ...d.data() as User, id: d.id };
+        const cleanEmail = (u.email || '').toLowerCase().trim();
+        // Skip super_admin account from tenant user list and skip duplicate accounts with same email
+        if ((u as any).tipo === 'super_admin' || (u as any).role === 'super_admin' || cleanEmail === 'neltonbenedito1@gmail.com') return;
+        if (cleanEmail && seenUserEmails.has(cleanEmail)) return;
+        if (cleanEmail) seenUserEmails.add(cleanEmail);
+        usersList.push(u);
+      });
       setTenantUsers(usersList);
 
       const docList: Docente[] = [];
@@ -4720,17 +4755,6 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           created_at: new Date().toISOString()
         });
 
-        logSystemError({
-          origem: 'tenant_portal',
-          severidade: 'aviso',
-          modulo: 'E-mail / Notificações Tenant',
-          acao: 'Fila de E-mails Pendentes',
-          tenant_id: currentTenantId,
-          tenant_nome: tenant?.nome,
-          mensagem: `Tentativa de envio de e-mail para ${to} retida na fila: nenhum servidor SMTP ativo configurado na unidade.`,
-          detalhes: { to, subject }
-        });
-
         setSmtpWarningMsg(`O e-mail para ${to} está pendente na fila porque não há servidor SMTP configurado.`);
       } else {
         // If SMTP is active, we simulate transmission and add it to the received emails list
@@ -4744,18 +4768,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       }
       
       loadTenantContext();
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error queueing or sending email:", err);
-      logSystemError({
-        origem: 'tenant_portal',
-        severidade: 'erro',
-        modulo: 'E-mail / Notificações Tenant',
-        acao: 'queueOrSendEmail',
-        tenant_id: currentTenantId,
-        tenant_nome: tenant?.nome,
-        mensagem: `Falha ao enfileirar ou despachar e-mail para ${to}: ${err?.message || err}`,
-        stack_trace: err?.stack
-      });
     }
   }
 
@@ -5505,8 +5519,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       snapshot.forEach((doc) => {
         const data = doc.data();
         
-        // Tenant relevance
-        const isTenantMatch = !data.tenant_id || data.tenant_id === currentTenantId || data.tenant_id === 'todos' || data.destinatario_id === currentTenantId;
+        // Strict Tenant Isolation: Only allow notifications strictly belonging to current tenant
+        const isTenantMatch = data.tenant_id === currentTenantId || (!data.tenant_id && data.destinatario_id === currentTenantId);
 
         // Target field strings normalized
         const destId = (data.destinatario_id || '').toLowerCase();
@@ -5551,7 +5565,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         }
 
         // Deliver if directly addressed, or if it belongs to tenant and matches user turma/role
-        if (isDirectTarget || (isTenantMatch && (isTurmaTarget || isRoleMatch))) {
+        if (isTenantMatch && (isDirectTarget || isTurmaTarget || isRoleMatch)) {
           list.push({ ...data, id: doc.id } as Notificacao);
         }
       });
@@ -5561,7 +5575,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         if (change.type === 'added') {
           const data = change.doc.data();
           const createdTime = data.created_at ? new Date(data.created_at).getTime() : Date.now();
-          if (createdTime > mountTime - 5000 && !data.lido) {
+          if (createdTime > mountTime - 3000 && !data.lido) {
+            // Strict tenant check
+            const isTenantMatch = data.tenant_id === currentTenantId || (!data.tenant_id && data.destinatario_id === currentTenantId);
+            if (!isTenantMatch) return;
+
+            // Avoid double popup: don't alert admin with push toast if the admin is the one performing the registration action
+            const isCreatedBySelf = (data.criado_por && userAliases.has(String(data.criado_por).toLowerCase())) ||
+                                    (data.autor && userAliases.has(String(data.autor).toLowerCase()));
+            if (isCreatedBySelf) return;
+
             const destId = (data.destinatario_id || '').toLowerCase();
             const destEmail = (data.destinatario_email || '').toLowerCase();
             const userId = (data.usuario_id || '').toLowerCase();
@@ -5587,9 +5610,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             else if (isUserEstudante && destRole === 'estudante') isRoleMatch = true;
             else if (isUserPai && destRole === 'pai') isRoleMatch = true;
 
-            const isTenantMatch = !data.tenant_id || data.tenant_id === currentTenantId || data.tenant_id === 'todos' || data.destinatario_id === currentTenantId;
+            // If it's a generic administrative notification (província, escola, turma, classe, etc) and user is admin, suppress the push toast to avoid duplicate popup
+            if (isUserAdmin && (destRole === 'admin' || destId === currentTenantId)) {
+              return;
+            }
 
-            if (isDirectTarget || (isTenantMatch && (isTurmaTarget || isRoleMatch))) {
+            if (isDirectTarget || isTurmaTarget || isRoleMatch) {
               setActiveToast({
                 id: change.doc.id,
                 titulo: data.titulo,
@@ -5607,7 +5633,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       list.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
       setNotifications(list);
     }, (error) => {
-      console.error("Error listening to notifications:", error);
+      console.warn("Notice listening to notifications:", error?.message || error);
     });
     return () => unsubscribe();
   }, [currentTenantId, currentUserRole, loggedInUser, currentUserEmail, rawTeachers, rawStudents, rawTurmas, rawClasses]);
@@ -6892,9 +6918,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
         const mediaFrequencia = gradesList.length > 0 ? (gradesList.reduce((sum, g) => sum + g, 0) / gradesList.length) : 0;
         
+        const passGrade = config?.pautas_nota_aprovacao ?? 9.5;
+        const admitGrade = config?.pautas_nota_admissao ?? 9.5;
+
         let autoStatus = 'Admitido';
         if (gradesList.length > 0) {
-          if (mediaFrequencia < 9.5) {
+          if (mediaFrequencia < admitGrade) {
             autoStatus = 'Reprovado';
           } else if (mediaFrequencia >= 15) {
             autoStatus = 'Aprovado';
@@ -6903,7 +6932,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           }
         }
 
-        const isFrequenciaAdmitido = gradesList.length > 0 && mediaFrequencia >= 9.5 && mediaFrequencia < 15;
+        const isFrequenciaAdmitido = gradesList.length > 0 && mediaFrequencia >= admitGrade && mediaFrequencia < 15;
         const hasExam = isFrequenciaAdmitido;
         const examValue = pautaForm.nota_exame !== undefined && pautaForm.nota_exame !== null && pautaForm.nota_exame !== '' 
           ? Number(pautaForm.nota_exame) 
@@ -6915,10 +6944,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         let mediaFinal = mediaFrequencia;
         if (examValue !== null) {
           mediaFinal = (mediaFrequencia + examValue) / 2;
-          if (examValue < 9.5) {
+          if (examValue < passGrade) {
             autoStatus = 'Reprovado';
             if (reavalValue !== null) {
-              if (reavalValue < 9.5) {
+              if (reavalValue < passGrade) {
                 autoStatus = 'Reprovado';
                 mediaFinal = (mediaFrequencia + reavalValue) / 2;
               } else {
@@ -6927,12 +6956,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               }
             }
           } else {
-            if (mediaFinal >= 9.5) {
+            if (mediaFinal >= passGrade) {
               autoStatus = 'Aprovado';
             } else {
               autoStatus = 'Reprovado';
               if (reavalValue !== null) {
-                if (reavalValue < 9.5) {
+                if (reavalValue < passGrade) {
                   autoStatus = 'Reprovado';
                   mediaFinal = (mediaFrequencia + reavalValue) / 2;
                 } else {
@@ -12105,22 +12134,19 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                               const rows = displayedSlots.map((timeSlot) => {
                                 // Render official break row across columns
-                                if (
-                                  timeSlot === "09:15 - 09:30" || timeSlot === "09:25 - 09:35" ||
-                                  timeSlot === "14:15 - 14:30" || timeSlot === "14:25 - 14:35" ||
-                                  timeSlot === "20:15 - 20:30" || timeSlot === "20:25 - 20:35"
-                                ) {
+                                const matchingBreak = activeConfiguredBreaks.find(b => b.slotStr === timeSlot);
+                                if (matchingBreak) {
                                   return (
-                                    <tr key={timeSlot} className="bg-amber-50/70 border-y-2 border-amber-200/90">
-                                      <td className="p-3 bg-amber-100/80 border-r border-amber-200 font-bold font-mono text-center text-amber-900 text-xs">
+                                    <tr key={timeSlot} className="bg-amber-50/80 dark:bg-amber-950/30 border-y-2 border-amber-200/90 dark:border-amber-800/80">
+                                      <td className="p-3 bg-amber-100/90 dark:bg-amber-900/40 border-r border-amber-200 dark:border-amber-800/80 font-bold font-mono text-center text-amber-950 dark:text-amber-200 text-xs">
                                         {timeSlot}
                                       </td>
-                                      <td colSpan={7} className="p-3 text-center bg-amber-50/90 text-amber-900 font-bold text-xs shadow-2xs">
-                                        <div className="flex items-center justify-center gap-2">
+                                      <td colSpan={7} className="p-3 text-center bg-amber-50/90 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 font-bold text-xs shadow-2xs">
+                                        <div className="flex flex-wrap items-center justify-center gap-2">
                                           <span className="text-sm">☕</span>
-                                          <span className="font-extrabold tracking-wide">INTERVALO OFICIAL DE RECREIO ({timeSlot})</span>
-                                          <span className="text-[10px] font-bold text-amber-800 bg-amber-200/70 border border-amber-300/60 px-2.5 py-0.5 rounded-full">
-                                            10 min de pausa obrigatória
+                                          <span className="font-extrabold tracking-wide uppercase">{matchingBreak.name} ({timeSlot})</span>
+                                          <span className="text-[10px] font-bold text-amber-800 dark:text-amber-300 bg-amber-200/80 dark:bg-amber-900/60 border border-amber-300 dark:border-amber-700 px-2.5 py-0.5 rounded-full">
+                                            Intervalo Oficial de Recreio
                                           </span>
                                         </div>
                                       </td>
@@ -15561,592 +15587,44 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             {/* TAB: CONFIGURACAO */}
             {activeTab === 'configuracao' && config && (
               !hasPermission('configuracoes') ? renderRestrictedAccess('Configurações Académicas') : (
-                <form onSubmit={handleSettingsSubmit} className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-6 animate-fadeIn">
-                <div className="flex justify-between items-center pb-4 border-b border-slate-150">
-                  <div className="flex items-center gap-2">
-                    <div>
-                      <h3 className="font-bold text-slate-800">Configurações Gerais da Unidade</h3>
-                      <p className="text-xs text-slate-400">Dados cadastrais acadêmicos e escalas de notas.</p>
-                    </div>
-                    {renderModuleRefreshButton('Configurações')}
-                  </div>
-                  <div className="flex gap-2">
-                    <button 
-                      type="button"
-                      onClick={handleBackupExport}
-                      className="border border-indigo-200 hover:bg-indigo-50 text-indigo-600 font-bold py-2 px-3.5 rounded-lg text-xs flex items-center gap-1.5"
-                    >
-                      <Download className="w-4 h-4" /> Exportar Backup (JSON)
-                    </button>
-                    <button 
-                      type="submit"
-                      className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-3.5 rounded-lg text-xs flex items-center gap-1.5"
-                    >
-                      <Save className="w-4 h-4" /> Salvar Configurações
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Nome Oficial da Unidade</label>
-                    <input 
-                      type="text"
-                      value={config.nome_instituicao || ''}
-                      onChange={(e) => setConfig({ ...config, nome_instituicao: e.target.value })}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
-                    />
-                  </div>
-
-                  <div className="col-span-1 md:col-span-2">
-                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">Logotipo Oficial da Instituição</label>
-                    <div className="flex flex-col sm:flex-row items-center gap-4 bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-200 dark:border-slate-700">
-                      <div className="w-16 h-16 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 flex items-center justify-center p-2 shrink-0 shadow-xs overflow-hidden">
-                        {config.logo_url ? (
-                          <img src={config.logo_url} alt="Logo Instituição" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
-                        ) : (
-                          <Building className="w-8 h-8 text-slate-400" />
-                        )}
-                      </div>
-                      <div className="flex-1 space-y-2 w-full">
-                        <div className="flex flex-wrap gap-2">
-                          <label className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer transition-colors inline-flex items-center gap-1.5 shadow-sm">
-                            <Upload className="w-4 h-4" /> Selecionar Foto / Imagem do Logo
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) {
-                                  if (file.size > 2 * 1024 * 1024) {
-                                    showSystemNotification("Erro: O logotipo deve ter no máximo 2MB", "erro");
-                                    return;
-                                  }
-                                  const reader = new FileReader();
-                                  reader.onloadend = () => {
-                                    const base64 = reader.result as string;
-                                    setConfig(prev => ({ ...prev, logo_url: base64 }));
-                                    showSystemNotification("Logotipo carregado com sucesso! Clique em Salvar Configurações para aplicar.", "sucesso");
-                                  };
-                                  reader.readAsDataURL(file);
-                                }
-                              }}
-                            />
-                          </label>
-                          {config.logo_url && (
-                            <button
-                              type="button"
-                              onClick={() => setConfig(prev => ({ ...prev, logo_url: '' }))}
-                              className="bg-rose-100 hover:bg-rose-200 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 font-bold px-3.5 py-2 rounded-xl text-xs transition-colors"
-                            >
-                              Remover Logotipo
-                            </button>
-                          )}
-                        </div>
-                        <input 
-                          type="text"
-                          value={config.logo_url || ''}
-                          onChange={(e) => setConfig({ ...config, logo_url: e.target.value })}
-                          placeholder="Ou cole o endereço do logotipo (https://...)"
-                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-700 dark:text-slate-200 font-mono"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Endereço de Sede</label>
-                    <input 
-                      type="text"
-                      value={config.endereco || ''}
-                      onChange={(e) => setConfig({ ...config, endereco: e.target.value })}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Contacto Telefónico</label>
-                    <input 
-                      type="text"
-                      value={config.contacto || ''}
-                      onChange={(e) => setConfig({ ...config, contacto: e.target.value })}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4 col-span-1 md:col-span-2">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Ano Letivo Vigente</label>
-                      <input 
-                        type="text"
-                        value={config.ano_letivo_atual || ''}
-                        onChange={(e) => setConfig({ ...config, ano_letivo_atual: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Escala de Avaliação</label>
-                      <select 
-                        value={config.escala_avaliacao || '0-20'}
-                        onChange={(e) => setConfig({ ...config, escala_avaliacao: e.target.value as any })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 focus:outline-none"
-                      >
-                        <option value="0-20">0 a 20 Valores (Moçambique/Angola)</option>
-                        <option value="0-10">0 a 10 Pontos (Brasil)</option>
-                        <option value="A-F">Letras A-F (Internacional)</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="col-span-1 md:col-span-2">
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Fuso Horário do Sistema</label>
-                    <select 
-                      value={config.fuso_horario || 'Africa/Maputo'}
-                      onChange={(e) => setConfig({ ...config, fuso_horario: e.target.value })}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 focus:outline-none font-medium"
-                    >
-                      <option value="Africa/Maputo">Africa/Maputo (Maputo, Moçambique) [UTC+2]</option>
-                      <option value="Africa/Luanda">Africa/Luanda (Luanda, Angola) [UTC+1]</option>
-                      <option value="Europe/Lisbon">Europe/Lisbon (Lisboa, Portugal) [UTC+1 / UTC+0]</option>
-                      <option value="America/Sao_Paulo">America/Sao_Paulo (Brasília/São Paulo, Brasil) [UTC-3]</option>
-                      <option value="Atlantic/Cape_Verde">Atlantic/Cape_Verde (Cabo Verde) [UTC-1]</option>
-                      <option value="Africa/Bissau">Africa/Bissau (Guiné-Bissau) [UTC+0]</option>
-                      <option value="Africa/Sao_Tome">Africa/Sao_Tome (São Tomé) [UTC+0]</option>
-                      <option value="Asia/Macau">Asia/Macau (Macau) [UTC+8]</option>
-                      <option value="Pacific/Dili">Pacific/Dili (Dili, Timor-Leste) [UTC+9]</option>
-                      <option value="UTC">UTC (Tempo Universal Coordenado) [UTC+0]</option>
-                    </select>
-                  </div>
-
-                  <div className="col-span-1 md:col-span-2 pt-2 border-t border-slate-100">
-                    <div className="flex justify-between items-center mb-1">
-                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                        🌍 País Sede da Instituição (Feriados Nacionais)
-                      </label>
-                      <span className="text-[10px] text-slate-400 font-sans">
-                        Sincroniza os feriados no calendário do sistema
-                      </span>
-                    </div>
-                    <div className="flex gap-2">
-                      <select 
-                        value={config.pais || 'Moçambique'}
-                        onChange={async (e) => {
-                          const selectedCountry = e.target.value;
-                          setConfig({ ...config, pais: selectedCountry });
-                          await fetchAndRegisterCountryHolidays(selectedCountry);
-                        }}
-                        className="flex-1 bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-800 font-semibold focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                      >
-                        <option value="">-- Selecionar País --</option>
-                        {WORLD_COUNTRIES.map(c => (
-                          <option key={c.code} value={c.name}>{c.name}</option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        onClick={() => fetchAndRegisterCountryHolidays(config.pais || 'Moçambique')}
-                        className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs px-3.5 py-2.5 rounded-lg border border-indigo-200 transition-colors flex items-center gap-1.5 cursor-pointer"
-                        title="Sincronizar Feriados do País Selecionado"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" /> Sincronizar Feriados
-                      </button>
-                    </div>
-                    <p className="text-[11px] text-slate-500 mt-1">
-                      Ao selecionar um país, o sistema busca na internet e cadastra os feriados desse país no calendário do módulo <strong>Calendário e Horários</strong>.
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-2 pt-6 col-span-1 md:col-span-2">
-                    <input 
-                      type="checkbox"
-                      id="email_notifs"
-                      checked={!!config.notificacoes_email}
-                      onChange={(e) => setConfig({ ...config, notificacoes_email: e.target.checked })}
-                      className="w-4.5 h-4.5 text-indigo-600 focus:ring-indigo-500 border-slate-300 rounded"
-                    />
-                    <label htmlFor="email_notifs" className="text-sm font-semibold text-slate-700 cursor-pointer">
-                      Ativar Disparo de Notificações por Email Académicas
-                    </label>
-                  </div>
-
-                  {/* GESTÃO DE PAUTAS & GESTÃO DE PARÂMETROS DE FACTURAÇÃO */}
-                  <div className="col-span-1 md:col-span-2 border-t border-slate-100 pt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-4">
-                      <h4 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
-                        ⚖️ Gestão e Parâmetros de Pautas (Avaliação)
-                      </h4>
-                      <p className="text-xs text-slate-400">Configure o número de avaliações contínuas e o método de média final para as disciplinas.</p>
-                      
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Nº de Avaliações / Trimestre</label>
-                          <input 
-                            type="number"
-                            min={1}
-                            max={6}
-                            value={config.num_avaliacoes || 3}
-                            onChange={(e) => setConfig({ ...config, num_avaliacoes: Number(e.target.value) })}
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Método de Média Final</label>
-                          <select 
-                            value={config.metodo_calculo || 'aritmetica_simples'}
-                            onChange={(e) => setConfig({ ...config, metodo_calculo: e.target.value })}
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold text-slate-700"
-                          >
-                            <option value="aritmetica_simples">Média Aritmética Simples</option>
-                            <option value="aritmetica_ponderada">Média Ponderada (Exame Peso 2)</option>
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-4">
-                      <h4 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
-                        💰 Gestão de Parâmetros de Facturação
-                      </h4>
-                      <p className="text-xs text-slate-400">Parâmetros financeiros base, moedas de cobrança, IVA e taxas de multas por atraso.</p>
-                      
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Mensalidade Escolar Base</label>
-                          <input 
-                            type="number"
-                            min={0}
-                            value={config.taxa_propina_base || 3500}
-                            onChange={(e) => setConfig({ ...config, taxa_propina_base: Number(e.target.value) })}
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Multa por Atraso (%)</label>
-                          <input 
-                            type="number"
-                            min={0}
-                            max={100}
-                            value={config.taxa_multa_atraso || 10}
-                            onChange={(e) => setConfig({ ...config, taxa_multa_atraso: Number(e.target.value) })}
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Moeda Padrão de Facturas</label>
-                          <select 
-                            value={config.moeda_padrao || 'MZN'}
-                            onChange={(e) => setConfig({ ...config, moeda_padrao: e.target.value })}
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold text-slate-700"
-                          >
-                            <option value="MZN">Metical de Moçambique (MZN)</option>
-                            <option value="USD">Dólar Americano (USD)</option>
-                            <option value="ZAR">Rand Sul-Africano (ZAR)</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Taxa de IVA (%)</label>
-                          <input 
-                            type="number"
-                            min={0}
-                            max={100}
-                            value={config.taxa_iva || 16}
-                            onChange={(e) => setConfig({ ...config, taxa_iva: Number(e.target.value) })}
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="col-span-1 md:col-span-2 border-t border-slate-100 pt-6 space-y-4">
-                    <h4 className="font-bold text-slate-800 text-sm">
-                      Configurações Gerais de Idioma & Tradução
-                    </h4>
-                    <p className="text-xs text-slate-400">Escolha o idioma padrão do sistema para a sua unidade escolar e as políticas do tradutor de IA.</p>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Idioma Padrão do Sistema</label>
-                        <select
-                          value={systemLang}
-                          onChange={(e) => onChangeLanguage && onChangeLanguage(e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-700"
-                        >
-                          {LANGUAGES.map(lang => (
-                            <option key={lang.code} value={lang.code}>{lang.flag} {lang.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="flex items-center gap-2 pt-6">
-                        <input
-                          type="checkbox"
-                          id="ai_translation_unit"
-                          checked={tenant ? tenant.ai_translation_enabled !== false : true}
-                          onChange={async (e) => {
-                            if (tenant) {
-                              const updatedTenant = { ...tenant, ai_translation_enabled: e.target.checked };
-                              setTenant(updatedTenant);
-                              await updateDoc(doc(db, 'tenants', tenant.id), {
-                                ai_translation_enabled: e.target.checked
-                              });
-                            }
-                          }}
-                          className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer"
-                        />
-                        <label htmlFor="ai_translation_unit" className="text-xs font-semibold text-slate-600 cursor-pointer">
-                          Permitir Tradução por Inteligência Artificial em Segundo Plano
-                        </label>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="col-span-1 md:col-span-2 border-t border-slate-100 pt-6 space-y-4">
-                    <div>
-                      <h4 className="font-bold text-slate-800 text-sm flex items-center gap-2">
-                        <Mail className="w-4 h-4 text-indigo-600" /> Servidor de E-mail para Notificações (SMTP)
-                      </h4>
-                      <p className="text-xs text-slate-400">Escolha se as notificações serão enviadas usando o provedor geral do sistema ou configure seu próprio e-mail corporativo.</p>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <button
-                        type="button"
-                        onClick={() => setConfig(prev => prev ? ({ ...prev, smtp_provider: 'system' }) : null)}
-                        className={`p-4 rounded-xl border-2 text-left transition-all cursor-pointer ${
-                          (config.smtp_provider || 'system') === 'system'
-                            ? 'border-indigo-600 bg-indigo-50/30 text-indigo-900'
-                            : 'border-slate-200 hover:border-slate-300 text-slate-600'
-                        }`}
-                      >
-                        <div className="font-bold text-xs flex items-center gap-2">
-                          <Sliders className="w-3.5 h-3.5" /> Provedor do Sistema (Padrão)
-                        </div>
-                        <p className="text-[11px] text-slate-400 mt-1">Usa o servidor SMTP configurado globalmente pelo super-admin da plataforma.</p>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setConfig(prev => prev ? ({ ...prev, smtp_provider: 'custom' }) : null)}
-                        className={`p-4 rounded-xl border-2 text-left transition-all cursor-pointer ${
-                          config.smtp_provider === 'custom'
-                            ? 'border-indigo-600 bg-indigo-50/30 text-indigo-900'
-                            : 'border-slate-200 hover:border-slate-300 text-slate-600'
-                        }`}
-                      >
-                        <div className="font-bold text-xs flex items-center gap-2">
-                          <Server className="w-3.5 h-3.5" /> Servidor Próprio (Customizado)
-                        </div>
-                        <p className="text-[11px] text-slate-400 mt-1">Configure o seu próprio provedor ou conta do Gmail de forma exclusiva.</p>
-                      </button>
-                    </div>
-
-                    {config.smtp_provider === 'custom' && (
-                      <div className="p-4 bg-slate-50 border border-slate-200/60 rounded-xl space-y-4 animate-fadeIn">
-                        <div>
-                          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Método de Configuração</label>
-                          <div className="grid grid-cols-2 gap-3">
-                            <button
-                              type="button"
-                              onClick={() => setConfig(prev => prev ? ({ ...prev, smtp_type: 'manual' }) : null)}
-                              className={`p-3 rounded-lg border text-left transition-all cursor-pointer ${
-                                (config.smtp_type || 'manual') !== 'gmail'
-                                  ? 'border-indigo-500 bg-indigo-50/20 text-indigo-950 font-semibold'
-                                  : 'border-slate-200 bg-white hover:border-slate-300 text-slate-600'
-                              }`}
-                            >
-                              <span className="text-xs font-bold">Configuração Manual</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setConfig(prev => prev ? ({
-                                ...prev,
-                                smtp_type: 'gmail',
-                                smtp_host: 'smtp.gmail.com',
-                                smtp_port: 465,
-                                smtp_secure: true
-                              }) : null)}
-                              className={`p-3 rounded-lg border text-left transition-all cursor-pointer ${
-                                config.smtp_type === 'gmail'
-                                  ? 'border-indigo-500 bg-indigo-50/20 text-indigo-950 font-semibold'
-                                  : 'border-slate-200 bg-white hover:border-slate-300 text-slate-600'
-                              }`}
-                            >
-                              <span className="text-xs font-bold">Google Gmail</span>
-                            </button>
-                          </div>
-                        </div>
-
-                        {config.smtp_type !== 'gmail' ? (
-                          // Manual SMTP fields
-                          <div className="space-y-3">
-                            <div className="grid grid-cols-3 gap-3">
-                              <div className="col-span-2">
-                                <label className="block text-[10px] font-bold text-slate-500 uppercase">Host SMTP</label>
-                                <input
-                                  type="text"
-                                  required={config.smtp_provider === 'custom'}
-                                  value={config.smtp_host || ''}
-                                  onChange={(e) => setConfig({ ...config, smtp_host: e.target.value })}
-                                  placeholder="smtp.escola.com"
-                                  className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-[10px] font-bold text-slate-500 uppercase">Porta</label>
-                                <input
-                                  type="number"
-                                  required={config.smtp_provider === 'custom'}
-                                  value={config.smtp_port || 587}
-                                  onChange={(e) => setConfig({ ...config, smtp_port: parseInt(e.target.value) || 587 })}
-                                  placeholder="587"
-                                  className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
-                                />
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-3">
-                              <div>
-                                <label className="block text-[10px] font-bold text-slate-500 uppercase">Usuário SMTP</label>
-                                <input
-                                  type="text"
-                                  required={config.smtp_provider === 'custom'}
-                                  value={config.smtp_user || ''}
-                                  onChange={(e) => setConfig({ ...config, smtp_user: e.target.value })}
-                                  placeholder="remetente@escola.com"
-                                  className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-[10px] font-bold text-slate-500 uppercase">Senha SMTP</label>
-                                <input
-                                  type="password"
-                                  required={config.smtp_provider === 'custom'}
-                                  value={config.smtp_pass || ''}
-                                  onChange={(e) => setConfig({ ...config, smtp_pass: e.target.value })}
-                                  placeholder="••••••••••••"
-                                  className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
-                                />
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-3">
-                              <div>
-                                <label className="block text-[10px] font-bold text-slate-500 uppercase">E-mail de Envio (Remetente)</label>
-                                <input
-                                  type="email"
-                                  required={config.smtp_provider === 'custom'}
-                                  value={config.smtp_sender_email || ''}
-                                  onChange={(e) => setConfig({ ...config, smtp_sender_email: e.target.value })}
-                                  placeholder="notificacoes@escola.com"
-                                  className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-[10px] font-bold text-slate-500 uppercase">Nome de Exibição</label>
-                                <input
-                                  type="text"
-                                  required={config.smtp_provider === 'custom'}
-                                  value={config.smtp_sender_name || ''}
-                                  onChange={(e) => setConfig({ ...config, smtp_sender_name: e.target.value })}
-                                  placeholder="Ex: Secretaria Escolar"
-                                  className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                                />
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-2 bg-white p-2.5 rounded-lg border border-slate-150">
-                              <input
-                                type="checkbox"
-                                id="smtp_secure_tenant"
-                                checked={config.smtp_secure || false}
-                                onChange={(e) => setConfig({ ...config, smtp_secure: e.target.checked })}
-                                className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
-                              />
-                              <label htmlFor="smtp_secure_tenant" className="text-[11px] font-bold text-slate-700 cursor-pointer">
-                                Usar Conexão Segura (SSL/TLS)
-                              </label>
-                            </div>
-                          </div>
-                        ) : (
-                          // Gmail fields
-                          <div className="space-y-3">
-                            <div className="p-3 bg-amber-50 rounded-lg border border-amber-200/60 text-amber-900 text-[11px] space-y-1">
-                              <p className="font-bold">🔑 Conta do Gmail e Senha de App:</p>
-                              <p>Por segurança, use uma **Senha de App** gerada nas configurações da sua conta Google, e mantenha a verificação em duas etapas ativa.</p>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-3">
-                              <div>
-                                <label className="block text-[10px] font-bold text-slate-500 uppercase">E-mail do Gmail</label>
-                                <input
-                                  type="email"
-                                  required={config.smtp_provider === 'custom'}
-                                  value={config.smtp_user || ''}
-                                  onChange={(e) => setConfig({
-                                    ...config,
-                                    smtp_user: e.target.value,
-                                    smtp_sender_email: e.target.value
-                                  })}
-                                  placeholder="escola@gmail.com"
-                                  className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-[10px] font-bold text-slate-500 uppercase">Senha de App (16 dígitos)</label>
-                                <input
-                                  type="password"
-                                  required={config.smtp_provider === 'custom'}
-                                  value={config.smtp_pass || ''}
-                                  onChange={(e) => setConfig({ ...config, smtp_pass: e.target.value })}
-                                  placeholder="abcd efgh ijkl mnop"
-                                  className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
-                                />
-                              </div>
-                            </div>
-
-                            <div>
-                              <label className="block text-[10px] font-bold text-slate-500 uppercase">Nome de Exibição do Remetente</label>
-                              <input
-                                type="text"
-                                required={config.smtp_provider === 'custom'}
-                                value={config.smtp_sender_name || ''}
-                                onChange={(e) => setConfig({ ...config, smtp_sender_name: e.target.value })}
-                                placeholder="Ex: Direção Pedagógica (Gmail)"
-                                className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* MODULE NOTIFICATIONS CONFIGURATION (DROPDOWN/ACCORDION STYLE) */}
-                    <div className="col-span-1 md:col-span-2 border-t border-slate-100 dark:border-slate-800 pt-6">
-                      <NotificationSettingsModule
-                        config={config}
-                        setConfig={setConfig}
-                        globalCategories={globalCategories}
-                        onSave={async () => {
-                          try {
-                            if (config && config.id && db) {
-                              await updateDoc(doc(db, 'configuracoes', config.id), {
-                                notification_modules: config.notification_modules || []
-                              });
-                              showSystemNotification('Configurações de notificações por módulo salvas no banco de dados!', 'config');
-                            } else {
-                              showSystemNotification('Configurações gravadas!', 'config');
-                            }
-                          } catch (e: any) {
-                            console.error('Error saving notification config:', e);
-                            showSystemNotification('Erro ao salvar notificações: ' + (e?.message || e), 'erro');
-                          }
-                        }}
-                        notify={(msg, type) => showSystemNotification(msg, type === 'erro' ? 'erro' : 'config')}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </form>
+                <ModuloConfiguracoes
+                  config={config}
+                  onSaveConfig={async (updatedConfig) => {
+                    setConfig(updatedConfig);
+                    if (updatedConfig.id) {
+                      await updateDoc(doc(db, 'configuracoes', updatedConfig.id), {
+                        ...updatedConfig
+                      });
+                    }
+                    if (tenant) {
+                      await updateDoc(doc(db, 'tenants', tenant.id), {
+                        idioma_padrao: systemLang,
+                        ai_translation_enabled: tenant.ai_translation_enabled
+                      });
+                    }
+                  }}
+                  showNotification={showSystemNotification}
+                  onBackupExport={handleBackupExport}
+                  renderRefreshButton={renderModuleRefreshButton}
+                  canEdit={hasPermission('configuracoes', 'editar')}
+                  systemLang={systemLang}
+                  onChangeLanguage={onChangeLanguage}
+                  aiTranslationEnabled={tenant ? tenant.ai_translation_enabled !== false : true}
+                  onToggleAiTranslation={async (enabled) => {
+                    if (tenant) {
+                      const updatedTenant = { ...tenant, ai_translation_enabled: enabled };
+                      setTenant(updatedTenant);
+                      await updateDoc(doc(db, 'tenants', tenant.id), {
+                        ai_translation_enabled: enabled
+                      });
+                    }
+                  }}
+                  worldCountries={WORLD_COUNTRIES}
+                  onSyncHolidays={async (country) => {
+                    await fetchAndRegisterCountryHolidays(country);
+                  }}
+                  existingClasses={rawClasses}
+                />
               )
             )}
 
@@ -19279,7 +18757,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       ? (gradesList.reduce((sum, g) => sum + g, 0) / numRealizadas)
                       : 0;
 
-                    const isFrequenciaAdmitido = numRealizadas > 0 && mediaFrequencia >= 9.5 && mediaFrequencia < 15;
+                    const passGrade = config?.pautas_nota_aprovacao ?? 9.5;
+                    const admitGrade = config?.pautas_nota_admissao ?? 9.5;
+
+                    const isFrequenciaAdmitido = numRealizadas > 0 && mediaFrequencia >= admitGrade && mediaFrequencia < 15;
                     const hasExam = isFrequenciaAdmitido;
                     const examValue = pautaForm.nota_exame !== undefined && pautaForm.nota_exame !== null && pautaForm.nota_exame !== '' 
                       ? Number(pautaForm.nota_exame) 
@@ -19290,7 +18771,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                     let autoStatus = 'Admitido';
                     if (numRealizadas > 0) {
-                      if (mediaFrequencia < 9.5) {
+                      if (mediaFrequencia < admitGrade) {
                         autoStatus = 'Reprovado';
                       } else if (mediaFrequencia >= 15) {
                         autoStatus = 'Aprovado';
@@ -19304,11 +18785,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                     if (examValue !== null) {
                       mediaFinal = (mediaFrequencia + examValue) / 2;
-                      if (examValue < 9.5) {
+                      if (examValue < passGrade) {
                         autoStatus = 'Reprovado';
                         enableReavaliacao = true;
                         if (reavalValue !== null) {
-                          if (reavalValue < 9.5) {
+                          if (reavalValue < passGrade) {
                             autoStatus = 'Reprovado';
                             mediaFinal = (mediaFrequencia + reavalValue) / 2;
                           } else {
@@ -19317,13 +18798,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           }
                         }
                       } else {
-                        if (mediaFinal >= 9.5) {
+                        if (mediaFinal >= passGrade) {
                           autoStatus = 'Aprovado';
                         } else {
                           autoStatus = 'Reprovado';
                           enableReavaliacao = true;
                           if (reavalValue !== null) {
-                            if (reavalValue < 9.5) {
+                            if (reavalValue < passGrade) {
                               autoStatus = 'Reprovado';
                               mediaFinal = (mediaFrequencia + reavalValue) / 2;
                             } else {

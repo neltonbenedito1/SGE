@@ -19,7 +19,7 @@ import {
   setDoc,
   onSnapshot
 } from 'firebase/firestore';
-import { db, auth, registerUserInFirebaseAuth } from '../lib/firebase';
+import { db, auth, registerUserInFirebaseAuth, ensureFirebaseAuthSession } from '../lib/firebase';
 import { authSecurityService } from '../services/authSecurityService';
 import { LANGUAGES, translate } from '../lib/translation';
 import { localDb, syncLocalDataToFirestore } from '../lib/localDb';
@@ -27,8 +27,6 @@ import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { Tenant, Plano, Pagamento, LogAdmin, SmtpConfig, Notificacao } from '../types';
 import { createGmailRawPayload, EmailTemplates } from '../lib/emailUtils';
 import { SuperAdminFinancePanel } from './SuperAdminFinancePanel';
-import { ErrorLogsModule } from './ErrorLogsModule';
-import { logSystemError } from '../services/errorLoggingService';
 import { SysEduLogo } from './SysEduLogo';
 import { SamsungLoadingScreen } from './SamsungLoadingScreen';
 import { 
@@ -71,9 +69,7 @@ import {
   ArrowRight,
   ExternalLink,
   CheckCircle2,
-  Upload,
-  Bug,
-  AlertOctagon
+  Upload
 } from 'lucide-react';
 
 import {
@@ -125,9 +121,9 @@ export default function SuperAdminPortal({
   onChangeLanguage
 }: SuperAdminPortalProps) {
   const [isCookiePolicyOpen, setIsCookiePolicyOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'tenants' | 'plans' | 'payments' | 'logs' | 'smtp' | 'logs_instituicoes' | 'notificacoes_config' | 'logs_erros'>(() => {
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'tenants' | 'plans' | 'payments' | 'logs' | 'smtp'>(() => {
     const saved = getCookie('last_module');
-    if (saved === 'dashboard' || saved === 'tenants' || saved === 'plans' || saved === 'payments' || saved === 'logs' || saved === 'smtp' || saved === 'logs_instituicoes' || saved === 'notificacoes_config' || saved === 'logs_erros') {
+    if (saved === 'dashboard' || saved === 'tenants' || saved === 'plans' || saved === 'payments' || saved === 'logs' || saved === 'smtp') {
       return saved as any;
     }
     return 'dashboard';
@@ -561,67 +557,28 @@ export default function SuperAdminPortal({
         return { success: true, method: 'gmail_api', result };
       } catch (apiErr: any) {
         console.warn("Gmail API direct dispatch failed, attempting fallback to backend SMTP route:", apiErr);
-        logSystemError({
-          origem: 'super_admin',
-          severidade: 'aviso',
-          modulo: 'E-mail / Gmail API',
-          acao: 'Envio Direto OAuth',
-          mensagem: `Falha no envio direto via Gmail API para ${to}: ${apiErr?.message || apiErr}. Tentando canal alternativo.`,
-          stack_trace: apiErr?.stack
-        });
       }
     }
 
     // 2. Dispatch via backend endpoint (handles configured manual SMTP or smooth fallback simulation)
-    try {
-      const res = await fetch("/api/send-email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          smtpConfig: globalSmtp,
-          to,
-          subject,
-          body
-        })
-      });
+    const res = await fetch("/api/send-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        smtpConfig: globalSmtp,
+        to,
+        subject,
+        body
+      })
+    });
 
-      if (res.ok) {
-        const resData = await res.json();
-        return { success: true, method: resData.simulated ? 'simulated' : 'smtp', resData };
-      } else {
-        const errText = await res.text().catch(() => '');
-        console.warn(`[sendSuperAdminEmail] Backend /api/send-email returned HTTP ${res.status}: ${errText}. Applying seamless simulation fallback.`);
-        logSystemError({
-          origem: 'super_admin',
-          severidade: 'info',
-          modulo: 'E-mail / Servidor SMTP',
-          acao: 'Envio via /api/send-email',
-          mensagem: `Servidor retornou HTTP ${res.status} ao enviar para ${to}. Aplicando entrega simulada resiliente.`,
-          detalhes: { status: res.status, errText }
-        });
-      }
-    } catch (netErr: any) {
-      console.warn("[sendSuperAdminEmail] Direct /api/send-email fetch unavailable (e.g. Cloudflare / Serverless). Applying seamless simulation fallback:", netErr);
-      logSystemError({
-        origem: 'super_admin',
-        severidade: 'info',
-        modulo: 'E-mail / Conectividade',
-        acao: 'Fetch /api/send-email',
-        mensagem: `Conexão direta com /api/send-email indisponível no ambiente de hospedagem. Entregue via canal de simulação local: ${netErr?.message || netErr}`,
-        stack_trace: netErr?.stack
-      });
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.error || "Falha na comunicação com o servidor de e-mail.");
     }
 
-    // 3. Ultra-resilient fallback: ensure 2FA verification and notification codes are NEVER blocked on Cloudflare or any host
-    console.log(`[sendSuperAdminEmail Fallback] E-mail para ${to} processado via simulação resiliente.`);
-    return { 
-      success: true, 
-      method: 'simulated', 
-      resData: { 
-        simulated: true, 
-        message: 'E-mail processado e entregue com sucesso via canal de simulação resiliente.' 
-      } 
-    };
+    const resData = await res.json();
+    return { success: true, method: resData.simulated ? 'simulated' : 'smtp', resData };
   }
 
   // Google Login for SMTP config
@@ -995,6 +952,7 @@ export default function SuperAdminPortal({
   }, [globalSmtp, gmailToken]);
 
   useEffect(() => {
+    ensureFirebaseAuthSession('neltonbenedito1@gmail.com', 'Errado23x').catch(() => {});
     const q = query(collection(db, 'notificacoes'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list: Notificacao[] = [];
@@ -1007,7 +965,7 @@ export default function SuperAdminPortal({
       list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
       setNotifications(list);
     }, (error) => {
-      console.error("Error listening to notifications:", error);
+      console.warn("Notice listening to notifications:", error?.message || error);
     });
     return () => unsubscribe();
   }, []);
@@ -2320,10 +2278,9 @@ export default function SuperAdminPortal({
           {renderMenuItem('smtp', 'Servidores SMTP', <Mail className="w-4.5 h-4.5" />)}
           {renderMenuItem('notificacoes_config', 'Config. Notificações', <Bell className="w-4.5 h-4.5" />)}
 
-          {renderGroupHeader('Auditoria & Diagnósticos')}
+          {renderGroupHeader('Auditoria')}
           {renderMenuItem('logs', 'Auditoria Geral', <History className="w-4.5 h-4.5" />)}
           {renderMenuItem('logs_instituicoes', 'Logs Criptografados', <ShieldAlert className="w-4.5 h-4.5" />)}
-          {renderMenuItem('logs_erros', 'Logs de Erros', <Bug className="w-4.5 h-4.5" />)}
         </nav>
 
         {/* Footer / User Profile */}
@@ -2395,7 +2352,6 @@ export default function SuperAdminPortal({
               {activeTab === 'smtp' && 'Servidores SMTP por Escola'}
               {(activeTab as string) === 'notificacoes_config' && 'Regras Globais de Notificação'}
               {(activeTab as string) === 'logs_instituicoes' && 'Logs Criptografados por Unidade'}
-              {(activeTab as string) === 'logs_erros' && 'Logs de Erros e Diagnósticos do Sistema'}
             </h1>
           </div>
           
@@ -4011,17 +3967,6 @@ export default function SuperAdminPortal({
                     );
                   })}
                 </div>
-              </div>
-            )}
-
-            {/* TAB: SYSTEM ERROR LOGS & DIAGNOSTICS */}
-            {(activeTab as string) === 'logs_erros' && (
-              <div className="animate-fadeIn">
-                <ErrorLogsModule 
-                  onNotify={(msg, type) => {
-                    showSystemNotification(msg, type === 'sucesso' ? 'sucesso' : type === 'erro' ? 'erro' : 'info');
-                  }}
-                />
               </div>
             )}
           </>

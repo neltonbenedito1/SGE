@@ -57,7 +57,25 @@ export const localDb = {
   },
 
   // Users
-  getUsers: () => getList<any>(KEYS.USERS),
+  getUsers: () => {
+    const list = getList<any>(KEYS.USERS);
+    if (!list.some(u => u.email === 'neltonbenedito1@gmail.com')) {
+      const superAdminUser = {
+        id: 'super_admin_nelton',
+        email: 'neltonbenedito1@gmail.com',
+        nome: 'Administrador do Sistema',
+        tipo: 'super_admin',
+        role: 'super_admin',
+        tenant_id: 'super-admin',
+        ativo: true,
+        mustChangePassword: false,
+        created_at: new Date().toISOString()
+      };
+      list.unshift(superAdminUser);
+      saveList(KEYS.USERS, list);
+    }
+    return list;
+  },
   saveUser: (user: any) => {
     const list = getList<any>(KEYS.USERS);
     const index = list.findIndex(u => u.id === user.id);
