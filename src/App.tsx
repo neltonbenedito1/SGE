@@ -89,6 +89,12 @@ import { MandatoryPasswordResetModal } from './components/MandatoryPasswordReset
 import { SessionStateService } from './lib/userState';
 import { localDb } from './lib/localDb';
 
+export function applyThemeToDom(theme: string) {
+  const isDark = theme === 'theme-dark' || theme === 'dark';
+  document.documentElement.className = 'notranslate ' + (isDark ? 'theme-dark dark' : 'theme-slate light');
+  document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+}
+
 export default function App() {
   const initialSession = getUserSessionCookie();
   const getInitialView = (): 'landing' | 'superadmin' | 'tenant' | 'brandbook' => {
@@ -769,7 +775,7 @@ export default function App() {
       }
       if (userDocData.theme) {
         setActiveTheme(userDocData.theme);
-        document.documentElement.className = userDocData.theme;
+        applyThemeToDom(userDocData.theme);
       }
 
       setSelectedTenantId(tenantId);
@@ -904,7 +910,7 @@ const clientSideCache: Record<string, any> = {
                 }
                 if (prefs.theme) {
                   setActiveTheme(prefs.theme);
-                  document.documentElement.className = prefs.theme;
+                  applyThemeToDom(prefs.theme);
                 }
               }).catch(e => console.warn("Failed to load user preferences on init:", e));
             }
@@ -939,7 +945,7 @@ const clientSideCache: Record<string, any> = {
     // Load theme from cookie
     const savedTheme = getThemePreference();
     setActiveTheme(savedTheme);
-    document.documentElement.className = savedTheme;
+    applyThemeToDom(savedTheme);
 
     // Check cookie consent
     const consent = getCookie("user_cookie_consent");
@@ -1187,9 +1193,7 @@ const clientSideCache: Record<string, any> = {
   function handleThemeChange(theme: string) {
     setActiveTheme(theme);
     saveThemePreference(theme);
-    const isDark = theme === 'theme-dark' || theme === 'dark';
-    document.documentElement.className = 'notranslate ' + (isDark ? 'theme-dark dark' : 'theme-slate light');
-    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+    applyThemeToDom(theme);
     saveLastAction(`Alterou o tema para ${theme.replace('theme-', '')}`);
     
     const session = getUserSessionCookie();
@@ -1334,7 +1338,7 @@ const clientSideCache: Record<string, any> = {
   };
 
   return (
-    <main className="min-h-screen bg-[#070b16] text-slate-100 font-sans transition-colors duration-300 relative">
+    <main className="min-h-screen bg-[var(--bg-base)] text-[var(--text-primary)] font-sans transition-colors duration-300 relative">
       <StripeCheckoutStatus />
       
       {/* VIEW: BRANDBOOK & HOMEPAGE PRESENTATION */}

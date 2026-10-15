@@ -281,7 +281,37 @@ export interface Classe {
   status_aprovacao?: string;
   justificativa?: string;
   disciplina_id?: string;
+  plano_aula_id?: string;
+  materia_topico?: string;
+  extraordinario?: boolean;
 }
+
+export type PeriodoTipo = 'semestre' | 'trimestre';
+export type StatusPlanoAula = 'pendente' | 'lecionado';
+
+export interface PlanoAula {
+  id: string;
+  tenantId: string;
+  docenteId: string;
+  disciplinaId: string;
+  turmaId?: string;
+  topico: string;
+  periodoTipo: PeriodoTipo;
+  periodoNumero: number;
+  anoLectivo: string;
+  dataPrevista?: string;
+  status: StatusPlanoAula;
+  dataLecionada?: string;
+  extraordinario: boolean;
+  aulaCalendarioId?: string;
+  ordem: number;
+  notificadoEm?: string;
+  notificadoPor?: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+}
+
 
 export interface Sala {
   id: string;

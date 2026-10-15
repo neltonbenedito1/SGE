@@ -72,15 +72,53 @@ export const UserPermissionsChecklist: React.FC<UserPermissionsChecklistProps> =
 
   const activeCategoryName = userCategory ? userCategory.nome : userCategoryCode;
 
-  // Auto-synchronize permissions with category defaults in background if empty
+  // Track previous category code to detect category changes
+  const prevCategoryCodeRef = React.useRef(userCategoryCode);
+  React.useEffect(() => {
+    if (prevCategoryCodeRef.current !== userCategoryCode) {
+      prevCategoryCodeRef.current = userCategoryCode;
+      if (userCategory && userCategory.modulos) {
+        const copied = JSON.parse(JSON.stringify(userCategory.modulos));
+        onChangeModuloAcessos(copied);
+      }
+    }
+  }, [userCategoryCode, userCategory]);
+
+  // Synchronize missing modules or initialize if empty
   React.useEffect(() => {
     if (userCategory && userCategory.modulos) {
       if (!moduloAcessos || Object.keys(moduloAcessos).length === 0) {
         const copied = JSON.parse(JSON.stringify(userCategory.modulos));
         onChangeModuloAcessos(copied);
+      } else {
+        // Ensure all modules from the category exist in moduloAcessos
+        let changed = false;
+        const merged = { ...moduloAcessos };
+        Object.keys(userCategory.modulos).forEach((k) => {
+          if (!merged[k]) {
+            merged[k] = JSON.parse(JSON.stringify(userCategory.modulos[k]));
+            changed = true;
+          }
+        });
+        if (changed) {
+          onChangeModuloAcessos(merged);
+        }
       }
     }
-  }, [userCategoryCode, globalCategories]);
+  }, [globalCategories, userCategory]);
+
+  const handleSyncWithCategory = () => {
+    if (userCategory && userCategory.modulos) {
+      const copied = JSON.parse(JSON.stringify(userCategory.modulos));
+      onChangeModuloAcessos(copied);
+      if (showNotification) {
+        showNotification(
+          `Permissões sincronizadas com sucesso com a categoria "${activeCategoryName}"!`,
+          'sucesso'
+        );
+      }
+    }
+  };
 
   // Toggle Module Switch Key
   const handleModuleSwitch = (moduleKey: string, enabled: boolean) => {
@@ -216,10 +254,15 @@ export const UserPermissionsChecklist: React.FC<UserPermissionsChecklistProps> =
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-300 bg-emerald-950/60 border border-emerald-500/30 px-3 py-1.5 rounded-lg shrink-0">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400 animate-pulse" />
-          <span>Sincronizado em background</span>
-        </div>
+        <button
+          type="button"
+          onClick={handleSyncWithCategory}
+          className="flex items-center gap-1.5 text-xs font-semibold text-emerald-300 hover:text-white bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/40 hover:border-emerald-400 px-3 py-1.5 rounded-lg shrink-0 cursor-pointer transition-all shadow-sm active:scale-95"
+          title="Clique para sincronizar todas as permissões com a matriz da categoria global"
+        >
+          <RotateCcw className="w-3.5 h-3.5 text-emerald-400" />
+          <span>Sincronizar com Categoria Global</span>
+        </button>
       </div>
 
       {/* Filter and Presets Bar */}

@@ -16,7 +16,8 @@ import {
   where,
   getDoc,
   setDoc,
-  onSnapshot
+  onSnapshot,
+  writeBatch
 } from 'firebase/firestore';
 import { db, registerUserInFirebaseAuth } from '../lib/firebase';
 import { authSecurityService } from '../services/authSecurityService';
@@ -44,7 +45,8 @@ import {
   ActividadePendente,
   ProcessoDocente,
   AgendamentoExame,
-  TipoAgendamentoExame
+  TipoAgendamentoExame,
+  PlanoAula
 } from '../types';
 import { 
   sendAppNotification, 
@@ -144,12 +146,14 @@ import {
   KeyRound,
   EyeOff,
   CheckSquare,
-  PauseCircle
+  PauseCircle,
+  BookOpenCheck
 } from 'lucide-react';
 import { SchoolMap } from './SchoolMap';
 import { AnalyticsModule } from './AnalyticsModule';
 import { BibliotecaModule } from './BibliotecaModule';
 import { AtividadesModule } from './AtividadesModule';
+import { PlanoAulasModule } from './PlanoAulasModule';
 import { GlobalPermissionsModule, DEFAULT_CATEGORIES } from './GlobalPermissionsModule';
 import { NotificationSettingsModule } from './NotificationSettingsModule';
 import { UserPermissionsChecklist } from './UserPermissionsChecklist';
@@ -159,6 +163,7 @@ import { SysEduLogo } from './SysEduLogo';
 import { SearchableDropdown } from './SearchableDropdown';
 import { SamsungLoadingScreen } from './SamsungLoadingScreen';
 import { sendBrowserNotification, playNotificationSound } from '../lib/browserNotifications';
+import { useLanguage } from '../hooks/useLanguage';
 
 const WORLD_COUNTRIES = [
   { name: "Angola", code: "AO" },
@@ -375,6 +380,7 @@ const DEFAULT_MODULO_ACESSOS: Record<string, { habilitado: boolean; funcionalida
 };
 
 export default function TenantPortal({ currentTenantId, currentUserRole, currentUserEmail, onLogout, activeTheme, onChangeTheme, systemLang = 'pt', onChangeLanguage }: TenantPortalProps) {
+  const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState<string>(() => getLastModule() || 'dashboard');
   const [calendarSubTab, setCalendarSubTab] = useState<'grade' | 'ferias' | 'feriados' | 'exames'>('grade');
   const [isFormDirty, setIsFormDirty] = useState(false);
@@ -514,6 +520,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [rawProcessosDocentes, setProcessosDocentes] = useState<ProcessoDocente[]>([]);
   const [rawAtividades, setAtividades] = useState<ActividadePendente[]>([]);
   const [rawExames, setExames] = useState<AgendamentoExame[]>([]);
+  const [rawPlanoAulas, setRawPlanoAulas] = useState<PlanoAula[]>([]);
   const [isDocenteModalOpen, setIsDocenteModalOpen] = useState(false);
   const [editingDocente, setEditingDocente] = useState<Docente | null>(null);
   const [tenantUsers, setTenantUsers] = useState<User[]>([]);
@@ -3123,7 +3130,22 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [classeEscolarForm, setClasseEscolarForm] = useState(() => getSavedFormDraft('draft_classe_escolar', { nome: '', nivel: 'Primário' as 'Primário' | 'Secundário' | 'Médio' | 'Pré-escolar', descricao: '', escola_id: '' }));
   const [salaForm, setSalaForm] = useState(() => getSavedFormDraft('draft_sala', { nome: '', capacidade: 30, tipo: 'Normal', descricao: '', escola_id: '' }));
   const [feriasForm, setFeriasForm] = useState(() => getSavedFormDraft('draft_ferias', { descricao: '', turma_id: 'todas', data_inicio: new Date().toISOString().split('T')[0], data_fim: new Date().toISOString().split('T')[0] }));
-  const [horarioForm, setHorarioForm] = useState(() => getSavedFormDraft('draft_horario', { turma_id: '', disciplina_id: '', disciplina_nome: '', docente_id: '', hora_inicio: '08:00', hora_fim: '09:30', sala: '', data: new Date().toISOString().split('T')[0], dia_semana: 'Segunda-feira', justificativa: '', escola_id: '' }));
+  const [horarioForm, setHorarioForm] = useState(() => getSavedFormDraft('draft_horario', { 
+    turma_id: '', 
+    disciplina_id: '', 
+    disciplina_nome: '', 
+    docente_id: '', 
+    hora_inicio: '08:00', 
+    hora_fim: '09:30', 
+    sala: '', 
+    data: new Date().toISOString().split('T')[0], 
+    dia_semana: 'Segunda-feira', 
+    justificativa: '', 
+    escola_id: '',
+    plano_aula_id: '',
+    extraordinario: false,
+    materia_topico: ''
+  }));
   const [feriadoForm, setFeriadoForm] = useState(() => getSavedFormDraft('draft_feriado', { nome: '', data: new Date().toISOString().split('T')[0], pais: 'Moçambique', tipo: 'Nacional', descricao: '' }));
   const [exameForm, setExameForm] = useState(() => getSavedFormDraft('draft_exame', {
     turma_id: '',
@@ -5125,6 +5147,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       classes: 'classes_escolares',
       classes_escolares: 'classes_escolares',
       calendario: 'calendario',
+      plano_aulas: 'calendario',
       pautas: 'pauta',
       pauta_geral: 'pautageral',
       pautageral: 'pautageral',
@@ -5180,14 +5203,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     const isPai = effectiveRole === 'pai' || effectiveRole.includes('pai') || effectiveRole.includes('encarregado');
 
     if (isEstudante) {
-      const allowedStudentModules = ['dashboard', 'atividades', 'estudantes', 'turmas', 'disciplinas', 'pauta_geral', 'pautas', 'processos', 'calendario', 'assiduidade', 'biblioteca'];
+      const allowedStudentModules = ['dashboard', 'atividades', 'estudantes', 'turmas', 'disciplinas', 'pauta_geral', 'pautas', 'processos', 'calendario', 'plano_aulas', 'assiduidade', 'biblioteca'];
       if (!allowedStudentModules.includes(normalizedKey)) return false;
       if (featureKey && featureKey !== 'visualizar') return false;
       return true;
     }
 
     if (isPai) {
-      const allowedPaiModules = ['dashboard', 'atividades', 'estudantes', 'pauta_geral', 'pautas', 'processos', 'calendario', 'assiduidade'];
+      const allowedPaiModules = ['dashboard', 'atividades', 'estudantes', 'pauta_geral', 'pautas', 'processos', 'calendario', 'plano_aulas', 'assiduidade'];
       if (!allowedPaiModules.includes(normalizedKey)) return false;
       if (featureKey && featureKey !== 'visualizar') return false;
       return true;
@@ -5197,7 +5220,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       const forbiddenTeacherModules = ['usuarios', 'configuracao', 'provincias', 'escolas', 'auditoria'];
       if (forbiddenTeacherModules.includes(normalizedKey)) return false;
       if (!featureKey || featureKey === 'visualizar') return true;
-      if (['pautas', 'pauta_geral', 'processos', 'assiduidade', 'atividades', 'biblioteca'].includes(normalizedKey)) {
+      if (['pautas', 'pauta_geral', 'processos', 'assiduidade', 'atividades', 'biblioteca', 'plano_aulas'].includes(normalizedKey)) {
         return true;
       }
       return false;
@@ -5637,6 +5660,30 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     });
     return () => unsubscribe();
   }, [currentTenantId, currentUserRole, loggedInUser, currentUserEmail, rawTeachers, rawStudents, rawTurmas, rawClasses]);
+
+  // Real-time listener for Plano de Aulas
+  useEffect(() => {
+    if (!currentTenantId) return;
+    try {
+      const q = query(
+        collection(db, 'planoAulas'),
+        where('tenantId', '==', currentTenantId)
+      );
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const list: PlanoAula[] = [];
+        snapshot.forEach((d) => {
+          list.push({ id: d.id, ...(d.data() as any) });
+        });
+        list.sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+        setRawPlanoAulas(list);
+      }, (err) => {
+        console.warn("Notice listening to planoAulas:", err?.message || err);
+      });
+      return () => unsubscribe();
+    } catch (err) {
+      console.warn("Error setting up planoAulas listener:", err);
+    }
+  }, [currentTenantId]);
 
   async function markNotificationAsRead(id: string) {
     try {
@@ -6660,7 +6707,29 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           return;
         }
 
-        const payload = {
+        // Validate Matéria vs Extraordinário
+        if (!horarioForm.extraordinario) {
+          if (!horarioForm.plano_aula_id) {
+            showSystemNotification("Erro: Selecione a matéria do Plano de Aulas (ou marque como Extraordinário)!", "erro");
+            setIsSaving(false);
+            return;
+          }
+        } else {
+          if (!horarioForm.materia_topico?.trim()) {
+            showSystemNotification("Erro: Digite a matéria a leccionar para a aula extraordinária!", "erro");
+            setIsSaving(false);
+            return;
+          }
+        }
+
+        const selectedPlan = !horarioForm.extraordinario 
+          ? rawPlanoAulas.find(p => p.id === horarioForm.plano_aula_id)
+          : null;
+        const topicName = horarioForm.extraordinario 
+          ? horarioForm.materia_topico.trim() 
+          : (selectedPlan ? selectedPlan.topico : (horarioForm.materia_topico || ''));
+
+        const payload: any = {
           tipo: 'agendamento',
           is_agendamento: true,
           nome: horarioForm.disciplina_nome,
@@ -6674,16 +6743,98 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           escola_id: targetSchoolId,
           justificativa: horarioForm.justificativa || '',
           status_aprovacao: isWeekendOrHoliday ? 'pendente' : 'aprovado',
+          plano_aula_id: horarioForm.plano_aula_id || '',
+          materia_topico: topicName,
+          extraordinario: !!horarioForm.extraordinario,
           tenant_id: currentTenantId,
           created_at: new Date().toISOString()
         };
 
+        const batch = writeBatch(db);
+
         if (editingItem) {
-          await updateDoc(doc(db, 'classes', editingItem.id), payload);
+          const classRef = doc(db, 'classes', editingItem.id);
+          batch.update(classRef, payload);
           setClasses(prev => prev.map(c => c.id === editingItem.id ? { ...c, ...payload } : c));
+
+          if (!horarioForm.extraordinario && horarioForm.plano_aula_id) {
+            const planRef = doc(db, 'planoAulas', horarioForm.plano_aula_id);
+            batch.update(planRef, { 
+              aulaCalendarioId: editingItem.id, 
+              updatedAt: new Date().toISOString() 
+            });
+          }
+          await batch.commit();
         } else {
-          const docRef = await addDoc(collection(db, 'classes'), payload);
-          setClasses(prev => [{ ...payload, id: docRef.id }, ...prev]);
+          const classRef = doc(collection(db, 'classes'));
+          const newClassId = classRef.id;
+
+          if (horarioForm.extraordinario) {
+            // Deduce period from date
+            const selMonth = new Date(horarioForm.data + 'T12:00:00').getMonth() + 1;
+            const isSemestral = config?.pautas_tipo_periodo === 'Semestral';
+            const periodoTipo: 'semestre' | 'trimestre' = isSemestral ? 'semestre' : 'trimestre';
+            const periodoNumero = isSemestral 
+              ? (selMonth <= 6 ? 1 : 2) 
+              : (selMonth <= 4 ? 1 : selMonth <= 8 ? 2 : 3);
+
+            // Avoid duplicate extraordinary topic for same teacher, discipline, and period
+            const existingExtra = rawPlanoAulas.find(p => 
+              p.docenteId === horarioForm.docente_id &&
+              p.disciplinaId === (horarioForm.disciplina_id || '') &&
+              p.periodoNumero === periodoNumero &&
+              p.extraordinario &&
+              p.topico.trim().toLowerCase() === topicName.toLowerCase()
+            );
+
+            if (existingExtra) {
+              payload.plano_aula_id = existingExtra.id;
+              batch.set(classRef, { ...payload, id: newClassId });
+              batch.update(doc(db, 'planoAulas', existingExtra.id), {
+                aulaCalendarioId: newClassId,
+                updatedAt: new Date().toISOString()
+              });
+            } else {
+              const newPlanRef = doc(collection(db, 'planoAulas'));
+              const newPlanId = newPlanRef.id;
+              payload.plano_aula_id = newPlanId;
+
+              const teacherPlanCount = rawPlanoAulas.filter(p => p.docenteId === horarioForm.docente_id).length;
+
+              batch.set(newPlanRef, {
+                tenantId: currentTenantId,
+                docenteId: horarioForm.docente_id,
+                disciplinaId: horarioForm.disciplina_id || '',
+                turmaId: horarioForm.turma_id || undefined,
+                topico: topicName,
+                periodoTipo,
+                periodoNumero,
+                anoLectivo: config?.ano_letivo_atual || new Date().getFullYear().toString(),
+                dataPrevista: horarioForm.data,
+                status: 'pendente',
+                extraordinario: true,
+                aulaCalendarioId: newClassId,
+                ordem: teacherPlanCount + 1,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                createdBy: loggedInUser?.id || 'sistema'
+              });
+
+              batch.set(classRef, { ...payload, id: newClassId });
+            }
+          } else {
+            // Normal class: associate with selected plan topic
+            batch.set(classRef, { ...payload, id: newClassId });
+            if (horarioForm.plano_aula_id) {
+              batch.update(doc(db, 'planoAulas', horarioForm.plano_aula_id), {
+                aulaCalendarioId: newClassId,
+                updatedAt: new Date().toISOString()
+              });
+            }
+          }
+
+          await batch.commit();
+          setClasses(prev => [{ ...payload, id: newClassId }, ...prev]);
         }
 
         // Dispatch notifications to the assigned teacher, class students, and parents
@@ -7585,7 +7736,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           {(() => {
             const showPrincipal = hasPermission('dashboard') || hasPermission('atividades') || hasPermission('analise_administrativa') || hasPermission('analytics');
             const showEstrutura = hasPermission('provincias') || hasPermission('escolas') || hasPermission('salas');
-            const showAcademico = hasPermission('docentes') || hasPermission('estudantes') || hasPermission('turmas') || hasPermission('disciplinas') || hasPermission('classes') || hasPermission('calendario') || hasPermission('pautas') || hasPermission('pauta_geral') || hasPermission('assiduidade') || hasPermission('biblioteca') || (plan?.modulos_permitidos?.includes('processo') && hasPermission('processos'));
+            const showAcademico = hasPermission('docentes') || hasPermission('estudantes') || hasPermission('turmas') || hasPermission('disciplinas') || hasPermission('classes') || hasPermission('calendario') || hasPermission('plano_aulas') || hasPermission('pautas') || hasPermission('pauta_geral') || hasPermission('assiduidade') || hasPermission('biblioteca') || (plan?.modulos_permitidos?.includes('processo') && hasPermission('processos'));
             const showComunicacao = hasPermission('notificacoes');
             const showAdministracao = hasPermission('utilizadores') || hasPermission('permissoes_globais') || hasPermission('configuracoes');
 
@@ -7609,6 +7760,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 {hasPermission('disciplinas') && renderMenuItem('disciplinas', `Disciplinas (${classes.filter(isBaseDiscipline).length})`, <BookMarked className="w-4.5 h-4.5" />)}
                 {hasPermission('classes') && renderMenuItem('classes_escolares', `Classes (${classesEscolares.length})`, <List className="w-4.5 h-4.5" />)}
                 {hasPermission('calendario') && renderMenuItem('calendario', 'Calendário & Horários', <Calendar className="w-4.5 h-4.5" />)}
+                {hasPermission('plano_aulas') && renderMenuItem('plano_aulas', 'Plano de Aulas', <BookOpenCheck className="w-4.5 h-4.5" />)}
                 {hasPermission('pauta_geral') && renderMenuItem('pauta_geral', 'Pauta Geral', <Award className="w-4.5 h-4.5" />)}
                 {hasPermission('pautas') && renderMenuItem('pautas', 'Lançamento (Notas)', <FileSpreadsheet className="w-4.5 h-4.5" />)}
                 {hasPermission('assiduidade') && renderMenuItem('assiduidade', 'Controle de Assiduidade', <Fingerprint className="w-4.5 h-4.5" />)}
@@ -11452,7 +11604,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                         data: new Date().toISOString().split('T')[0],
                                         dia_semana: getDiaSemanaFromDate(new Date().toISOString().split('T')[0]),
                                         justificativa: '',
-                                        escola_id: schools[0]?.id || ''
+                                        escola_id: schools[0]?.id || '',
+                                        plano_aula_id: '',
+                                        extraordinario: false,
+                                        materia_topico: ''
                                       });
                                       setModalType('horario_aula');
                                       setIsModalOpen(true);
@@ -12355,7 +12510,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                     data: targetDateStr,
                                                     dia_semana: getDiaSemanaFromDate(targetDateStr),
                                                     justificativa: '',
-                                                    escola_id: schools[0]?.id || ''
+                                                    escola_id: schools[0]?.id || '',
+                                                    plano_aula_id: '',
+                                                    extraordinario: false,
+                                                    materia_topico: ''
                                                   });
                                                   setModalType('horario_aula');
                                                   setIsModalOpen(true);
@@ -12414,6 +12572,19 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Disciplina</span>
                                 <p className="font-bold text-slate-800 text-sm mt-0.5">{selectedClassPopup.classe.nome}</p>
                               </div>
+                              {(selectedClassPopup.classe as any).materia_topico && (
+                                <div>
+                                  <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Matéria / Tópico</span>
+                                  <div className="flex items-center gap-1.5 mt-0.5">
+                                    <p className="font-bold text-indigo-700 text-xs">{(selectedClassPopup.classe as any).materia_topico}</p>
+                                    {(selectedClassPopup.classe as any).extraordinario && (
+                                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                                        ✨ Extraordinário
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
                               <div>
                                 <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Docente Responsável</span>
                                 <p className="font-semibold text-indigo-900 mt-0.5">🧑‍🏫 {selectedClassPopup.docente?.nome || 'Docente Não Encontrado'}</p>
@@ -12537,7 +12708,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     data: c.data || new Date().toISOString().split('T')[0],
                                     dia_semana: c.dia_semana || getDiaSemanaFromDate(c.data || new Date().toISOString().split('T')[0]),
                                     justificativa: c.justificativa || '',
-                                    escola_id: c.escola_id || schools[0]?.id || ''
+                                    escola_id: c.escola_id || schools[0]?.id || '',
+                                    plano_aula_id: (c as any).plano_aula_id || '',
+                                    extraordinario: !!(c as any).extraordinario,
+                                    materia_topico: (c as any).materia_topico || ''
                                   });
                                   setModalType('horario_aula');
                                   setIsModalOpen(true);
@@ -12546,6 +12720,45 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2.5 px-3 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                               >
                                 <Edit className="w-3.5 h-3.5" /> Editar
+                              </button>
+                            )}
+
+                            {hasPermission('disciplinas', 'editar') && (selectedClassPopup.classe.status_aprovacao !== 'realizada') && (
+                              <button
+                                onClick={async () => {
+                                  const c = selectedClassPopup.classe;
+                                  const now = new Date().toISOString();
+                                  setClasses(prev => prev.map(item => item.id === c.id ? { ...item, status_aprovacao: 'realizada' } : item));
+                                  setSelectedClassPopup(null);
+                                  showSystemNotification("Aula marcada como realizada e actualizada no Plano de Aulas!", "sucesso");
+                                  try {
+                                    await updateDoc(doc(db, 'classes', c.id), { status_aprovacao: 'realizada' });
+                                    const planId = (c as any).plano_aula_id;
+                                    if (planId) {
+                                      await updateDoc(doc(db, 'planoAulas', planId), {
+                                        status: 'lecionado',
+                                        dataLecionada: c.data || now.split('T')[0],
+                                        updatedAt: now
+                                      });
+                                      const actSnap = await getDocs(query(collection(db, 'atividades'), where('tenant_id', '==', currentTenantId), where('dedup_key', '==', `plano_aula_${planId}`)));
+                                      actSnap.forEach(async (aDoc) => {
+                                        await updateDoc(doc(db, 'atividades', aDoc.id), {
+                                          status: 'Concluída',
+                                          data_finalizacao: now,
+                                          concluido_em: now,
+                                          concluido_por_nome: loggedInUser?.nome || 'Docente',
+                                          nota_finalizacao: 'Resolvido: Aula realizada no Calendário',
+                                          resolvido_automaticamente: true
+                                        });
+                                      });
+                                    }
+                                  } catch (err) {
+                                    console.error("Erro ao concluir aula:", err);
+                                  }
+                                }}
+                                className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2.5 px-3 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                              >
+                                <CheckCircle className="w-3.5 h-3.5" /> Concluir Aula
                               </button>
                             )}
 
@@ -12605,6 +12818,27 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   </div>
                 );
               })()
+            )}
+
+            {/* TAB: PLANO DE AULAS */}
+            {activeTab === 'plano_aulas' && (
+              !hasPermission('plano_aulas') ? renderRestrictedAccess('Plano de Aulas') : (
+                <PlanoAulasModule
+                  tenantId={currentTenantId}
+                  loggedInUser={loggedInUser}
+                  currentUserRole={currentUserRole}
+                  teachers={rawTeachers}
+                  classes={classes}
+                  turmas={turmas}
+                  schools={schools}
+                  students={rawStudents}
+                  parents={[]}
+                  tenantUsers={tenantUsers}
+                  currentAcademicYear={config?.ano_letivo_atual || '2026'}
+                  onAuditLog={tenantAuditLog}
+                  showNotification={showSystemNotification}
+                />
+              )
             )}
 
             {/* TAB: PAUTA GERAL */}
@@ -19295,9 +19529,105 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         });
                       })()}
                       value={horarioForm.docente_id}
-                      onChange={(val) => setHorarioForm({ ...horarioForm, docente_id: val })}
+                      onChange={(val) => setHorarioForm({ ...horarioForm, docente_id: val, plano_aula_id: '' })}
                       placeholder="-- Selecionar Docente da Escola --"
                     />
+                  </div>
+
+                  {/* MATÉRIA (PLANO DE AULAS) & EXTRAORDINÁRIO */}
+                  <div className="p-4 bg-slate-50/90 border border-slate-200/90 rounded-2xl space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                        <BookOpenCheck className="w-4 h-4 text-indigo-600" />
+                        {t('calendario_materia_dropdown') || 'Matéria (Plano de Aulas)'}
+                        {!horarioForm.extraordinario && <span className="text-rose-500">*</span>}
+                      </label>
+
+                      {/* Checkbox Extraordinário */}
+                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={horarioForm.extraordinario}
+                          onChange={(e) => {
+                            const isExtra = e.target.checked;
+                            setHorarioForm({
+                              ...horarioForm,
+                              extraordinario: isExtra,
+                              plano_aula_id: isExtra ? '' : horarioForm.plano_aula_id,
+                              materia_topico: isExtra ? horarioForm.materia_topico : ''
+                            });
+                          }}
+                          className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 cursor-pointer"
+                        />
+                        <span className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                          <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+                          {t('calendario_extraordinario_check') || 'Extraordinário'}
+                        </span>
+                      </label>
+                    </div>
+
+                    {!horarioForm.extraordinario ? (
+                      <div>
+                        {(() => {
+                          const availableTopics = rawPlanoAulas.filter(p => {
+                            if (!horarioForm.docente_id) return false;
+                            if (p.docenteId !== horarioForm.docente_id) return false;
+                            if (horarioForm.disciplina_id && p.disciplinaId && p.disciplinaId !== horarioForm.disciplina_id) {
+                              return false;
+                            }
+                            return true;
+                          });
+
+                          return (
+                            <select
+                              required={!horarioForm.extraordinario}
+                              value={horarioForm.plano_aula_id}
+                              onChange={(e) => {
+                                const selId = e.target.value;
+                                const selItem = rawPlanoAulas.find(p => p.id === selId);
+                                setHorarioForm({
+                                  ...horarioForm,
+                                  plano_aula_id: selId,
+                                  materia_topico: selItem ? selItem.topico : ''
+                                });
+                              }}
+                              className="w-full bg-white border border-slate-200 rounded-xl p-2.5 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            >
+                              <option value="">{t('calendario_selecione_materia') || '-- Selecione a Matéria Planeada --'}</option>
+                              {availableTopics.length === 0 ? (
+                                <option value="" disabled>⚠️ Nenhuma matéria cadastrada no Plano de Aulas deste docente</option>
+                              ) : (
+                                availableTopics.map(t => (
+                                  <option key={t.id} value={t.id} disabled={t.status === 'lecionado'}>
+                                    {t.status === 'lecionado' ? '✅' : '⏳'} #{t.ordem || 1} - {t.topico} ({t.status === 'lecionado' ? 'Já Lecionado' : 'Pendente'})
+                                  </option>
+                                ))
+                              )}
+                            </select>
+                          );
+                        })()}
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          Lista recarregada automaticamente com base no docente selecionado. Matérias pendentes habilitadas para agendamento.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5 animate-fadeIn">
+                        <label className="block text-[11px] font-bold text-slate-600">
+                          {t('calendario_extraordinario_label') || 'Matéria a leccionar (Tópico)'} <span className="text-rose-500">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          required={horarioForm.extraordinario}
+                          placeholder={t('calendario_digite_materia') || 'Escreva o tópico ou matéria da aula extraordinária...'}
+                          value={horarioForm.materia_topico}
+                          onChange={(e) => setHorarioForm({ ...horarioForm, materia_topico: e.target.value })}
+                          className="w-full bg-white border border-purple-300 rounded-xl p-2.5 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                        />
+                        <p className="text-[10px] text-purple-700 font-medium">
+                          ✨ Ao salvar, este tópico será adicionado automaticamente ao Plano de Aulas com a insígnia "Extraordinário".
+                        </p>
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">

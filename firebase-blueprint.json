@@ -123,6 +123,34 @@
         "created_at": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "origem", "mensagem", "severidade", "status", "created_at"]
+    },
+    "PlanoAula": {
+      "title": "PlanoAula",
+      "description": "Lesson plan topic or curriculum unit for teacher tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenantId": { "type": "string" },
+        "docenteId": { "type": "string" },
+        "disciplinaId": { "type": "string" },
+        "turmaId": { "type": "string" },
+        "topico": { "type": "string" },
+        "periodoTipo": { "type": "string", "enum": ["semestre", "trimestre"] },
+        "periodoNumero": { "type": "number" },
+        "anoLectivo": { "type": "string" },
+        "dataPrevista": { "type": "string" },
+        "status": { "type": "string", "enum": ["pendente", "lecionado"] },
+        "dataLecionada": { "type": "string" },
+        "extraordinario": { "type": "boolean" },
+        "aulaCalendarioId": { "type": "string" },
+        "ordem": { "type": "number" },
+        "notificadoEm": { "type": "string" },
+        "notificadoPor": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["tenantId", "docenteId", "disciplinaId", "topico", "periodoTipo", "periodoNumero", "anoLectivo", "status", "extraordinario"]
     }
   },
   "firestore": {
@@ -157,6 +185,11 @@
     "/logs_erros/{id}": {
       "schema": { "$ref": "#/entities/LogErro" },
       "description": "System runtime diagnostics"
+    },
+    "/planoAulas/{id}": {
+      "schema": { "$ref": "#/entities/PlanoAula" },
+      "description": "Lesson planning topics and execution status"
     }
   }
 }
+

@@ -6,5 +6,7 @@
   "firestoreDatabaseId": "ai-studio-sistemadegerenci-28932b91-5d0c-465c-a833-bdfb1270cde1",
   "storageBucket": "sentinel-fef50.firebasestorage.app",
   "messagingSenderId": "294856242899",
-  "measurementId": ""
+  "measurementId": "",
+  "oAuthClientId": "294856242899-vj2278jtkule9jp76a3mbvucd2f5r7l4.apps.googleusercontent.com",
+  "recaptchaSiteKey": ""
 }

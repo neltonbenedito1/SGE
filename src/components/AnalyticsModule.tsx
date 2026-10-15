@@ -1205,24 +1205,24 @@ export function AnalyticsModule({
                 )}
               </div>
 
-              <div className="grid grid-cols-3 gap-1 pt-2 text-center text-[10px] font-bold">
-                <div className="bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400 border border-emerald-150 dark:border-emerald-900/40 p-2 rounded-lg">
-                  <p>Aprovados</p>
-                  <p className="text-xs mt-0.5">{approvedPautas}</p>
+              <div className="grid grid-cols-3 gap-2 pt-2 text-center text-[10px] font-bold">
+                <div className="bg-emerald-50 dark:bg-emerald-950/60 text-emerald-950 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-800 p-2 rounded-xl">
+                  <p className="text-[10px] font-extrabold text-emerald-900 dark:text-emerald-300 uppercase">Aprovados</p>
+                  <p className="text-sm mt-0.5 font-black text-emerald-950 dark:text-emerald-100">{approvedPautas}</p>
                 </div>
-                <div className="bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 border border-amber-150 dark:border-amber-900/40 p-2 rounded-lg">
-                  <p>Recuperação</p>
-                  <p className="text-xs mt-0.5">{recoveryPautas}</p>
+                <div className="bg-amber-50 dark:bg-amber-950/60 text-amber-950 dark:text-amber-200 border border-amber-300 dark:border-amber-800 p-2 rounded-xl">
+                  <p className="text-[10px] font-extrabold text-amber-900 dark:text-amber-300 uppercase">Recuperação</p>
+                  <p className="text-sm mt-0.5 font-black text-amber-950 dark:text-amber-100">{recoveryPautas}</p>
                 </div>
-                <div className="bg-rose-50 dark:bg-rose-950/20 text-rose-700 dark:text-rose-400 border border-rose-150 dark:border-rose-900/40 p-2 rounded-lg">
-                  <p>Reprovados</p>
-                  <p className="text-xs mt-0.5">{reprovedPautas}</p>
+                <div className="bg-rose-50 dark:bg-rose-950/60 text-rose-950 dark:text-rose-200 border border-rose-300 dark:border-rose-800 p-2 rounded-xl">
+                  <p className="text-[10px] font-extrabold text-rose-900 dark:text-rose-300 uppercase">Reprovados</p>
+                  <p className="text-sm mt-0.5 font-black text-rose-950 dark:text-rose-100">{reprovedPautas}</p>
                 </div>
               </div>
             </div>
 
             {/* Média Comparativa de Escolas Bar Chart */}
-            <div className="lg:col-span-2 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200/60 dark:border-slate-800 shadow-xs flex flex-col justify-between">
+            <div className="lg:col-span-2 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col justify-between">
               <div>
                 <h3 className="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
                   <School className="w-4.5 h-4.5 text-emerald-600" /> Desempenho por Instituição
@@ -1262,7 +1262,7 @@ export function AnalyticsModule({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             
             {/* Equilíbrio Demográfico de Gênero */}
-            <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200/60 dark:border-slate-800 shadow-xs flex flex-col justify-between">
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col justify-between">
               <div>
                 <h3 className="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
                   <Users className="w-4.5 h-4.5 text-amber-600" /> Demografia discente
@@ -1294,15 +1294,15 @@ export function AnalyticsModule({
                   </ResponsiveContainer>
                 </div>
                 <div className="space-y-4">
-                  <div className="p-3 bg-indigo-50/50 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-900/40 rounded-xl">
-                    <span className="text-[10px] font-bold text-indigo-500 block uppercase">Masculino</span>
-                    <p className="text-xl font-black text-indigo-900 dark:text-indigo-200 font-mono">
+                  <div className="p-3 bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800/80 rounded-xl">
+                    <span className="text-[10px] font-extrabold text-indigo-900 dark:text-indigo-300 block uppercase tracking-wider">Masculino</span>
+                    <p className="text-xl font-black text-indigo-950 dark:text-indigo-100 font-mono">
                       {students.filter(s=>s.genero==='Masculino').length}
                     </p>
                   </div>
-                  <div className="p-3 bg-pink-50/50 dark:bg-pink-950/20 border border-pink-100 dark:border-pink-900/40 rounded-xl">
-                    <span className="text-[10px] font-bold text-pink-500 block uppercase">Feminino</span>
-                    <p className="text-xl font-black text-pink-900 dark:text-pink-200 font-mono">
+                  <div className="p-3 bg-pink-50 dark:bg-pink-950/60 border border-pink-200 dark:border-pink-800/80 rounded-xl">
+                    <span className="text-[10px] font-extrabold text-pink-900 dark:text-pink-300 block uppercase tracking-wider">Feminino</span>
+                    <p className="text-xl font-black text-pink-950 dark:text-pink-100 font-mono">
                       {students.filter(s=>s.genero==='Feminino').length}
                     </p>
                   </div>
@@ -1311,7 +1311,7 @@ export function AnalyticsModule({
             </div>
 
             {/* Dropout Rate card and ranking */}
-            <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200/60 dark:border-slate-800 shadow-xs flex flex-col justify-between">
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col justify-between">
               <div>
                 <h3 className="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
                   <TrendingDown className="w-4.5 h-4.5 text-rose-500" /> Taxa de Abandono e Evasão
@@ -1320,16 +1320,16 @@ export function AnalyticsModule({
               </div>
 
               <div className="flex items-center gap-6 my-4">
-                <div className="w-24 h-24 rounded-full border-8 border-rose-100 dark:border-rose-950/50 flex flex-col items-center justify-center bg-rose-50/30">
-                  <span className="text-xl font-black text-rose-600 font-mono">{dropoutRate}%</span>
-                  <span className="text-[9px] text-slate-400 font-bold uppercase">Abandono</span>
+                <div className="w-24 h-24 rounded-full border-4 border-rose-500 dark:border-rose-500/80 flex flex-col items-center justify-center bg-rose-50 dark:bg-rose-950/60 shadow-xs shrink-0">
+                  <span className="text-xl font-black text-rose-800 dark:text-rose-200 font-mono">{dropoutRate}%</span>
+                  <span className="text-[9px] text-rose-950 dark:text-rose-100 font-black uppercase tracking-wider">Abandono</span>
                 </div>
                 <div className="flex-1 space-y-2">
-                  <p className="text-xs text-slate-600 dark:text-slate-300">
-                    Calculado com base em alunos cujo status atual foi registado como <span className="font-semibold text-rose-500">inativo</span> no sistema.
+                  <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+                    Calculado com base em alunos cujo status atual foi registado como <span className="font-bold text-rose-600 dark:text-rose-400">inativo</span> no sistema.
                   </p>
-                  <p className="text-[10px] font-bold text-emerald-600 flex items-center gap-1">
-                    <CheckCircle className="w-4 h-4" /> Alinhado com a meta nacional (&lt; 5%)
+                  <p className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+                    <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" /> Alinhado com a meta nacional (&lt; 5%)
                   </p>
                 </div>
               </div>

@@ -72,6 +72,10 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    match /planoAulas/{id} {
+      allow read, write: if true;
+    }
+
     match /test/{id} {
       allow read, write: if true;
     }

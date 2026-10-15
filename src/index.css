@@ -1,8 +1,18 @@
 /* ESTILO DEEPHAT */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* ==========================================================================
+   DEEP HAT / KINDO VISUAL LANGUAGE SYSTEM
+   Cybersecurity Red Team, Dark & Light Technical, Clean & Premium
+   - Modo Escuro: Preta Blur Liquid Glass • Texto Branco • Botões Tecnológicos
+   - Modo Claro: Transparent Blur Liquid Glass • Texto Preto • Cabeçalhos Blur Liquid Glass
+   - Arquitetura de Rolagem: Menu lateral com rolagem individual e rodapé 100% fixo
+   ========================================================================== */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 
-/* ESTILO DEEPHAT - Tailwind Theme Extension */
+/* Tailwind CSS v4 Theme Variant Configuration */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *, .dark, .dark *));
+
+/* Tailwind Theme Extension */
 @theme {
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -20,269 +30,329 @@
   --color-theme-border-strong: var(--border-strong);
 }
 
-/* ESTILO DEEPHAT - Tokens e Variáveis de Tema (:root / Dark como padrão) */
-:root {
-  /* Fundos */
+/* ESTILO DEEPHAT */
+/* ==========================================================================
+   PALETTE TOKENS: ROOT & DARK THEME
+   ========================================================================== */
+:root,
+.theme-dark,
+[data-theme="dark"] {
+  /* Fundos — Preto profundo com Liquid Glass translúcido */
   --bg-base: #000000;
-  --bg-elevated: #0a0a0c;
-  --bg-surface: rgba(255, 255, 255, 0.04);      /* cartões translúcidos */
-  --bg-surface-hover: rgba(255, 255, 255, 0.07);
+  --bg-elevated: #060608;
+  --bg-surface: rgba(10, 10, 14, 0.72);             /* Cartões Liquid Glass escuros */
+  --bg-surface-hover: rgba(18, 18, 24, 0.82);
+  --bg-surface-active: rgba(24, 24, 32, 0.90);
 
-  /* Texto */
+  /* Texto — Branco Puro e alto contraste */
   --text-primary: #ffffff;
-  --text-secondary: rgba(255, 255, 255, 0.68);
-  --text-muted: rgba(255, 255, 255, 0.45);
+  --text-secondary: rgba(255, 255, 255, 0.78);
+  --text-muted: rgba(255, 255, 255, 0.50);
+  --text-disabled: rgba(255, 255, 255, 0.30);
+  --text-on-accent: #000000;
+  --text-on-hero: #ffffff;
+  --text-on-hero-muted: rgba(255, 255, 255, 0.75);
 
-  /* Bordas */
-  --border-subtle: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.16);
+  /* Bordas — Linhas finas, precisas e sutis de vidro */
+  --border-subtle: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --border-glass-specular: rgba(255, 255, 255, 0.12);
 
-  /* Destaque (Red Team / Operations Center - Branco sobre Preto com Glow) */
+  /* Destaque (Deep Hat: Branco sobre preto com brilho suave) */
   --accent: #ffffff;
+  --accent-hover: #f1f1f5;
   --accent-contrast: #000000;
-  --accent-glow: rgba(255, 255, 255, 0.18);
+  --accent-glow: rgba(255, 255, 255, 0.22);
+  --ring-focus: #ffffff;
 
-  /* Estados */
+  /* Estados Tecnológicos */
   --success: #22c55e;
-  --warning: #f59e0b;
-  --danger: #ef4444;
+  --success-soft-bg: rgba(34, 197, 94, 0.15);
+  --success-soft-text: #86efac;
+  --success-border: rgba(34, 197, 94, 0.35);
 
-  /* Forma e efeito */
+  --warning: #f59e0b;
+  --warning-soft-bg: rgba(245, 158, 11, 0.15);
+  --warning-soft-text: #fde047;
+  --warning-border: rgba(245, 158, 11, 0.35);
+
+  --danger: #ef4444;
+  --danger-soft-bg: rgba(239, 68, 68, 0.15);
+  --danger-soft-text: #fca5a5;
+  --danger-border: rgba(239, 68, 68, 0.35);
+
+  --info: #38bdf8;
+  --info-soft-bg: rgba(56, 189, 248, 0.15);
+  --info-soft-text: #7dd3fc;
+  --info-border: rgba(56, 189, 248, 0.35);
+
+  --purple: #c084fc;
+  --purple-soft-bg: rgba(192, 132, 252, 0.15);
+  --purple-soft-text: #e9d5ff;
+  --purple-border: rgba(192, 132, 252, 0.35);
+
+  /* Forma e Efeito Liquid Glass */
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
+  --radius-xl: 20px;
   --radius-pill: 999px;
-  --blur: 14px;
-  --shadow-card: 0 8px 32px rgba(0, 0, 0, 0.5);
+  --blur: 16px;
+  --blur-heavy: 24px;
+  --shadow-card: 0 10px 30px -5px rgba(0, 0, 0, 0.75), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  --shadow-glow: 0 0 24px var(--accent-glow);
   --transition: 180ms cubic-bezier(0.4, 0, 0.2, 1);
 
-  /* Mapeamento de compatibilidade com tokens legados do sistema */
-  --theme-bg: var(--bg-base);
-  --theme-bg-secondary: var(--bg-elevated);
-  --theme-card: var(--bg-surface);
-  --theme-sidebar: #050507;
-  --theme-navbar: rgba(0, 0, 0, 0.65);
-  --theme-footer: #050507;
+  /* Mapeamento de compatibilidade */
+  --bg-app: var(--bg-base);
+  --bg-surface-2: var(--bg-surface-hover);
+  --bg-overlay: rgba(0, 0, 0, 0.85);
+  --bg-sidebar: rgba(4, 4, 6, 0.88);
+  --bg-sidebar-header: rgba(6, 6, 9, 0.95);
+  --bg-sidebar-footer: rgba(6, 6, 9, 0.95);
+  --bg-hero: radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.08) 0%, #000000 70%);
 
+  --text-sidebar: #ffffff;
+  --text-sidebar-muted: rgba(255, 255, 255, 0.60);
+  --border-sidebar: var(--border-subtle);
+
+  --accent-soft-bg: rgba(255, 255, 255, 0.08);
+  --accent-soft-text: #ffffff;
+
+  --glass-bg: rgba(10, 10, 14, 0.72);
+  --glass-border: var(--border-subtle);
+  --glass-text: var(--text-primary);
+  --glass-shadow: var(--shadow-card);
+  --glass-blur: var(--blur);
+
+  --theme-bg: var(--bg-base);
+  --theme-bg-secondary: var(--bg-surface-hover);
+  --theme-card: var(--bg-surface);
+  --theme-sidebar: var(--bg-sidebar);
+  --theme-navbar: rgba(0, 0, 0, 0.68);
+  --theme-footer: #000000;
   --theme-text: var(--text-primary);
   --theme-text-muted: var(--text-secondary);
   --theme-text-disabled: var(--text-muted);
   --theme-link: #ffffff;
-  --theme-link-hover: #e2e8f0;
-
+  --theme-link-hover: #cbd5e1;
   --theme-border: var(--border-subtle);
   --theme-border-hover: var(--border-strong);
   --theme-separator: var(--border-subtle);
 
-  /* Botões */
   --btn-primary: var(--accent);
   --btn-primary-text: var(--accent-contrast);
-  --btn-primary-hover: #f1f5f9;
+  --btn-primary-hover: var(--accent-hover);
   --btn-secondary: var(--bg-surface);
   --btn-secondary-hover: var(--bg-surface-hover);
-  --btn-secondary-text: #ffffff;
-  --btn-success: var(--success);
-  --btn-success-hover: #16a34a;
-  --btn-warning: var(--warning);
-  --btn-warning-hover: #d97706;
-  --btn-danger: var(--danger);
-  --btn-danger-hover: #dc2626;
+  --btn-secondary-text: var(--text-primary);
 
-  /* Formulários */
-  --input-bg: var(--bg-surface);
+  --input-bg: rgba(0, 0, 0, 0.65);
   --input-border: var(--border-subtle);
-  --input-focus: var(--border-strong);
+  --input-focus: var(--ring-focus);
 
-  /* Tabelas */
-  --table-header-bg: #070709;
-  --table-row-bg: rgba(255, 255, 255, 0.02);
-  --table-row-hover: var(--bg-surface-hover);
+  --table-header-bg: rgba(6, 6, 10, 0.95);
+  --table-row-bg: transparent;
+  --table-row-hover: rgba(255, 255, 255, 0.04);
 
-  /* Modais */
-  --modal-bg: #0a0a0c;
-  --modal-overlay: rgba(0, 0, 0, 0.75);
+  --modal-bg: rgba(10, 10, 14, 0.92);
+  --modal-overlay: var(--bg-overlay);
 
-  /* Alertas translúcidos com borda de estado */
-  --alert-error-bg: rgba(239, 68, 68, 0.10);
-  --alert-error-border: rgba(239, 68, 68, 0.35);
-  --alert-success-bg: rgba(34, 197, 94, 0.10);
-  --alert-success-border: rgba(34, 197, 94, 0.35);
-  --alert-warning-bg: rgba(245, 158, 11, 0.10);
-  --alert-warning-border: rgba(245, 158, 11, 0.35);
-  --alert-info-bg: rgba(255, 255, 255, 0.06);
-  --alert-info-border: rgba(255, 255, 255, 0.20);
+  --alert-error-bg: var(--danger-soft-bg);
+  --alert-error-border: var(--danger-border);
+  --alert-success-bg: var(--success-soft-bg);
+  --alert-success-border: var(--success-border);
+  --alert-warning-bg: var(--warning-soft-bg);
+  --alert-warning-border: var(--warning-border);
+  --alert-info-bg: var(--info-soft-bg);
+  --alert-info-border: var(--info-border);
 }
 
-/* ESTILO DEEPHAT - Tema Escuro Explícito */
-.theme-dark {
-  --bg-base: #000000;
-  --bg-elevated: #0a0a0c;
-  --bg-surface: rgba(255, 255, 255, 0.04);
-  --bg-surface-hover: rgba(255, 255, 255, 0.07);
-
-  --text-primary: #ffffff;
-  --text-secondary: rgba(255, 255, 255, 0.68);
-  --text-muted: rgba(255, 255, 255, 0.45);
-
-  --border-subtle: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.16);
-
-  --accent: #ffffff;
-  --accent-contrast: #000000;
-  --accent-glow: rgba(255, 255, 255, 0.18);
-
-  --theme-bg: var(--bg-base);
-  --theme-bg-secondary: var(--bg-elevated);
-  --theme-card: var(--bg-surface);
-  --theme-sidebar: #050507;
-  --theme-navbar: rgba(0, 0, 0, 0.65);
-  --theme-footer: #050507;
-
-  --theme-text: var(--text-primary);
-  --theme-text-muted: var(--text-secondary);
-  --theme-text-disabled: var(--text-muted);
-  --theme-link: #ffffff;
-  --theme-link-hover: #e2e8f0;
-
-  --theme-border: var(--border-subtle);
-  --theme-border-hover: var(--border-strong);
-  --theme-separator: var(--border-subtle);
-
-  --btn-primary: var(--accent);
-  --btn-primary-text: var(--accent-contrast);
-  --btn-primary-hover: #f1f5f9;
-  --btn-secondary: var(--bg-surface);
-  --btn-secondary-hover: var(--bg-surface-hover);
-  --btn-secondary-text: #ffffff;
-}
-
-/* ESTILO DEEPHAT - Variante Modo Claro Secundário (.theme-slate / .theme-light) */
-.theme-slate, .theme-light {
-  --bg-base: #f6f6f7;
+/* ESTILO DEEPHAT */
+/* ==========================================================================
+   PALETTE TOKENS: LIGHT THEME
+   Liquid Glass Translúcido Claro • Texto Preto • Linhas Precisas
+   ========================================================================== */
+[data-theme="light"],
+.theme-slate {
+  /* Fundos — Translúcidos leves com efeito de vidro límpido */
+  --bg-base: #f8fafc;
   --bg-elevated: #ffffff;
-  --bg-surface: rgba(0, 0, 0, 0.03);
-  --bg-surface-hover: rgba(0, 0, 0, 0.06);
+  --bg-surface: rgba(255, 255, 255, 0.65);          /* Cartões Liquid Glass claros */
+  --bg-surface-hover: rgba(255, 255, 255, 0.85);
+  --bg-surface-active: rgba(255, 255, 255, 0.95);
 
-  --text-primary: #0a0a0c;
-  --text-secondary: rgba(10, 10, 12, 0.70);
-  --text-muted: rgba(10, 10, 12, 0.48);
+  /* Texto — Preto profundo de alto contraste */
+  --text-primary: #000000;
+  --text-secondary: rgba(0, 0, 0, 0.72);
+  --text-muted: rgba(0, 0, 0, 0.48);
+  --text-disabled: rgba(0, 0, 0, 0.28);
+  --text-on-accent: #ffffff;
+  --text-on-hero: #000000;
+  --text-on-hero-muted: rgba(0, 0, 0, 0.68);
 
+  /* Bordas — Vidro límpido com destaque especular superior */
   --border-subtle: rgba(0, 0, 0, 0.08);
   --border-strong: rgba(0, 0, 0, 0.16);
+  --border-glass-specular: rgba(255, 255, 255, 0.95);
 
-  --accent: #0a0a0c;
+  /* Destaque (Preto minimalista tecnológico) */
+  --accent: #000000;
+  --accent-hover: #1e1e24;
   --accent-contrast: #ffffff;
-  --accent-glow: rgba(0, 0, 0, 0.12);
+  --accent-glow: rgba(0, 0, 0, 0.15);
+  --ring-focus: #000000;
 
-  --shadow-card: 0 8px 32px rgba(0, 0, 0, 0.06);
+  /* Estados Tecnológicos */
+  --success: #16a34a;
+  --success-soft-bg: rgba(22, 163, 74, 0.10);
+  --success-soft-text: #14532d;
+  --success-border: rgba(22, 163, 74, 0.25);
 
-  --theme-bg: #f6f6f7;
-  --theme-bg-secondary: #ffffff;
-  --theme-card: #ffffff;
-  --theme-sidebar: #ffffff;
-  --theme-navbar: rgba(255, 255, 255, 0.85);
-  --theme-footer: #f6f6f7;
+  --warning: #d97706;
+  --warning-soft-bg: rgba(217, 119, 6, 0.10);
+  --warning-soft-text: #78350f;
+  --warning-border: rgba(217, 119, 6, 0.25);
 
-  --theme-text: #0a0a0c;
-  --theme-text-muted: rgba(10, 10, 12, 0.70);
-  --theme-text-disabled: rgba(10, 10, 12, 0.48);
-  --theme-link: #0a0a0c;
-  --theme-link-hover: #27272a;
+  --danger: #dc2626;
+  --danger-soft-bg: rgba(220, 38, 38, 0.10);
+  --danger-soft-text: #7f1d1d;
+  --danger-border: rgba(220, 38, 38, 0.25);
 
-  --theme-border: rgba(0, 0, 0, 0.08);
-  --theme-border-hover: rgba(0, 0, 0, 0.16);
-  --theme-separator: rgba(0, 0, 0, 0.08);
+  --info: #0284c7;
+  --info-soft-bg: rgba(2, 132, 199, 0.10);
+  --info-soft-text: #0c4a6e;
+  --info-border: rgba(2, 132, 199, 0.25);
 
-  --btn-primary: #0a0a0c;
-  --btn-primary-text: #ffffff;
-  --btn-primary-hover: #27272a;
-  --btn-secondary: rgba(0, 0, 0, 0.05);
-  --btn-secondary-hover: rgba(0, 0, 0, 0.09);
-  --btn-secondary-text: #0a0a0c;
+  --purple: #7c3aed;
+  --purple-soft-bg: rgba(124, 58, 237, 0.10);
+  --purple-soft-text: #4c1d95;
+  --purple-border: rgba(124, 58, 237, 0.25);
 
-  --input-bg: #ffffff;
-  --input-border: rgba(0, 0, 0, 0.12);
-  --input-focus: #0a0a0c;
+  /* Forma e Efeito */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+  --blur: 16px;
+  --blur-heavy: 24px;
+  --shadow-card: 0 8px 30px -4px rgba(0, 0, 0, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  --shadow-glow: 0 0 20px rgba(0, 0, 0, 0.08);
+  --transition: 180ms cubic-bezier(0.4, 0, 0.2, 1);
 
-  --table-header-bg: #f0f0f2;
-  --table-row-bg: #ffffff;
+  /* Mapeamento de compatibilidade */
+  --bg-app: var(--bg-base);
+  --bg-surface-2: var(--bg-surface-hover);
+  --bg-overlay: rgba(10, 10, 12, 0.45);
+  --bg-sidebar: rgba(255, 255, 255, 0.72);
+  --bg-sidebar-header: rgba(255, 255, 255, 0.88);
+  --bg-sidebar-footer: rgba(255, 255, 255, 0.88);
+  --bg-hero: radial-gradient(circle at 50% 0%, rgba(0, 0, 0, 0.03) 0%, #f8fafc 70%);
+
+  --text-sidebar: #000000;
+  --text-sidebar-muted: rgba(0, 0, 0, 0.60);
+  --border-sidebar: rgba(0, 0, 0, 0.08);
+
+  --accent-soft-bg: rgba(0, 0, 0, 0.05);
+  --accent-soft-text: #000000;
+
+  --glass-bg: rgba(255, 255, 255, 0.65);
+  --glass-border: var(--border-subtle);
+  --glass-text: var(--text-primary);
+  --glass-shadow: var(--shadow-card);
+  --glass-blur: var(--blur);
+
+  --theme-bg: var(--bg-base);
+  --theme-bg-secondary: var(--bg-surface-hover);
+  --theme-card: var(--bg-surface);
+  --theme-sidebar: var(--bg-sidebar);
+  --theme-navbar: rgba(255, 255, 255, 0.80);
+  --theme-footer: #ffffff;
+  --theme-text: var(--text-primary);
+  --theme-text-muted: var(--text-secondary);
+  --theme-text-disabled: var(--text-muted);
+  --theme-link: #000000;
+  --theme-link-hover: #334155;
+  --theme-border: var(--border-subtle);
+  --theme-border-hover: var(--border-strong);
+  --theme-separator: var(--border-subtle);
+
+  --btn-primary: var(--accent);
+  --btn-primary-text: var(--accent-contrast);
+  --btn-primary-hover: var(--accent-hover);
+  --btn-secondary: var(--bg-surface);
+  --btn-secondary-hover: var(--bg-surface-hover);
+  --btn-secondary-text: var(--text-primary);
+
+  --input-bg: rgba(255, 255, 255, 0.80);
+  --input-border: var(--border-subtle);
+  --input-focus: var(--ring-focus);
+
+  --table-header-bg: rgba(245, 245, 248, 0.85);
+  --table-row-bg: transparent;
   --table-row-hover: rgba(0, 0, 0, 0.03);
 
-  --modal-bg: #ffffff;
-  --modal-overlay: rgba(0, 0, 0, 0.45);
+  --modal-bg: rgba(255, 255, 255, 0.90);
+  --modal-overlay: var(--bg-overlay);
 
-  --alert-error-bg: rgba(239, 68, 68, 0.08);
-  --alert-error-border: rgba(239, 68, 68, 0.25);
-  --alert-success-bg: rgba(34, 197, 94, 0.08);
-  --alert-success-border: rgba(34, 197, 94, 0.25);
-  --alert-warning-bg: rgba(245, 158, 11, 0.08);
-  --alert-warning-border: rgba(245, 158, 11, 0.25);
-  --alert-info-bg: rgba(10, 10, 12, 0.04);
-  --alert-info-border: rgba(10, 10, 12, 0.15);
+  --alert-error-bg: var(--danger-soft-bg);
+  --alert-error-border: var(--danger-border);
+  --alert-success-bg: var(--success-soft-bg);
+  --alert-success-border: var(--success-border);
+  --alert-warning-bg: var(--warning-soft-bg);
+  --alert-warning-border: var(--warning-border);
+  --alert-info-bg: var(--info-soft-bg);
+  --alert-info-border: var(--info-border);
 }
 
-/* Suporte a prefers-color-scheme para ajuste automático se não houver preferência explícita */
-@media (prefers-color-scheme: dark) {
-  :root:not(.theme-slate) {
-    --bg-base: #000000;
-    --bg-elevated: #0a0a0c;
-  }
-}
-
-/* ESTILO DEEPHAT - Camada Base Global */
+/* ==========================================================================
+   GLOBAL BASE LAYER & TECHNICAL BACKGROUND TEXTURE
+   ========================================================================== */
 @layer base {
   p, span, h1, h2, h3, h4, h5, h6, label, b, strong, i, em {
     background-color: transparent;
   }
 
-  html, body {
+  html {
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
     background-color: var(--bg-base);
     color: var(--text-primary);
     font-family: var(--font-sans);
     min-height: 100dvh;
-    font-size: clamp(0.8125rem, 0.77rem + 0.22vw, 0.9375rem);
+    font-size: 15px;
+    line-height: 1.6;
     overflow-x: hidden;
   }
 
-  /* ESTILO DEEPHAT - Textura de grelha e profundidade radial no fundo */
   body {
     background-color: var(--bg-base);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    min-height: 100dvh;
+    overflow-x: hidden;
+    /* Grelha técnica ambiente Deep Hat */
     background-image: 
-      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(255, 255, 255, 0.06), transparent 70%),
-      radial-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px);
-    background-size: 100% 100%, 28px 28px;
-    background-attachment: fixed;
+      radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.08) 0%, transparent 65%),
+      radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+    background-size: 100% 700px, 24px 24px;
+    background-repeat: no-repeat, repeat;
+    background-attachment: scroll, fixed;
   }
 
+  [data-theme="light"] body,
   .theme-slate body {
     background-color: var(--bg-base);
+    color: var(--text-primary);
     background-image: 
-      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0, 0, 0, 0.03), transparent 70%),
-      radial-gradient(rgba(0, 0, 0, 0.03) 1px, transparent 1px);
-    background-size: 100% 100%, 28px 28px;
-    background-attachment: fixed;
+      radial-gradient(circle at 50% 0%, rgba(0, 0, 0, 0.03) 0%, transparent 65%),
+      radial-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px);
+    background-size: 100% 700px, 24px 24px;
+    background-repeat: no-repeat, repeat;
   }
 
-  /* Tipografia: Títulos grandes e fortes */
-  h1 {
-    font-weight: 700;
-    letter-spacing: -0.025em;
-    line-height: 1.1;
-  }
-
-  h2, h3, h4 {
-    font-weight: 600;
-    letter-spacing: -0.02em;
-  }
-
-  /* Rótulos e valores técnicos: JetBrains Mono com tracking */
-  code, pre, .font-mono, [data-mono], .mono-technical {
-    font-family: var(--font-mono) !important;
-  }
-
-  /* Foco visível e acessível (WCAG AA) */
+  /* Foco visível e acessível */
   :focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
@@ -293,7 +363,7 @@
     outline-offset: 2px;
   }
 
-  /* Acessibilidade: Movimento reduzido */
+  /* Redução de movimento */
   @media (prefers-reduced-motion: reduce) {
     *, ::before, ::after {
       animation-duration: 0.01ms !important;
@@ -303,422 +373,117 @@
     }
   }
 
-  /* Scrollbar oculta e limpa */
+  /* Scrollbar técnico minimalista */
   * {
     -ms-overflow-style: none;
-    scrollbar-width: none;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
   }
 
-  *::-webkit-scrollbar {
-    display: none;
-    width: 0px;
-    height: 0px;
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--border-strong);
+    border-radius: var(--radius-pill);
+    border: 1px solid transparent;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--accent);
   }
 }
 
-/* ESTILO DEEPHAT - Animações e Transições */
-@keyframes deepHatFadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
+/* ESTILO DEEPHAT */
+/* ==========================================================================
+   ARQUITETURA DE ROLAGEM & MENU LATERAL EM TODO O SISTEMA
+   - Rodapé do menu 100% fixo
+   - Menu lateral com rolagem individual separada do resto da página
+   - Área principal com rolagem vertical independente
+   ========================================================================== */
+
+/* Prevenção de quebra de contêiner contendo position: fixed */
+#tenant_client_portal,
+#super_admin_portal {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  filter: none !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+@media (min-width: 768px) {
+  /* Em telas médias/grandes (desktop), o portal ocupa exatamente 100vh sem rolagem da janela geral */
+  #tenant_client_portal,
+  #super_admin_portal {
+    height: 100vh !important;
+    max-height: 100vh !important;
+    overflow: hidden !important;
+    display: flex !important;
+    flex-direction: row !important;
+    position: relative !important;
   }
-  to {
-    opacity: 1;
-    transform: translateY(0);
+
+  /* A área principal de conteúdo rola de forma INDEPENDENTE */
+  #tenant_client_portal > main,
+  #tenant_client_portal > #main_content_area,
+  #super_admin_portal > div.flex-1 {
+    height: 100vh !important;
+    max-height: 100vh !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain !important;
+    flex: 1 1 0% !important;
+    min-width: 0 !important;
   }
 }
 
-.deephat-enter {
-  animation: deepHatFadeIn 220ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+/* Menu lateral (aside) em todo o sistema */
+aside,
+#tenant_client_portal aside,
+#super_admin_portal aside {
+  position: fixed !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  height: 100vh !important;
+  max-height: 100vh !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  z-index: 40 !important;
 }
 
-/* ESTILO DEEPHAT - Regras Globais para o Tema Escuro (Midnight Red-Team) */
-.theme-dark, :root {
-  background-color: var(--bg-base);
-  color: var(--text-primary);
-
-  * {
-    text-shadow: none !important;
-    -webkit-text-stroke: 0px transparent !important;
-  }
-
-  #tenant_client_portal, #super_admin_portal, main, #main_content_area, #branding-root-main {
-    background-color: var(--bg-base) !important;
-    color: var(--text-primary) !important;
-  }
-
-  /* Fundo translúcido para cartões e containers (Glassmorphism discreto) */
-  .bg-white, .bg-theme-card {
-    background-color: var(--bg-surface) !important;
-    backdrop-filter: blur(var(--blur));
-    -webkit-backdrop-filter: blur(var(--blur));
-    border-color: var(--border-subtle) !important;
-  }
-
-  @supports not (backdrop-filter: blur(1px)) {
-    .bg-white, .bg-theme-card {
-      background-color: var(--bg-elevated) !important;
-    }
-  }
-
-  .bg-slate-50, .bg-slate-100, .bg-slate-150, .bg-slate-50\/80, .bg-slate-50\/50, .bg-slate-100\/80, .bg-slate-950\/80, .bg-slate-900\/80 {
-    background-color: var(--bg-surface) !important;
-    border-color: var(--border-subtle) !important;
-  }
-
-  /* Barra de navegação e cabeçalhos translúcidos */
-  header, nav, #branding-header, #top-utility-bar, .h-\[72px\], .bg-slate-900\/95, .bg-slate-900\/80, .bg-\[\#0a0f1d\], .bg-\[\#0a0f1d\]\/95 {
-    background-color: rgba(0, 0, 0, 0.65) !important;
-    backdrop-filter: blur(var(--blur)) !important;
-    -webkit-backdrop-filter: blur(var(--blur)) !important;
-    border-bottom: 1px solid var(--border-subtle) !important;
-  }
-
-  @supports not (backdrop-filter: blur(1px)) {
-    header, nav, #branding-header, #top-utility-bar {
-      background-color: #050507 !important;
-    }
-  }
-
-  /* Painel lateral (Sidebar) */
-  aside, .bg-slate-900, .bg-slate-950, .bg-\[\#070b16\] {
-    background-color: #050507 !important;
-    border-color: var(--border-subtle) !important;
-
-    .hover\:bg-slate-800:hover, .hover\:bg-slate-800, .bg-slate-800 {
-      background-color: var(--bg-surface-hover) !important;
-    }
-  }
-
-  /* Cores de texto refinadas */
-  .text-slate-900, .text-slate-800, .text-slate-750, .text-slate-700, .text-slate-600 {
-    color: var(--text-primary) !important;
-  }
-  .text-slate-500, .text-slate-400 {
-    color: var(--text-secondary) !important;
-  }
-  .text-slate-300, .text-slate-200, .text-slate-100 {
-    color: var(--text-primary) !important;
-  }
-
-  /* Links */
-  a, .text-indigo-600, .text-indigo-400, .text-blue-600, .text-blue-400 {
-    color: var(--text-primary) !important;
-    transition: color var(--transition);
-  }
-  a:hover, .text-indigo-600:hover, .text-indigo-400:hover, .text-blue-600:hover, .text-blue-400:hover {
-    color: #cbd5e1 !important;
-  }
-
-  /* Setas com animação de deslize em links de chamada */
-  a:hover svg.lucide-arrow-right, button:hover svg.lucide-arrow-right, .group:hover .arrow-slide {
-    transform: translateX(4px);
-    transition: transform var(--transition);
-  }
-
-  /* Bordas refinadas */
-  .border, .border-t, .border-b, .border-r, .border-l,
-  .border-slate-100, .border-slate-150, .border-slate-200, .border-slate-200\/60,
-  .border-slate-200\/80, .border-slate-300, .border-slate-700, .border-slate-800,
-  .border-indigo-100, .border-indigo-100\/60 {
-    border-color: var(--border-subtle) !important;
-  }
-
-  /* ESTILO DEEPHAT - Botões Primários (Branco com Glow sobre Preto) */
-  .bg-blue-600, .bg-indigo-600, .bg-indigo-700, .bg-indigo-800, #btn-login-signup {
-    background-color: var(--accent) !important;
-    color: var(--accent-contrast) !important;
-    font-weight: 600 !important;
-    border: 1px solid rgba(255, 255, 255, 0.4) !important;
-    box-shadow: 0 0 20px var(--accent-glow) !important;
-    transition: transform var(--transition), box-shadow var(--transition), background-color var(--transition) !important;
-
-    svg {
-      color: var(--accent-contrast) !important;
-      fill: none !important;
-    }
-  }
-
-  .bg-blue-600:hover, .bg-indigo-600:hover, .bg-indigo-700:hover, .bg-indigo-800:hover,
-  .hover\:bg-blue-500:hover, .hover\:bg-indigo-500:hover, #btn-login-signup:hover {
-    background-color: #f8fafc !important;
-    color: var(--accent-contrast) !important;
-    transform: translateY(-1px);
-    box-shadow: 0 0 28px var(--accent-glow) !important;
-  }
-
-  .bg-blue-600:active, .bg-indigo-600:active, #btn-login-signup:active {
-    transform: translateY(0);
-  }
-
-  /* Botões Secundários / Ghost (Fundo translúcido, borda sutil) */
-  .bg-slate-100, .bg-slate-200, .bg-slate-300, .bg-slate-800, .bg-slate-900, .bg-slate-950, #btn-theme-toggle {
-    background-color: var(--bg-surface) !important;
-    border: 1px solid var(--border-subtle) !important;
-    color: var(--text-primary) !important;
-    backdrop-filter: blur(var(--blur));
-    transition: background-color var(--transition), border-color var(--transition) !important;
-  }
-
-  .hover\:bg-slate-100:hover, .hover\:bg-slate-200:hover, .hover\:bg-slate-300:hover,
-  .hover\:bg-slate-800:hover, .hover\:bg-slate-900:hover, #btn-theme-toggle:hover {
-    background-color: var(--bg-surface-hover) !important;
-    border-color: var(--border-strong) !important;
-    color: #ffffff !important;
-  }
-
-  /* Botões de Ação de Estado (Sucesso, Atenção, Perigo) */
-  .bg-emerald-600, .bg-emerald-700, .bg-green-600, .bg-green-700 {
-    background-color: var(--success) !important;
-    color: #ffffff !important;
-  }
-  .hover\:bg-emerald-500:hover, .hover\:bg-green-500:hover {
-    background-color: #16a34a !important;
-  }
-
-  .bg-amber-600, .bg-amber-700, .bg-yellow-600, .bg-yellow-700 {
-    background-color: var(--warning) !important;
-    color: #000000 !important;
-  }
-  .hover\:bg-amber-500:hover, .hover\:bg-yellow-500:hover {
-    background-color: #d97706 !important;
-  }
-
-  .bg-red-600, .bg-red-700, .bg-rose-600, .bg-rose-700 {
-    background-color: var(--danger) !important;
-    color: #ffffff !important;
-  }
-  .hover\:bg-red-500:hover, .hover\:bg-rose-500:hover {
-    background-color: #dc2626 !important;
-  }
-
-  /* ESTILO DEEPHAT - Formulários e Inputs */
-  input[type="text"], input[type="email"], input[type="password"], input[type="number"],
-  input[type="date"], input[type="time"], select, textarea {
-    background-color: var(--bg-surface) !important;
-    border: 1px solid var(--border-subtle) !important;
-    border-radius: var(--radius-md) !important;
-    color: var(--text-primary) !important;
-    backdrop-filter: blur(var(--blur)) !important;
-    -webkit-backdrop-filter: blur(var(--blur)) !important;
-    transition: border-color var(--transition), box-shadow var(--transition) !important;
-  }
-
-  input::placeholder, textarea::placeholder {
-    color: var(--text-muted) !important;
-  }
-
-  input:focus, select:focus, textarea:focus {
-    border-color: var(--border-strong) !important;
-    box-shadow: 0 0 0 3px var(--accent-glow) !important;
-    outline: none !important;
-  }
-
-  /* Dropdowns e Menus Suspensos */
-  .shadow-xl, .shadow-2xl {
-    background-color: #0a0a0c !important;
-    border: 1px solid var(--border-subtle) !important;
-    box-shadow: var(--shadow-card) !important;
-    backdrop-filter: blur(var(--blur)) !important;
-  }
-
-  /* ESTILO DEEPHAT - Tabelas no Formato Operações / Técnico */
-  table {
-    border-collapse: separate;
-    border-spacing: 0;
-
-    thead, tr.bg-slate-50, th {
-      background-color: #070709 !important;
-      color: var(--text-muted) !important;
-      font-family: var(--font-mono) !important;
-      font-size: 11px !important;
-      letter-spacing: 0.08em !important;
-      text-transform: uppercase !important;
-      border-bottom: 1px solid var(--border-subtle) !important;
-    }
-
-    tbody tr, td {
-      background-color: transparent !important;
-      color: var(--text-secondary) !important;
-      border-bottom: 1px solid var(--border-subtle) !important;
-    }
-
-    tbody tr:hover, tbody tr:hover td {
-      background-color: var(--bg-surface-hover) !important;
-      color: var(--text-primary) !important;
-    }
-  }
-
-  /* Modais com Glassmorphism e Sombra Suave */
-  .fixed.inset-0.bg-slate-950\/40, .fixed.inset-0.bg-slate-900\/40, .fixed.inset-0.bg-slate-950\/80 {
-    background-color: var(--modal-overlay) !important;
-    backdrop-filter: blur(8px) !important;
-    -webkit-backdrop-filter: blur(8px) !important;
-  }
-
-  .bg-white.rounded-2xl, .bg-white.rounded-3xl, .bg-white.rounded-xl,
-  .bg-slate-900.rounded-2xl, .bg-slate-900.rounded-3xl {
-    background-color: #0a0a0c !important;
-    border: 1px solid var(--border-subtle) !important;
-    box-shadow: var(--shadow-card) !important;
-    color: var(--text-primary) !important;
-  }
-
-  /* Alertas Translúcidos com Bordas de Estado */
-  .bg-red-50, .bg-red-100\/50, .border-red-100 {
-    background-color: var(--alert-error-bg) !important;
-    border-color: var(--alert-error-border) !important;
-    color: #fca5a5 !important;
-  }
-  .bg-emerald-50, .bg-green-50, .border-green-100 {
-    background-color: var(--alert-success-bg) !important;
-    border-color: var(--alert-success-border) !important;
-    color: #86efac !important;
-  }
-  .bg-amber-50, .bg-yellow-50, .border-yellow-100 {
-    background-color: var(--alert-warning-bg) !important;
-    border-color: var(--alert-warning-border) !important;
-    color: #fde047 !important;
-  }
-  .bg-indigo-50, .bg-blue-50, .border-indigo-100 {
-    background-color: var(--alert-info-bg) !important;
-    border-color: var(--alert-info-border) !important;
-    color: #e2e8f0 !important;
-  }
-
-  /* Badges e Rótulos Técnicos (Fonte Mono) */
-  .bg-emerald-100, .bg-emerald-500\/10 {
-    background-color: rgba(34, 197, 94, 0.12) !important;
-    color: #4ade80 !important;
-    border: 1px solid rgba(34, 197, 94, 0.25) !important;
-  }
-  .bg-red-100, .bg-red-500\/10 {
-    background-color: rgba(239, 68, 68, 0.12) !important;
-    color: #f87171 !important;
-    border: 1px solid rgba(239, 68, 68, 0.25) !important;
-  }
-  .bg-amber-100, .bg-amber-500\/10 {
-    background-color: rgba(245, 158, 11, 0.12) !important;
-    color: #fbbf24 !important;
-    border: 1px solid rgba(245, 158, 11, 0.25) !important;
-  }
-  .bg-indigo-100, .bg-blue-100 {
-    background-color: rgba(255, 255, 255, 0.08) !important;
-    color: #ffffff !important;
-    border: 1px solid rgba(255, 255, 255, 0.16) !important;
-  }
-
-  /* Indicadores de Status */
-  .text-emerald-500, .text-green-500 { color: #22c55e !important; }
-  .text-amber-500, .text-yellow-500 { color: #f59e0b !important; }
-  .text-red-500, .text-rose-500 { color: #ef4444 !important; }
-
-  /* Bloco de Terminal / Código Operacional */
-  pre, .terminal-block {
-    background-color: #050507 !important;
-    border: 1px solid var(--border-subtle) !important;
-    border-radius: var(--radius-md) !important;
-    font-family: var(--font-mono) !important;
-    color: #e2e8f0 !important;
-  }
+/* 1. Header do Menu: fixo no topo da barra */
+aside > div:first-child {
+  flex-shrink: 0 !important;
+  height: 72px !important;
+  z-index: 20 !important;
 }
 
-/* ESTILO DEEPHAT - Regras para o Tema Claro Secundário (.theme-slate) */
-.theme-slate {
-  background-color: var(--bg-base) !important;
-  color: var(--text-primary) !important;
-
-  #tenant_client_portal, #super_admin_portal, main, #main_content_area, #branding-root-main {
-    background-color: var(--bg-base) !important;
-    color: var(--text-primary) !important;
-  }
-
-  .bg-white, .bg-theme-card {
-    background-color: var(--bg-elevated) !important;
-    border-color: var(--border-subtle) !important;
-  }
-
-  .bg-slate-50, .bg-slate-100, .bg-slate-150 {
-    background-color: var(--bg-surface) !important;
-    border-color: var(--border-subtle) !important;
-  }
-
-  aside {
-    background-color: #ffffff !important;
-    border-right: 1px solid var(--border-subtle) !important;
-  }
-
-  header, nav, #branding-header, #top-utility-bar {
-    background-color: rgba(255, 255, 255, 0.85) !important;
-    backdrop-filter: blur(var(--blur)) !important;
-    -webkit-backdrop-filter: blur(var(--blur)) !important;
-    border-bottom: 1px solid var(--border-subtle) !important;
-  }
-
-  .text-slate-900, .text-slate-800 {
-    color: var(--text-primary) !important;
-  }
-  .text-slate-600, .text-slate-500 {
-    color: var(--text-secondary) !important;
-  }
-
-  /* Botões no modo claro */
-  .bg-blue-600, .bg-indigo-600, #btn-login-signup {
-    background-color: var(--accent) !important;
-    color: var(--accent-contrast) !important;
-    border: 1px solid var(--accent) !important;
-  }
-
-  .bg-blue-600:hover, .bg-indigo-600:hover, #btn-login-signup:hover {
-    background-color: #27272a !important;
-  }
-
-  .bg-slate-100, .bg-slate-200, #btn-theme-toggle {
-    background-color: var(--bg-surface) !important;
-    border: 1px solid var(--border-subtle) !important;
-    color: var(--text-primary) !important;
-  }
-
-  /* Formulários no modo claro */
-  input[type="text"], input[type="email"], input[type="password"], input[type="number"], select, textarea {
-    background-color: #ffffff !important;
-    border: 1px solid var(--border-subtle) !important;
-    color: var(--text-primary) !important;
-  }
-
-  input:focus, select:focus, textarea:focus {
-    border-color: var(--border-strong) !important;
-    box-shadow: 0 0 0 3px var(--accent-glow) !important;
-  }
-
-  /* Tabelas no modo claro */
-  table {
-    thead th {
-      background-color: #f0f0f2 !important;
-      color: var(--text-muted) !important;
-      font-family: var(--font-mono) !important;
-      border-bottom: 1px solid var(--border-subtle) !important;
-    }
-    tbody tr td {
-      border-bottom: 1px solid var(--border-subtle) !important;
-    }
-    tbody tr:hover td {
-      background-color: var(--bg-surface-hover) !important;
-    }
-  }
-
-  .fixed.inset-0.bg-slate-950\/40, .fixed.inset-0.bg-slate-900\/40 {
-    background-color: var(--modal-overlay) !important;
-  }
-
-  .bg-white.rounded-2xl, .bg-white.rounded-3xl, .bg-white.rounded-xl {
-    background-color: #ffffff !important;
-    border: 1px solid var(--border-subtle) !important;
-    box-shadow: var(--shadow-card) !important;
-  }
+/* 2. Lista de navegação de módulos: ROLAGEM INDIVIDUAL PRÓPRIA */
+aside > nav {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain !important;
 }
 
-/* Utilitários complementares */
+/* 3. Rodapé do Menu: 100% FIXO NA PARTE INFERIOR DO MENU LATERAL */
+aside > div:last-child {
+  flex-shrink: 0 !important;
+  margin-top: auto !important;
+  position: sticky !important;
+  bottom: 0 !important;
+  z-index: 20 !important;
+}
+
+/* Utilitários gerais */
 @layer utilities {
   .no-scrollbar::-webkit-scrollbar {
     display: none;
@@ -729,39 +494,796 @@
   }
 }
 
-/* Botão Google Sign-In adaptado para estética sóbria */
-.gsi-material-button {
-  -moz-user-select: none;
-  -webkit-user-select: none;
-  -ms-user-select: none;
-  -webkit-appearance: none;
-  background-color: var(--bg-surface) !important;
-  border: 1px solid var(--border-strong) !important;
-  border-radius: var(--radius-md) !important;
-  color: var(--text-primary) !important;
-  cursor: pointer;
-  display: inline-block;
-  font-family: var(--font-sans);
-  font-size: 13px;
-  height: 42px;
-  outline: none;
-  padding: 0 16px;
-  transition: background-color var(--transition), border-color var(--transition);
+/* ESTILO DEEPHAT */
+/* ==========================================================================
+   TEMA ESCURO: ADAPTAÇÕES PRETA BLUR LIQUID GLASS
+   Adapta TODOS os cards, divs, botões, modais, formulários e tabelas
+   ========================================================================== */
+:root:not([data-theme="light"]):not(.theme-slate),
+[data-theme="dark"],
+.theme-dark,
+.dark {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+
+  /* Elementos raiz de páginas e portais */
+  #tenant_client_portal, 
+  #super_admin_portal, 
+  main, 
+  #main_content_area,
+  #branding-root-main {
+    background-color: var(--bg-base) !important;
+    color: var(--text-primary) !important;
+  }
+
+  /* ------------------------------------------------------------------------
+     1. CARDS & DIVS: PRETA BLUR LIQUID GLASS
+     Substitui classes claras e opacas por preta translúcida com blur
+     ------------------------------------------------------------------------ */
+  div.bg-white:not(#tenant_client_portal):not(#super_admin_portal),
+  div.bg-slate-50:not(#tenant_client_portal):not(#super_admin_portal),
+  div.bg-slate-100:not(#tenant_client_portal):not(#super_admin_portal),
+  div.bg-slate-200,
+  div.bg-gray-50,
+  div.bg-gray-100,
+  div.bg-slate-900:not(#tenant_client_portal):not(#super_admin_portal):not(aside):not(aside *),
+  div.bg-slate-850,
+  div.bg-slate-800:not(aside *),
+  div.bg-slate-950:not(aside *),
+  div[class*="bg-white/"]:not(.pointer-events-none):not([class*="w-1"]),
+  div[class*="bg-slate-900/"]:not(aside *),
+  div[class*="bg-slate-950/"]:not(aside *),
+  section[class*="bg-white"],
+  section[class*="bg-slate-900"],
+  section[class*="bg-slate-950"],
+  article[class*="bg-white"],
+  article[class*="bg-slate-900"] {
+    background-color: rgba(10, 10, 14, 0.72) !important;
+    backdrop-filter: blur(16px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+    border-color: rgba(255, 255, 255, 0.09) !important;
+    box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.75), inset 0 1px 0 0 rgba(255, 255, 255, 0.08) !important;
+    color: #ffffff !important;
+  }
+
+  /* Thumbs de toggle switches continuam com círculo branco sólido */
+  .pointer-events-none.rounded-full.bg-white,
+  button [class*="rounded-full"].bg-white {
+    background-color: #ffffff !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4) !important;
+    border: none !important;
+    backdrop-filter: none !important;
+  }
+
+  /* Barra indicadora de navegação lateral ativa */
+  .w-1.bg-white.rounded-r-full {
+    background-color: #ffffff !important;
+    box-shadow: 0 0 12px rgba(255, 255, 255, 0.8) !important;
+  }
+
+  /* Interatividade de cards Liquid Glass no hover */
+  div.bg-white:hover,
+  div.bg-slate-900:hover,
+  div.bg-slate-950:hover,
+  div[class*="hover:border"]:hover,
+  div.group:hover {
+    border-color: rgba(255, 255, 255, 0.18) !important;
+  }
+
+  /* Bordas do sistema em tema escuro: sutis e elegantes */
+  .border-slate-100,
+  .border-slate-150,
+  .border-slate-200,
+  .border-slate-300,
+  .border-slate-700,
+  .border-slate-800,
+  .border-slate-850,
+  [class*="border-slate-200/"],
+  [class*="border-slate-100/"] {
+    border-color: rgba(255, 255, 255, 0.09) !important;
+  }
+
+  /* ------------------------------------------------------------------------
+     2. TEXTO: BRANCO E ALTO CONTRASTE NO TEMA ESCURO
+     ------------------------------------------------------------------------ */
+  .text-slate-900,
+  .text-slate-800,
+  .text-slate-700,
+  .text-slate-600,
+  .text-gray-900,
+  .text-gray-800,
+  .text-gray-700,
+  .text-gray-600,
+  .text-slate-100,
+  .text-slate-200 {
+    color: #ffffff !important;
+  }
+
+  .text-slate-500,
+  .text-slate-400,
+  .text-gray-500,
+  .text-gray-400 {
+    color: rgba(255, 255, 255, 0.70) !important;
+  }
+
+  .text-slate-300 {
+    color: rgba(255, 255, 255, 0.90) !important;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    color: #ffffff !important;
+  }
+
+  /* ------------------------------------------------------------------------
+     3. BOTÕES NO TEMA ESCURO
+     ------------------------------------------------------------------------ */
+  /* Botões Primários (Branco puro sobre preto com brilho) */
+  button.bg-blue-600,
+  button.bg-blue-700,
+  button.bg-indigo-600,
+  button.bg-indigo-700,
+  a[role="button"].bg-blue-600,
+  a[role="button"].bg-indigo-600,
+  button[data-variant="primary"],
+  .btn-primary {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    border-color: rgba(255, 255, 255, 0.25) !important;
+    font-weight: 600 !important;
+    box-shadow: 0 0 20px rgba(255, 255, 255, 0.22) !important;
+    transition: transform var(--transition), box-shadow var(--transition), background-color var(--transition) !important;
+  }
+
+  button.bg-blue-600:hover,
+  button.bg-blue-700:hover,
+  button.bg-indigo-600:hover,
+  button.bg-indigo-700:hover,
+  a[role="button"].bg-blue-600:hover,
+  a[role="button"].bg-indigo-600:hover,
+  button[data-variant="primary"]:hover,
+  .btn-primary:hover {
+    background-color: #f1f1f5 !important;
+    box-shadow: 0 0 28px rgba(255, 255, 255, 0.38) !important;
+    transform: translateY(-1px) !important;
+    color: #000000 !important;
+  }
+
+  button.bg-blue-600 svg,
+  button.bg-blue-700 svg,
+  button.bg-indigo-600 svg,
+  button.bg-indigo-700 svg,
+  a[role="button"].bg-blue-600 svg,
+  a[role="button"].bg-indigo-600 svg {
+    color: #000000 !important;
+    stroke: #000000 !important;
+  }
+
+  /* Botões Secundários / Ghost (Liquid Glass Preto) */
+  button.bg-white,
+  button.bg-slate-50,
+  button.bg-slate-100,
+  button.bg-slate-800,
+  button[class*="border-slate-200"],
+  button[class*="border-slate-300"],
+  button[class*="border-slate-700"],
+  button[class*="border-slate-800"]:not(.bg-indigo-600):not(.bg-blue-600):not(.bg-emerald-600):not(.bg-red-600),
+  button.btn-secondary,
+  button.btn-ghost {
+    background-color: rgba(255, 255, 255, 0.06) !important;
+    backdrop-filter: blur(12px) !important;
+    -webkit-backdrop-filter: blur(12px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    color: #ffffff !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+    transition: background-color var(--transition), border-color var(--transition), box-shadow var(--transition) !important;
+  }
+
+  button.bg-white:hover,
+  button.bg-slate-50:hover,
+  button.bg-slate-100:hover,
+  button.bg-slate-800:hover,
+  button[class*="border-slate-200"]:hover,
+  button[class*="border-slate-300"]:hover,
+  button.btn-secondary:hover,
+  button.btn-ghost:hover {
+    background-color: rgba(255, 255, 255, 0.12) !important;
+    border-color: rgba(255, 255, 255, 0.30) !important;
+    color: #ffffff !important;
+    box-shadow: 0 0 16px rgba(255, 255, 255, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
+  }
+
+  button.bg-white svg,
+  button.bg-slate-800 svg,
+  button[class*="border-slate-200"] svg {
+    color: #ffffff !important;
+    stroke: #ffffff !important;
+  }
+
+  /* Botões de Ação de Perigo */
+  button.bg-red-600,
+  button.bg-rose-600,
+  button.bg-red-500 {
+    background-color: rgba(239, 68, 68, 0.20) !important;
+    border: 1px solid rgba(239, 68, 68, 0.45) !important;
+    color: #fca5a5 !important;
+    backdrop-filter: blur(10px) !important;
+  }
+  button.bg-red-600:hover,
+  button.bg-rose-600:hover {
+    background-color: rgba(239, 68, 68, 0.32) !important;
+    border-color: rgba(239, 68, 68, 0.70) !important;
+    color: #ffffff !important;
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.35) !important;
+  }
+
+  /* Botões de Sucesso */
+  button.bg-emerald-600,
+  button.bg-green-600 {
+    background-color: rgba(34, 197, 94, 0.20) !important;
+    border: 1px solid rgba(34, 197, 94, 0.45) !important;
+    color: #86efac !important;
+    backdrop-filter: blur(10px) !important;
+  }
+  button.bg-emerald-600:hover,
+  button.bg-green-600:hover {
+    background-color: rgba(34, 197, 94, 0.32) !important;
+    border-color: rgba(34, 197, 94, 0.70) !important;
+    color: #ffffff !important;
+    box-shadow: 0 0 20px rgba(34, 197, 94, 0.35) !important;
+  }
+
+  /* ------------------------------------------------------------------------
+     4. SIDEBAR & NAVEGAÇÃO NO TEMA ESCURO
+     ------------------------------------------------------------------------ */
+  aside,
+  aside.bg-slate-900 {
+    background-color: rgba(4, 4, 6, 0.88) !important;
+    backdrop-filter: blur(20px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+    border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+    color: #ffffff !important;
+  }
+
+  aside > div:first-child {
+    background-color: rgba(6, 6, 9, 0.95) !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+  }
+
+  aside > div:last-child {
+    background-color: rgba(6, 6, 9, 0.95) !important;
+    backdrop-filter: blur(20px) !important;
+    -webkit-backdrop-filter: blur(20px) !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+  }
+
+  /* Itens ativos e em hover da sidebar */
+  aside button.bg-slate-800,
+  aside div[class*="bg-slate-800"] {
+    background-color: rgba(255, 255, 255, 0.10) !important;
+    border: 1px solid rgba(255, 255, 255, 0.18) !important;
+    color: #ffffff !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 0 16px rgba(255, 255, 255, 0.06) !important;
+  }
+
+  aside button:hover {
+    background-color: rgba(255, 255, 255, 0.07) !important;
+    color: #ffffff !important;
+  }
+
+  /* ------------------------------------------------------------------------
+     5. MODAIS & DIALOGS NO TEMA ESCURO
+     ------------------------------------------------------------------------ */
+  [role="dialog"],
+  .fixed.inset-0 > div[class*="rounded-3xl"],
+  .fixed.inset-0 > div[class*="rounded-2xl"],
+  .modal-content {
+    background-color: rgba(8, 8, 12, 0.92) !important;
+    backdrop-filter: blur(24px) saturate(190%) !important;
+    -webkit-backdrop-filter: blur(24px) saturate(190%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.14) !important;
+    box-shadow: 0 25px 60px -12px rgba(0, 0, 0, 0.90), inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
+    color: #ffffff !important;
+  }
+
+  /* ------------------------------------------------------------------------
+     6. DROPDOWNS & MENUS FLUTUANTES NO TEMA ESCURO
+     ------------------------------------------------------------------------ */
+  div.absolute.right-0,
+  div.absolute[class*="w-"],
+  ul[role="menu"],
+  div[role="menu"],
+  div[class*="shadow-xl"][class*="absolute"],
+  div[class*="shadow-2xl"][class*="absolute"] {
+    background-color: rgba(10, 10, 14, 0.92) !important;
+    backdrop-filter: blur(20px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.10) !important;
+    color: #ffffff !important;
+  }
+
+  /* ------------------------------------------------------------------------
+     7. TABELAS NO TEMA ESCURO
+     ------------------------------------------------------------------------ */
+  table {
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  table thead th {
+    background-color: rgba(6, 6, 10, 0.95) !important;
+    color: rgba(255, 255, 255, 0.85) !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12) !important;
+    font-family: var(--font-mono) !important;
+    font-size: 11px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.08em !important;
+    font-weight: 600 !important;
+  }
+
+  table tbody tr {
+    background-color: transparent !important;
+    transition: background-color var(--transition);
+  }
+
+  table tbody tr td {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+    color: #ffffff !important;
+  }
+
+  table tbody tr:hover td {
+    background-color: rgba(255, 255, 255, 0.04) !important;
+  }
+
+  /* ------------------------------------------------------------------------
+     8. FORMULÁRIOS & CAMPOS DE ENTRADA NO TEMA ESCURO
+     ------------------------------------------------------------------------ */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="submit"]):not([type="button"]),
+  select,
+  textarea {
+    background-color: rgba(0, 0, 0, 0.65) !important;
+    backdrop-filter: blur(12px) !important;
+    -webkit-backdrop-filter: blur(12px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    color: #ffffff !important;
+    border-radius: var(--radius-sm) !important;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5) !important;
+    transition: border-color var(--transition), box-shadow var(--transition);
+  }
+
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="submit"]):not([type="button"])::placeholder,
+  textarea::placeholder {
+    color: rgba(255, 255, 255, 0.45) !important;
+  }
+
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="submit"]):not([type="button"]):focus,
+  select:focus,
+  textarea:focus {
+    border-color: #ffffff !important;
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.18), inset 0 1px 2px rgba(0, 0, 0, 0.5) !important;
+    outline: none !important;
+  }
+
+  select option {
+    background-color: #0c0c10 !important;
+    color: #ffffff !important;
+  }
+
+  /* ------------------------------------------------------------------------
+     9. BADGES & STATUS PILLS NO TEMA ESCURO
+     ------------------------------------------------------------------------ */
+  div[class*="bg-emerald-50"],
+  div[class*="bg-emerald-100"],
+  span[class*="bg-emerald-50"],
+  span[class*="bg-emerald-100"],
+  span[class*="bg-emerald-500/20"] {
+    background-color: rgba(34, 197, 94, 0.15) !important;
+    border: 1px solid rgba(34, 197, 94, 0.35) !important;
+    color: #86efac !important;
+  }
+
+  div[class*="bg-indigo-50"],
+  div[class*="bg-indigo-100"],
+  span[class*="bg-indigo-50"],
+  span[class*="bg-indigo-100"],
+  span[class*="bg-indigo-500/20"],
+  span[class*="bg-blue-50"],
+  span[class*="bg-blue-100"],
+  span[class*="bg-blue-500/20"] {
+    background-color: rgba(56, 189, 248, 0.15) !important;
+    border: 1px solid rgba(56, 189, 248, 0.35) !important;
+    color: #7dd3fc !important;
+  }
+
+  div[class*="bg-amber-50"],
+  div[class*="bg-amber-100"],
+  span[class*="bg-amber-50"],
+  span[class*="bg-amber-100"],
+  span[class*="bg-amber-500/20"] {
+    background-color: rgba(245, 158, 11, 0.15) !important;
+    border: 1px solid rgba(245, 158, 11, 0.35) !important;
+    color: #fde047 !important;
+  }
+
+  div[class*="bg-rose-50"],
+  div[class*="bg-rose-100"],
+  div[class*="bg-red-50"],
+  div[class*="bg-red-100"],
+  span[class*="bg-rose-50"],
+  span[class*="bg-rose-100"],
+  span[class*="bg-red-50"],
+  span[class*="bg-red-100"] {
+    background-color: rgba(239, 68, 68, 0.15) !important;
+    border: 1px solid rgba(239, 68, 68, 0.35) !important;
+    color: #fca5a5 !important;
+  }
 }
 
-.gsi-material-button:hover {
-  background-color: var(--bg-surface-hover) !important;
-  border-color: rgba(255, 255, 255, 0.3) !important;
-}
+/* ESTILO DEEPHAT */
+/* ==========================================================================
+   TEMA CLARO: TRANSPARENT BLUR LIQUID GLASS & TEXTO PRETO
+   - Todos os cards transparentes blur liquid glass
+   - Menu lateral transparente blur liquid glass com texto preto e rodapé fixo
+   - Cabeçalhos ("babechalhos") blur liquid glass
+   - Texto preto de alto contraste
+   ========================================================================== */
+[data-theme="light"],
+.theme-slate {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
 
-.gsi-material-button .gsi-material-button-contents {
-  font-family: var(--font-sans);
-  font-weight: 500;
-  color: var(--text-primary) !important;
+  #tenant_client_portal, 
+  #super_admin_portal, 
+  main, 
+  #main_content_area {
+    background-color: var(--bg-base) !important;
+    color: var(--text-primary) !important;
+  }
+
+  /* ------------------------------------------------------------------------
+     1. TODOS OS CARDS & DIVS: TRANSPARENTES BLUR LIQUID GLASS NO TEMA CLARO
+     ------------------------------------------------------------------------ */
+  div.bg-white:not(#tenant_client_portal):not(#super_admin_portal),
+  div.bg-slate-50:not(#tenant_client_portal):not(#super_admin_portal),
+  div.bg-slate-100:not(#tenant_client_portal):not(#super_admin_portal),
+  div.bg-gray-50,
+  div.bg-gray-100,
+  div[class*="rounded-xl"]:not(aside *):not(button):not(input):not(.w-1):not(.pointer-events-none),
+  div[class*="rounded-2xl"]:not(aside *):not(button):not(input):not(.w-1):not(.pointer-events-none),
+  div[class*="rounded-3xl"]:not(aside *):not(button):not(input):not(.w-1):not(.pointer-events-none),
+  section[class*="bg-white"],
+  article[class*="bg-white"],
+  div[class*="shadow-sm"][class*="border"]:not(aside *):not(button):not(input) {
+    background-color: rgba(255, 255, 255, 0.65) !important;
+    backdrop-filter: blur(16px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+    border: 1px solid rgba(0, 0, 0, 0.08) !important;
+    box-shadow: 0 8px 30px -4px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.95) !important;
+    color: #000000 !important;
+  }
+
+  /* Hover de cards no tema claro */
+  div.bg-white:hover,
+  div.group:hover {
+    background-color: rgba(255, 255, 255, 0.85) !important;
+    border-color: rgba(0, 0, 0, 0.16) !important;
+    box-shadow: 0 12px 36px -4px rgba(0, 0, 0, 0.08), inset 0 1px 0 #ffffff !important;
+  }
+
+  /* Bordas sutis no tema claro */
+  .border-slate-100,
+  .border-slate-150,
+  .border-slate-200,
+  .border-slate-300,
+  [class*="border-slate-200/"],
+  [class*="border-slate-100/"] {
+    border-color: rgba(0, 0, 0, 0.08) !important;
+  }
+
+  /* ------------------------------------------------------------------------
+     2. MENU LATERAL NO TEMA CLARO: TRANSPARENTE BLUR LIQUID GLASS + TEXTO PRETO
+     ------------------------------------------------------------------------ */
+  aside,
+  aside.bg-slate-900 {
+    background-color: rgba(255, 255, 255, 0.72) !important;
+    backdrop-filter: blur(24px) saturate(190%) !important;
+    -webkit-backdrop-filter: blur(24px) saturate(190%) !important;
+    border-right: 1px solid rgba(0, 0, 0, 0.08) !important;
+    color: #000000 !important;
+    box-shadow: 4px 0 24px -2px rgba(0, 0, 0, 0.04) !important;
+  }
+
+  /* Header do menu lateral no tema claro */
+  aside > div:first-child {
+    background-color: rgba(255, 255, 255, 0.88) !important;
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08) !important;
+    color: #000000 !important;
+  }
+  aside > div:first-child h2,
+  aside > div:first-child span,
+  aside > div:first-child p {
+    color: #000000 !important;
+  }
+
+  /* Botões e links de navegação da sidebar */
+  aside nav button,
+  aside nav a {
+    color: #1e293b !important;
+    background-color: transparent !important;
+    border-color: transparent !important;
+  }
+  aside nav button:hover,
+  aside nav a:hover {
+    background-color: rgba(0, 0, 0, 0.05) !important;
+    color: #000000 !important;
+  }
+  aside nav button svg,
+  aside nav a svg {
+    color: #334155 !important;
+    stroke: #334155 !important;
+  }
+  aside nav button:hover svg {
+    color: #000000 !important;
+    stroke: #000000 !important;
+  }
+
+  /* Item ativo na sidebar no tema claro */
+  aside nav button.bg-slate-800,
+  aside nav button.bg-indigo-600,
+  aside nav button[class*="bg-slate-800"],
+  aside nav div[class*="bg-slate-800"] {
+    background-color: rgba(0, 0, 0, 0.07) !important;
+    border: 1px solid rgba(0, 0, 0, 0.12) !important;
+    color: #000000 !important;
+    font-weight: 700 !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 2px 8px rgba(0, 0, 0, 0.04) !important;
+  }
+  aside nav button.bg-slate-800 svg,
+  aside nav button.bg-indigo-600 svg {
+    color: #000000 !important;
+    stroke: #000000 !important;
+  }
+
+  /* Títulos de agrupamento no menu lateral */
+  aside nav span[class*="text-[10px]"],
+  aside nav p[class*="uppercase"] {
+    color: rgba(0, 0, 0, 0.45) !important;
+    font-weight: 700 !important;
+  }
+
+  /* Rodapé do menu lateral no tema claro (100% FIXO) */
+  aside > div:last-child {
+    background-color: rgba(255, 255, 255, 0.88) !important;
+    backdrop-filter: blur(20px) !important;
+    -webkit-backdrop-filter: blur(20px) !important;
+    border-top: 1px solid rgba(0, 0, 0, 0.08) !important;
+    color: #000000 !important;
+  }
+  aside > div:last-child p,
+  aside > div:last-child span {
+    color: #000000 !important;
+  }
+  aside > div:last-child button {
+    background-color: rgba(0, 0, 0, 0.04) !important;
+    border: 1px solid rgba(0, 0, 0, 0.08) !important;
+    color: #000000 !important;
+  }
+  aside > div:last-child button:hover {
+    background-color: rgba(0, 0, 0, 0.08) !important;
+    color: #000000 !important;
+  }
+
+  /* ------------------------------------------------------------------------
+     3. CABEÇALHOS ("BABECHALHOS") BLUR LIQUID GLASS NO TEMA CLARO
+     ------------------------------------------------------------------------ */
+  /* Cabeçalho mobile e barras superiores de fixação */
+  .flex.md\:hidden.items-center.justify-between.p-4.bg-slate-900,
+  div[class*="sticky top-0"],
+  header,
+  div.border-b.border-slate-200,
+  div.border-b.border-slate-800 {
+    background-color: rgba(255, 255, 255, 0.72) !important;
+    backdrop-filter: blur(16px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08) !important;
+    color: #000000 !important;
+  }
+  .flex.md\:hidden.items-center.justify-between.p-4.bg-slate-900 svg,
+  header svg {
+    color: #000000 !important;
+    stroke: #000000 !important;
+  }
+
+  /* Cabeçalhos de tabelas (thead th) em Liquid Glass */
+  table thead th {
+    background-color: rgba(245, 245, 248, 0.85) !important;
+    backdrop-filter: blur(12px) !important;
+    -webkit-backdrop-filter: blur(12px) !important;
+    color: #000000 !important;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08) !important;
+    font-family: var(--font-mono) !important;
+    font-size: 11px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.08em !important;
+    font-weight: 700 !important;
+  }
+
+  /* Cabeçalhos internos de seções e modais */
+  div[class*="border-b"]:not(aside *) {
+    border-color: rgba(0, 0, 0, 0.08) !important;
+  }
+
+  /* ------------------------------------------------------------------------
+     4. TEXTO PRETO DE ALTO CONTRASTE NO TEMA CLARO
+     ------------------------------------------------------------------------ */
+  h1, h2, h3, h4, h5, h6 {
+    color: #000000 !important;
+  }
+
+  .text-slate-900,
+  .text-slate-800,
+  .text-slate-700,
+  .text-gray-900,
+  .text-gray-800,
+  .text-gray-700 {
+    color: #000000 !important;
+  }
+
+  .text-slate-600,
+  .text-slate-500,
+  .text-gray-600,
+  .text-gray-500 {
+    color: rgba(0, 0, 0, 0.75) !important;
+  }
+
+  .text-slate-400,
+  .text-gray-400 {
+    color: rgba(0, 0, 0, 0.55) !important;
+  }
+
+  /* Textos originalmente em branco dentro da barra lateral ou cabeçalho */
+  aside .text-white,
+  aside .text-slate-100,
+  aside .text-slate-200,
+  aside .text-slate-300,
+  aside .text-slate-400,
+  .flex.md\:hidden .text-white {
+    color: #000000 !important;
+  }
+
+  /* ------------------------------------------------------------------------
+     5. BOTÕES NO TEMA CLARO
+     ------------------------------------------------------------------------ */
+  /* Botões Primários (Preto puro com texto branco) */
+  button.bg-blue-600,
+  button.bg-blue-700,
+  button.bg-indigo-600,
+  button.bg-indigo-700,
+  a[role="button"].bg-blue-600,
+  a[role="button"].bg-indigo-600,
+  button[data-variant="primary"],
+  .btn-primary {
+    background-color: #000000 !important;
+    color: #ffffff !important;
+    border-color: #000000 !important;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18) !important;
+  }
+  button.bg-blue-600:hover,
+  button.bg-indigo-600:hover,
+  button.bg-blue-700:hover,
+  button.bg-indigo-700:hover {
+    background-color: #1e1e24 !important;
+    color: #ffffff !important;
+    transform: translateY(-1px) !important;
+  }
+  button.bg-blue-600 svg,
+  button.bg-indigo-600 svg {
+    color: #ffffff !important;
+    stroke: #ffffff !important;
+  }
+
+  /* Botões Secundários no tema claro */
+  button.bg-white,
+  button.bg-slate-50,
+  button.bg-slate-100,
+  button.bg-slate-800,
+  button[class*="border-slate-200"],
+  button[class*="border-slate-300"],
+  button.btn-secondary,
+  button.btn-ghost {
+    background-color: rgba(255, 255, 255, 0.70) !important;
+    backdrop-filter: blur(10px) !important;
+    -webkit-backdrop-filter: blur(10px) !important;
+    border: 1px solid rgba(0, 0, 0, 0.12) !important;
+    color: #000000 !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.8) !important;
+  }
+  button.bg-white:hover,
+  button.bg-slate-50:hover,
+  button.bg-slate-100:hover,
+  button.bg-slate-800:hover {
+    background-color: rgba(255, 255, 255, 0.95) !important;
+    border-color: rgba(0, 0, 0, 0.22) !important;
+    color: #000000 !important;
+  }
+  button.bg-white svg,
+  button.bg-slate-800 svg {
+    color: #000000 !important;
+    stroke: #000000 !important;
+  }
+
+  /* ------------------------------------------------------------------------
+     6. FORMULÁRIOS & CAMPOS NO TEMA CLARO
+     ------------------------------------------------------------------------ */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="submit"]):not([type="button"]),
+  select,
+  textarea {
+    background-color: rgba(255, 255, 255, 0.80) !important;
+    backdrop-filter: blur(12px) !important;
+    -webkit-backdrop-filter: blur(12px) !important;
+    border: 1px solid rgba(0, 0, 0, 0.14) !important;
+    color: #000000 !important;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: rgba(0, 0, 0, 0.45) !important;
+  }
+  input:focus,
+  select:focus,
+  textarea:focus {
+    border-color: #000000 !important;
+    box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.10), inset 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+  }
+  select option {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* ------------------------------------------------------------------------
+     7. MODAIS & POPUPS NO TEMA CLARO
+     ------------------------------------------------------------------------ */
+  [role="dialog"],
+  .fixed.inset-0 > div[class*="rounded-3xl"],
+  .fixed.inset-0 > div[class*="rounded-2xl"],
+  .modal-content {
+    background-color: rgba(255, 255, 255, 0.88) !important;
+    backdrop-filter: blur(24px) saturate(190%) !important;
+    -webkit-backdrop-filter: blur(24px) saturate(190%) !important;
+    border: 1px solid rgba(0, 0, 0, 0.10) !important;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15), inset 0 1px 0 #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* Dropdowns flutuantes no tema claro */
+  div.absolute.right-0,
+  div.absolute[class*="w-"],
+  ul[role="menu"],
+  div[role="menu"],
+  div[class*="shadow-xl"][class*="absolute"],
+  div[class*="shadow-2xl"][class*="absolute"] {
+    background-color: rgba(255, 255, 255, 0.92) !important;
+    backdrop-filter: blur(20px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+    border: 1px solid rgba(0, 0, 0, 0.10) !important;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.12), inset 0 1px 0 #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* Linhas de tabelas no tema claro */
+  table tbody tr td {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06) !important;
+    color: #000000 !important;
+  }
+  table tbody tr:hover td {
+    background-color: rgba(0, 0, 0, 0.03) !important;
+  }
 }
 
 /* ==========================================================================
-   RESPONSIVIDADE FLUIDA MOBILE-FIRST & ÁREAS SEGURAS (SAFE AREAS)
+   ACESSABILIDADE, TOUCH TARGETS & CONTAINER RESPONSIVO
    ========================================================================== */
 :root {
   --sat: env(safe-area-inset-top, 0px);
@@ -770,7 +1292,6 @@
   --sal: env(safe-area-inset-left, 0px);
 }
 
-/* Alvos mínimos de toque em dispositivos touch (44x44px) */
 @media (pointer: coarse) {
   button, 
   a[role="button"], 
@@ -783,7 +1304,6 @@
   }
 }
 
-/* Prevenção de estouro e garantia de scroll interno em tabelas */
 .responsive-table-container {
   width: 100%;
   max-width: 100%;
@@ -792,13 +1312,11 @@
   overscroll-behavior-x: contain;
 }
 
-/* Imagens e mídias sempre fluidas */
 img, video, canvas, svg {
   max-width: 100%;
   height: auto;
 }
 
-/* Container de layout com suporte a safe area */
 .app-safe-container {
   padding-top: max(0.5rem, var(--sat));
   padding-bottom: max(0.5rem, var(--sab));
@@ -806,48 +1324,7 @@ img, video, canvas, svg {
   padding-right: max(0.5rem, var(--sar));
 }
 
-/* Tipografia fluida com clamp() */
-.fluid-h1 {
-  font-size: clamp(1.4rem, 1.15rem + 1.25vw, 2.25rem);
-  line-height: 1.15;
-}
-
-.fluid-h2 {
-  font-size: clamp(1.15rem, 0.95rem + 0.9vw, 1.75rem);
-  line-height: 1.2;
-}
-
-.fluid-h3 {
-  font-size: clamp(0.95rem, 0.85rem + 0.5vw, 1.25rem);
-  line-height: 1.25;
-}
-
-.fluid-text-sm {
-  font-size: clamp(0.75rem, 0.7rem + 0.2vw, 0.875rem);
-}
-
-/* Grids fluidos auto-fit e auto-fill sem estouro */
-.grid-fluid-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
-  gap: clamp(0.75rem, 0.6rem + 0.5vw, 1.25rem);
-}
-
-.grid-fluid-stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
-  gap: clamp(0.75rem, 0.6rem + 0.5vw, 1.25rem);
-}
-
-.grid-fluid-forms {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
-  gap: 1rem;
-}
-
-/* Garantia de ausência de scroll horizontal no viewport global */
 html, body, #root {
   max-width: 100vw;
   overflow-x: clip;
 }
-

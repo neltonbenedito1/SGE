@@ -440,7 +440,7 @@ export function getThemePreference(): string {
     const localTheme = localStorage.getItem('user_theme');
     if (localTheme) return localTheme;
   } catch (e) {}
-  return 'theme-slate';
+  return 'theme-dark';
 }
 
 export function saveLastAction(action: string) {

@@ -64,6 +64,7 @@ export const SYSTEM_MODULES: SystemModuleInfo[] = [
   { key: 'disciplinas', label: 'Disciplinas & Matérias', category: 'Académico', description: 'Programa curicular e atribuição de cadeiras' },
   { key: 'classes_escolares', label: 'Classes Lectivas', category: 'Académico', description: 'Níveis de ensino (7ª Classe, 10ª Classe, etc.)' },
   { key: 'calendario', label: 'Calendário & Horários', category: 'Académico', description: 'Horário de aulas, exames e eventos acadêmicos' },
+  { key: 'plano_aulas', label: 'Plano de Aulas', category: 'Académico', description: 'Registo e acompanhamento dos tópicos e matérias leccionadas' },
   { key: 'pauta_geral', label: 'Pauta Geral de Notas', category: 'Académico', description: 'Visão consolidada de todas as notas por turma' },
   { key: 'pautas', label: 'Lançamento de Notas', category: 'Académico', description: 'Digitador de notas por disciplinas e trimestres' },
   { key: 'assiduidade', label: 'Controle de Assiduidade', category: 'Académico', description: 'Presenças, faltas e relatórios de assiduidade' },
@@ -123,7 +124,7 @@ export const DEFAULT_CATEGORIES: UserCategoryPermission[] = [
     cor_badge: 'sky',
     is_system: true,
     modulos: SYSTEM_MODULES.reduce((acc, mod) => {
-      const isAllowed = ['dashboard', 'atividades', 'estudantes', 'turmas', 'disciplinas', 'pauta_geral', 'pautas', 'processos', 'calendario', 'assiduidade', 'biblioteca'].includes(mod.key);
+      const isAllowed = ['dashboard', 'atividades', 'estudantes', 'turmas', 'disciplinas', 'pauta_geral', 'pautas', 'processos', 'calendario', 'plano_aulas', 'assiduidade', 'biblioteca'].includes(mod.key);
       acc[mod.key] = {
         habilitado: isAllowed,
         acoes: isAllowed ? { ...READONLY_ACTIONS } : { ...NONE_ACTIONS }
@@ -140,7 +141,7 @@ export const DEFAULT_CATEGORIES: UserCategoryPermission[] = [
     is_system: true,
     modulos: SYSTEM_MODULES.reduce((acc, mod) => {
       const isAllowed = !['usuarios', 'configuracao', 'provincias', 'escolas', 'auditoria'].includes(mod.key);
-      const isWriteAllowed = ['pautas', 'atividades', 'assiduidade', 'processos', 'biblioteca'].includes(mod.key);
+      const isWriteAllowed = ['pautas', 'atividades', 'assiduidade', 'processos', 'biblioteca', 'plano_aulas'].includes(mod.key);
       acc[mod.key] = {
         habilitado: isAllowed,
         acoes: isAllowed ? (isWriteAllowed ? { ...FULL_ACTIONS } : { ...READONLY_ACTIONS }) : { ...NONE_ACTIONS }
@@ -156,7 +157,7 @@ export const DEFAULT_CATEGORIES: UserCategoryPermission[] = [
     cor_badge: 'amber',
     is_system: true,
     modulos: SYSTEM_MODULES.reduce((acc, mod) => {
-      const isAllowed = ['dashboard', 'atividades', 'estudantes', 'pauta_geral', 'pautas', 'assiduidade', 'notificacoes', 'processos'].includes(mod.key);
+      const isAllowed = ['dashboard', 'atividades', 'estudantes', 'pauta_geral', 'pautas', 'assiduidade', 'notificacoes', 'processos', 'plano_aulas'].includes(mod.key);
       acc[mod.key] = {
         habilitado: isAllowed,
         acoes: isAllowed ? { ...READONLY_ACTIONS } : { ...NONE_ACTIONS }
@@ -335,6 +336,9 @@ export const GlobalPermissionsModule: React.FC<GlobalPermissionsModuleProps> = (
 
       for (const userDoc of usersSnap.docs) {
         const userData = userDoc.data();
+        if (tenantId && tenantId !== 'global' && userData.tenant_id && userData.tenant_id !== tenantId) {
+          continue;
+        }
         const userType = (userData.tipo || userData.cargo || userData.categoria_codigo || userData.categoria_id || userData.categoria || '').toString().toLowerCase().trim();
 
         const isMatch = 
@@ -355,6 +359,11 @@ export const GlobalPermissionsModule: React.FC<GlobalPermissionsModuleProps> = (
 
       if (updatedCount > 0) {
         await batch.commit();
+      }
+      try {
+        window.dispatchEvent(new CustomEvent('sysedu:permissions_updated', { detail: { category: cat.codigo, count: updatedCount } }));
+      } catch (e) {
+        // ignore in non-browser context
       }
       return updatedCount;
     } catch (err) {

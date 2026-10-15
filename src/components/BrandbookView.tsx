@@ -456,12 +456,12 @@ export default function BrandbookView({
   return (
     <main 
       id="branding-root-main" 
-      className={`min-h-screen ${isDark ? 'bg-[#070b16] text-slate-100' : 'bg-slate-50 text-slate-900'} font-sans pb-16 selection:bg-blue-600 selection:text-white transition-colors duration-300`}
+      className={`min-h-screen ${isDark ? 'bg-transparent text-[var(--text-primary)]' : 'bg-slate-50 text-slate-900'} font-sans pb-16 selection:bg-white selection:text-black transition-colors duration-300`}
     >
       {/* 1. TOP UTILITY BAR (Barra Superior - Left: Language Pill; Right: Login/Sign-Up & Theme Toggle) */}
       <div 
         id="top-utility-bar" 
-        className={`w-full ${isDark ? 'bg-[#0a0f1d] border-slate-800/80' : 'bg-white border-slate-200'} border-b px-4 sm:px-8 py-2.5 transition-colors`}
+        className={`w-full ${isDark ? 'bg-black/60 border-white/[0.08]' : 'bg-white border-slate-200'} backdrop-blur-md border-b px-4 sm:px-8 py-2.5 transition-colors`}
       >
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           {/* Left: Language Selector Pill */}
@@ -476,11 +476,11 @@ export default function BrandbookView({
               onClick={onOpenLogin}
               className={`flex items-center gap-2 px-4 py-1.5 rounded-full ${
                 isDark
-                  ? 'bg-[#0f172a] hover:bg-slate-800 border-slate-700/80 text-white'
+                  ? 'bg-white hover:bg-slate-100 text-black shadow-[0_0_20px_rgba(255,255,255,0.18)] border-transparent'
                   : 'bg-blue-600 hover:bg-blue-700 border-blue-600 text-white shadow-xs shadow-blue-500/20'
               } border text-xs sm:text-sm font-semibold transition-all cursor-pointer active:scale-95`}
             >
-              <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+              <Zap className={`w-3.5 h-3.5 ${isDark ? 'text-black fill-black' : 'text-amber-400 fill-amber-400'}`} />
               <span>Login / Sign-Up</span>
             </button>
 
@@ -491,13 +491,13 @@ export default function BrandbookView({
               onClick={onToggleTheme}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full ${
                 isDark 
-                  ? 'bg-[#0f172a] hover:bg-slate-800 border-slate-700/80 text-slate-300' 
+                  ? 'bg-white/[0.04] hover:bg-white/[0.08] border-white/[0.08] text-white/80' 
                   : 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700'
               } border transition-all cursor-pointer shadow-xs active:scale-95`}
               title="Alternar Tema Claro / Escuro"
             >
               <Sun className={`w-3.5 h-3.5 ${activeTheme === 'theme-slate' ? 'text-amber-500 font-bold' : 'text-slate-400'}`} />
-              <Moon className={`w-3.5 h-3.5 ${activeTheme === 'theme-dark' ? 'text-blue-400 font-bold' : 'text-slate-400'}`} />
+              <Moon className={`w-3.5 h-3.5 ${activeTheme === 'theme-dark' ? 'text-white font-bold' : 'text-slate-400'}`} />
             </button>
           </div>
         </div>
@@ -507,7 +507,7 @@ export default function BrandbookView({
       <header 
         id="branding-header" 
         className={`sticky top-0 z-40 ${
-          isDark ? 'bg-[#0a0f1d]/95 border-slate-800/80' : 'bg-white/95 border-slate-200 shadow-sm'
+          isDark ? 'bg-black/70 border-white/[0.08]' : 'bg-white/95 border-slate-200 shadow-sm'
         } backdrop-blur-xl border-b px-4 sm:px-8 py-3.5 transition-all`}
       >
         <div id="branding-header-inner" className="max-w-7xl mx-auto flex flex-col lg:flex-row items-center justify-between gap-4">
@@ -533,9 +533,11 @@ export default function BrandbookView({
               onClick={() => setSlideMode(!slideMode)}
               className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer border ${
                 slideMode
-                  ? 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-900/20'
+                  ? isDark
+                    ? 'bg-white text-black border-transparent shadow-[0_0_20px_rgba(255,255,255,0.2)]'
+                    : 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-900/20'
                   : isDark
-                    ? 'bg-slate-900 text-slate-300 border-slate-700/80 hover:bg-slate-800 hover:text-white'
+                    ? 'bg-white/[0.04] text-white/80 border-white/[0.08] hover:bg-white/[0.08] hover:text-white'
                     : 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200 hover:text-slate-900'
               }`}
             >
@@ -546,13 +548,13 @@ export default function BrandbookView({
             {/* Bottom row: Category Filter Tabs */}
             {!slideMode && (
               <div className="flex items-center gap-2 flex-wrap justify-center">
-                <div className={`flex items-center ${isDark ? 'bg-slate-950/90 border-slate-800' : 'bg-slate-100 border-slate-200'} border rounded-2xl p-1 gap-1 shadow-inner`}>
+                <div className={`flex items-center ${isDark ? 'bg-black/60 border-white/[0.08]' : 'bg-slate-100 border-slate-200'} border rounded-2xl p-1 gap-1 shadow-inner`}>
                   <button
                     onClick={() => setActiveCategory('all')}
                     className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                       activeCategory === 'all' 
-                        ? 'bg-blue-600 text-white shadow-sm' 
-                        : isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900 hover:bg-white/70'
+                        ? isDark ? 'bg-white text-black shadow-[0_0_16px_rgba(255,255,255,0.18)]' : 'bg-blue-600 text-white shadow-sm'
+                        : isDark ? 'text-white/60 hover:text-white' : 'text-slate-600 hover:text-slate-900 hover:bg-white/70'
                     }`}
                   >
                     Todos (22 Tópicos)
@@ -561,8 +563,8 @@ export default function BrandbookView({
                     onClick={() => setActiveCategory('vision')}
                     className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                       activeCategory === 'vision' 
-                        ? 'bg-blue-600 text-white shadow-sm' 
-                        : isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900 hover:bg-white/70'
+                        ? isDark ? 'bg-white text-black shadow-[0_0_16px_rgba(255,255,255,0.18)]' : 'bg-blue-600 text-white shadow-sm'
+                        : isDark ? 'text-white/60 hover:text-white' : 'text-slate-600 hover:text-slate-900 hover:bg-white/70'
                     }`}
                   >
                     Visão & Estrutura
@@ -571,8 +573,8 @@ export default function BrandbookView({
                     onClick={() => setActiveCategory('academic')}
                     className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                       activeCategory === 'academic' 
-                        ? 'bg-blue-600 text-white shadow-sm' 
-                        : isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900 hover:bg-white/70'
+                        ? isDark ? 'bg-white text-black shadow-[0_0_16px_rgba(255,255,255,0.18)]' : 'bg-blue-600 text-white shadow-sm'
+                        : isDark ? 'text-white/60 hover:text-white' : 'text-slate-600 hover:text-slate-900 hover:bg-white/70'
                     }`}
                   >
                     Académico & Módulos
@@ -581,8 +583,8 @@ export default function BrandbookView({
                     onClick={() => setActiveCategory('tech')}
                     className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                       activeCategory === 'tech' 
-                        ? 'bg-blue-600 text-white shadow-sm' 
-                        : isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900 hover:bg-white/70'
+                        ? isDark ? 'bg-white text-black shadow-[0_0_16px_rgba(255,255,255,0.18)]' : 'bg-blue-600 text-white shadow-sm'
+                        : isDark ? 'text-white/60 hover:text-white' : 'text-slate-600 hover:text-slate-900 hover:bg-white/70'
                     }`}
                   >
                     Tecnologia & Governança
@@ -591,8 +593,8 @@ export default function BrandbookView({
                     onClick={() => setActiveCategory('branding')}
                     className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                       activeCategory === 'branding' 
-                        ? 'bg-blue-600 text-white shadow-sm' 
-                        : isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-600 hover:text-slate-900 hover:bg-white/70'
+                        ? isDark ? 'bg-white text-black shadow-[0_0_16px_rgba(255,255,255,0.18)]' : 'bg-blue-600 text-white shadow-sm'
+                        : isDark ? 'text-white/60 hover:text-white' : 'text-slate-600 hover:text-slate-900 hover:bg-white/70'
                     }`}
                   >
                     Identidade Visual
@@ -603,7 +605,7 @@ export default function BrandbookView({
                   onClick={() => window.print()}
                   className={`p-2 rounded-xl ${
                     isDark 
-                      ? 'bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border-slate-800' 
+                      ? 'bg-white/[0.04] hover:bg-white/[0.08] text-white/70 hover:text-white border-white/[0.08]' 
                       : 'bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 border-slate-200'
                   } border transition-colors cursor-pointer`}
                   title="Imprimir Apresentação"
@@ -814,7 +816,7 @@ export default function BrandbookView({
         <div id="grid-mode-container" className="max-w-7xl mx-auto px-4 sm:px-8 py-10 space-y-16">
           
           {/* HERO BANNER SECTION (SLIDE 1) */}
-          <section id="section-hero" className="relative rounded-3xl overflow-hidden border border-slate-800 bg-gradient-to-br from-slate-950 via-[#0D1B3D] to-slate-950 p-8 sm:p-14 shadow-2xl">
+          <section id="section-hero" className={`relative rounded-3xl overflow-hidden border ${isDark ? 'border-white/[0.08] bg-black/75 shadow-[0_8px_32px_rgba(0,0,0,0.7)]' : 'border-slate-800 bg-gradient-to-br from-slate-950 via-[#0D1B3D] to-slate-950 shadow-2xl'} p-8 sm:p-14`}>
             <div className="absolute top-0 right-0 w-full sm:w-1/2 h-full opacity-35 pointer-events-none">
               <img 
                 src={heroBannerImg} 
@@ -822,16 +824,16 @@ export default function BrandbookView({
                 referrerPolicy="no-referrer"
                 className="w-full h-full object-cover object-center"
               />
-              <div className="absolute inset-0 bg-gradient-to-r from-[#0D1B3D] via-[#0D1B3D]/70 to-transparent"></div>
+              <div className={`absolute inset-0 ${isDark ? 'bg-gradient-to-r from-black via-black/80 to-transparent' : 'bg-gradient-to-r from-[#0D1B3D] via-[#0D1B3D]/70 to-transparent'}`}></div>
             </div>
 
             <div className="relative z-10 max-w-2xl">
-              <div className="inline-flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-bold uppercase tracking-wider mb-6">
-                <Sparkles className="w-3.5 h-3.5" /> Plataforma de Gestão Educacional
+              <div className={`inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-full ${isDark ? 'bg-white/[0.05] border-white/[0.1] text-white/90' : 'bg-blue-500/20 border-blue-400/40 text-blue-300'} text-xs font-mono font-medium uppercase tracking-wider mb-6`}>
+                <Sparkles className={`w-3.5 h-3.5 ${isDark ? 'text-white' : 'text-blue-300'}`} /> Plataforma de Gestão Educacional
               </div>
               <h1 className="text-4xl sm:text-5xl font-black text-white tracking-tight leading-tight mb-4">
                 Um ecossistema. <br />
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-teal-300 to-blue-200">
+                <span className={`text-transparent bg-clip-text ${isDark ? 'bg-gradient-to-r from-white via-slate-200 to-slate-400' : 'bg-gradient-to-r from-blue-400 via-teal-300 to-blue-200'}`}>
                   Todas as escolas.
                 </span> <br />
                 Uma única visão.
@@ -840,8 +842,8 @@ export default function BrandbookView({
                 ERP / SIS educacional multi-tenant em nuvem, desenhado para mantenedoras, redes de ensino e instituições que gerem múltiplas escolas sob uma única infraestrutura.
               </p>
               
-              <div className="border-l-4 border-teal-400 pl-4 py-1 mb-8">
-                <p className="text-sm italic text-teal-300 font-serif">
+              <div className={`border-l-2 ${isDark ? 'border-white/40' : 'border-teal-400'} pl-4 py-1 mb-8`}>
+                <p className={`text-sm italic ${isDark ? 'text-white/80' : 'text-teal-300'} font-serif`}>
                   “Da gestão de uma escola à gestão de todo um ecossistema educacional.”
                 </p>
               </div>
@@ -849,13 +851,17 @@ export default function BrandbookView({
               <div className="flex flex-wrap items-center gap-4">
                 <button
                   onClick={() => { setSlideMode(true); setCurrentSlideIndex(0); }}
-                  className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all shadow-lg shadow-blue-900/30 flex items-center gap-2 cursor-pointer"
+                  className={`px-6 py-3.5 rounded-full ${
+                    isDark 
+                      ? 'bg-white hover:bg-slate-100 text-black shadow-[0_0_24px_rgba(255,255,255,0.22)] border-transparent' 
+                      : 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/30'
+                  } text-sm font-semibold transition-all flex items-center gap-2.5 cursor-pointer`}
                 >
                   <Maximize2 className="w-4 h-4" /> Iniciar Apresentação Interativa
                 </button>
-                <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-900/80 px-4 py-3 rounded-xl border border-slate-800">
+                <div className={`flex items-center gap-2 text-xs ${isDark ? 'text-white/80 bg-white/[0.03] border-white/[0.08]' : 'text-slate-200 bg-slate-900/90 border-slate-700'} px-4 py-3 rounded-full border font-mono`}>
                   <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                  <span>Multi-Tenant • RBAC • Nuvem Firestore</span>
+                  <span className={`${isDark ? 'text-white/80' : 'text-slate-200'} font-semibold`}>Multi-Tenant • RBAC • Nuvem Firestore</span>
                 </div>
               </div>
             </div>
@@ -866,10 +872,10 @@ export default function BrandbookView({
             <section id="section-context" className="space-y-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <span className="text-xs font-bold uppercase tracking-wider text-blue-400">O Contexto</span>
-                  <h2 className="text-2xl font-extrabold text-white tracking-tight">O desafio da gestão educacional em rede</h2>
+                  <span className="text-xs font-bold uppercase tracking-wider text-blue-500 dark:text-blue-400">O Contexto</span>
+                  <h2 className={`text-2xl font-extrabold ${isDark ? 'text-white' : 'text-slate-900'} tracking-tight`}>O desafio da gestão educacional em rede</h2>
                 </div>
-                <span className="text-xs text-slate-500 font-mono">Slide 02</span>
+                <span className={`text-xs ${isDark ? 'text-slate-500' : 'text-slate-400'} font-mono`}>Slide 02</span>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                 {[
@@ -879,18 +885,18 @@ export default function BrandbookView({
                   { n: "4", title: "Pautas morosas", desc: "Processo lento de elaboração, cálculo e publicação de pautas trimestrais." },
                   { n: "5", title: "Falta de auditabilidade", desc: "Ausência de rasto das ações dos utilizadores em âmbito global e local." }
                 ].map((item, idx) => (
-                  <div key={idx} className="bg-slate-950 border border-slate-800/90 rounded-2xl p-5 hover:border-slate-700 transition-all flex flex-col justify-between">
+                  <div key={idx} className={`${isDark ? 'bg-slate-950 border-slate-800/90' : 'bg-white border-slate-200 shadow-xs'} border rounded-2xl p-5 hover:border-blue-400 transition-all flex flex-col justify-between`}>
                     <div>
-                      <div className="w-8 h-8 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20 font-black text-sm flex items-center justify-center mb-3">
+                      <div className={`w-8 h-8 rounded-xl ${isDark ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-blue-100 text-blue-700 border-blue-200'} border font-black text-sm flex items-center justify-center mb-3`}>
                         {item.n}
                       </div>
-                      <h3 className="font-bold text-white text-sm mb-1.5">{item.title}</h3>
-                      <p className="text-xs text-slate-400 leading-relaxed">{item.desc}</p>
+                      <h3 className={`font-bold ${isDark ? 'text-white' : 'text-slate-900'} text-sm mb-1.5`}>{item.title}</h3>
+                      <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-600'} leading-relaxed`}>{item.desc}</p>
                     </div>
                   </div>
                 ))}
               </div>
-              <p className="text-xs text-slate-500 italic text-center">
+              <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-600'} italic text-center`}>
                 Quanto maior a instituição, maior a complexidade de gerir escolas, pessoas, processos e informação.
               </p>
             </section>
@@ -900,15 +906,15 @@ export default function BrandbookView({
           {(activeCategory === 'all' || activeCategory === 'vision') && (
             <section id="section-vision-positioning" className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               {/* Visão de Produto */}
-              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className={`${isDark ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200 shadow-sm'} border rounded-3xl p-6 sm:p-8 space-y-6`}>
+                <div className={`flex items-center justify-between border-b ${isDark ? 'border-slate-800' : 'border-slate-200'} pb-4`}>
                   <div>
-                    <span className="text-xs font-bold uppercase tracking-wider text-teal-400">A Nossa Visão</span>
-                    <h3 className="text-xl font-black text-white mt-1">Infraestrutura SaaS Escalável</h3>
+                    <span className="text-xs font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400">A Nossa Visão</span>
+                    <h3 className={`text-xl font-black ${isDark ? 'text-white' : 'text-slate-900'} mt-1`}>Infraestrutura SaaS Escalável</h3>
                   </div>
-                  <SysEduLogo variant="icon" size={28} />
+                  <SysEduLogo variant={isDark ? "icon" : "icon"} size={28} />
                 </div>
-                <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+                <p className={`text-xs sm:text-sm ${isDark ? 'text-slate-300' : 'text-slate-600'} leading-relaxed`}>
                   Uma infraestrutura SaaS educacional escalável, capaz de atuar como núcleo operacional para mantenedoras e redes de ensino de qualquer dimensão.
                 </p>
                 <div className="space-y-3">
@@ -917,13 +923,13 @@ export default function BrandbookView({
                     { n: "2", t: "Planos SaaS parametrizados", d: "Gestão centralizada de assinaturas, com limites configuráveis de escolas, alunos, professores e turmas por plano." },
                     { n: "3", t: "Multi-idioma configurável", d: "Suporte a tradução e configuração de idioma ao nível do tenant, preparado para diferentes mercados." }
                   ].map((it, idx) => (
-                    <div key={idx} className="bg-slate-900/70 border border-slate-800/80 rounded-2xl p-4 flex items-start gap-3">
-                      <span className="w-6 h-6 rounded-lg bg-teal-500/20 text-teal-300 font-black text-xs flex items-center justify-center shrink-0 mt-0.5">
+                    <div key={idx} className={`${isDark ? 'bg-slate-900/70 border-slate-800/80' : 'bg-slate-50 border-slate-200'} border rounded-2xl p-4 flex items-start gap-3`}>
+                      <span className={`w-6 h-6 rounded-lg ${isDark ? 'bg-teal-500/20 text-teal-300' : 'bg-teal-100 text-teal-800 font-bold'} font-black text-xs flex items-center justify-center shrink-0 mt-0.5`}>
                         {it.n}
                       </span>
                       <div>
-                        <h4 className="font-bold text-xs text-white mb-0.5">{it.t}</h4>
-                        <p className="text-[11px] text-slate-400">{it.d}</p>
+                        <h4 className={`font-bold text-xs ${isDark ? 'text-white' : 'text-slate-900'} mb-0.5`}>{it.t}</h4>
+                        <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{it.d}</p>
                       </div>
                     </div>
                   ))}
@@ -931,32 +937,32 @@ export default function BrandbookView({
               </div>
 
               {/* Posicionamento & Cobertura Real */}
-              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className={`${isDark ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200 shadow-sm'} border rounded-3xl p-6 sm:p-8 space-y-6`}>
+                <div className={`flex items-center justify-between border-b ${isDark ? 'border-slate-800' : 'border-slate-200'} pb-4`}>
                   <div>
-                    <span className="text-xs font-bold uppercase tracking-wider text-blue-400">Posicionamento</span>
-                    <h3 className="text-xl font-black text-white mt-1">Cobertura Real por Domínio</h3>
+                    <span className="text-xs font-bold uppercase tracking-wider text-blue-500 dark:text-blue-400">Posicionamento</span>
+                    <h3 className={`text-xl font-black ${isDark ? 'text-white' : 'text-slate-900'} mt-1`}>Cobertura Real por Domínio</h3>
                   </div>
-                  <span className="text-xs text-slate-500 font-mono">10 Domínios</span>
+                  <span className={`text-xs ${isDark ? 'text-slate-500' : 'text-slate-400'} font-mono`}>10 Domínios</span>
                 </div>
-                <p className="text-xs text-slate-400">
+                <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
                   Cobertura real por domínio funcional, verificada e comprovada no sistema:
                 </p>
                 <div className="grid grid-cols-2 gap-2.5">
                   {[
-                    { name: "Académico", status: "Implementado", color: "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" },
-                    { name: "Administrativo", status: "Implementado", color: "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" },
-                    { name: "Financeiro", status: "Implementado", color: "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" },
-                    { name: "Pessoas (RH)", status: "Implementado", color: "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" },
-                    { name: "Comunicação", status: "Parcial", color: "bg-amber-500/10 text-amber-400 border border-amber-500/30" },
-                    { name: "Famílias", status: "Parcial", color: "bg-amber-500/10 text-amber-400 border border-amber-500/30" },
-                    { name: "Documental", status: "Parcial", color: "bg-amber-500/10 text-amber-400 border border-amber-500/30" },
-                    { name: "Analytics", status: "Parcial", color: "bg-amber-500/10 text-amber-400 border border-amber-500/30" },
-                    { name: "Automação", status: "Parcial", color: "bg-amber-500/10 text-amber-400 border border-amber-500/30" },
-                    { name: "Integrações", status: "Não existe", color: "bg-slate-800 text-slate-400 border border-slate-700" }
+                    { name: "Académico", status: "Implementado", color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 font-bold" },
+                    { name: "Administrativo", status: "Implementado", color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 font-bold" },
+                    { name: "Financeiro", status: "Implementado", color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 font-bold" },
+                    { name: "Pessoas (RH)", status: "Implementado", color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 font-bold" },
+                    { name: "Comunicação", status: "Parcial", color: "bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/30 font-bold" },
+                    { name: "Famílias", status: "Parcial", color: "bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/30 font-bold" },
+                    { name: "Documental", status: "Parcial", color: "bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/30 font-bold" },
+                    { name: "Analytics", status: "Parcial", color: "bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/30 font-bold" },
+                    { name: "Automação", status: "Parcial", color: "bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/30 font-bold" },
+                    { name: "Integrações", status: "Não existe", color: isDark ? "bg-slate-800 text-slate-400 border border-slate-700 font-bold" : "bg-slate-100 text-slate-600 border border-slate-200 font-bold" }
                   ].map((dom, idx) => (
-                    <div key={idx} className="bg-slate-900 border border-slate-800/80 rounded-xl p-3 flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-200">{dom.name}</span>
+                    <div key={idx} className={`flex items-center justify-between p-3 rounded-xl border ${isDark ? 'bg-slate-900 border-slate-800/80' : 'bg-slate-50 border-slate-200'}`}>
+                      <span className={`text-xs font-bold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>{dom.name}</span>
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${dom.color}`}>
                         {dom.status}
                       </span>
@@ -969,36 +975,36 @@ export default function BrandbookView({
 
           {/* SLIDE 5: MODELO DE DADOS MULTI-INSTITUIÇÃO */}
           {(activeCategory === 'all' || activeCategory === 'vision') && (
-            <section id="section-data-model" className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-10 space-y-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-4">
+            <section id="section-data-model" className={`${isDark ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200 shadow-sm'} border rounded-3xl p-6 sm:p-10 space-y-6`}>
+              <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b ${isDark ? 'border-slate-800' : 'border-slate-200'} pb-4`}>
                 <div>
-                  <span className="text-xs font-bold uppercase tracking-wider text-blue-400">Modelo de Dados</span>
-                  <h2 className="text-2xl font-extrabold text-white mt-1">Multi-instituição, multi-escola</h2>
+                  <span className="text-xs font-bold uppercase tracking-wider text-blue-500 dark:text-blue-400">Modelo de Dados</span>
+                  <h2 className={`text-2xl font-extrabold ${isDark ? 'text-white' : 'text-slate-900'} mt-1`}>Multi-instituição, multi-escola</h2>
                 </div>
-                <p className="text-xs italic text-teal-400 font-serif">“Centralização onde faz sentido. Autonomia onde é necessária.”</p>
+                <p className="text-xs italic text-teal-600 dark:text-teal-400 font-serif">“Centralização onde faz sentido. Autonomia onde é necessária.”</p>
               </div>
 
               {/* Hierarchy Diagram Flow */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 my-6">
-                <div className="bg-gradient-to-br from-[#0D1B3D] to-blue-950 border border-blue-800/60 rounded-2xl p-6 text-center relative shadow-lg">
-                  <Building2 className="w-8 h-8 text-blue-400 mx-auto mb-3" />
-                  <h4 className="font-black text-white text-base">Mantenedora (Tenant)</h4>
-                  <p className="text-xs text-blue-200/80 mt-1">Governança, Planos SaaS e Configuração Geral</p>
-                  <span className="inline-block mt-3 px-2.5 py-0.5 bg-blue-500/20 text-blue-300 text-[10px] font-mono rounded-md">tenant_id</span>
+                <div className={`${isDark ? 'bg-gradient-to-br from-[#0D1B3D] to-blue-950 border-blue-800/60 text-white' : 'bg-blue-50/80 border-blue-200 text-slate-900'} border rounded-2xl p-6 text-center relative shadow-xs`}>
+                  <Building2 className={`w-8 h-8 ${isDark ? 'text-blue-400' : 'text-blue-600'} mx-auto mb-3`} />
+                  <h4 className={`font-black ${isDark ? 'text-white' : 'text-blue-950'} text-base`}>Mantenedora (Tenant)</h4>
+                  <p className={`text-xs ${isDark ? 'text-blue-200/80' : 'text-blue-800'} mt-1`}>Governança, Planos SaaS e Configuração Geral</p>
+                  <span className={`inline-block mt-3 px-2.5 py-0.5 ${isDark ? 'bg-blue-500/20 text-blue-300' : 'bg-blue-100 text-blue-900 font-bold'} text-[10px] font-mono rounded-md`}>tenant_id</span>
                 </div>
 
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center relative">
-                  <MapPin className="w-8 h-8 text-teal-400 mx-auto mb-3" />
-                  <h4 className="font-black text-white text-base">Província / Região</h4>
-                  <p className="text-xs text-slate-400 mt-1">Agrupamento regional e jurisdições escolares</p>
-                  <span className="inline-block mt-3 px-2.5 py-0.5 bg-teal-500/20 text-teal-300 text-[10px] font-mono rounded-md">provincia_id</span>
+                <div className={`${isDark ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-200'} border rounded-2xl p-6 text-center relative`}>
+                  <MapPin className={`w-8 h-8 ${isDark ? 'text-teal-400' : 'text-teal-600'} mx-auto mb-3`} />
+                  <h4 className={`font-black ${isDark ? 'text-white' : 'text-slate-900'} text-base`}>Província / Região</h4>
+                  <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-600'} mt-1`}>Agrupamento regional e jurisdições escolares</p>
+                  <span className={`inline-block mt-3 px-2.5 py-0.5 ${isDark ? 'bg-teal-500/20 text-teal-300' : 'bg-teal-100 text-teal-900 font-bold'} text-[10px] font-mono rounded-md`}>provincia_id</span>
                 </div>
 
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center relative">
-                  <School className="w-8 h-8 text-emerald-400 mx-auto mb-3" />
-                  <h4 className="font-black text-white text-base">Escola / Unidade</h4>
-                  <p className="text-xs text-slate-400 mt-1">Turmas, salas, assiduidade e regras locais</p>
-                  <span className="inline-block mt-3 px-2.5 py-0.5 bg-emerald-500/20 text-emerald-300 text-[10px] font-mono rounded-md">escola_id</span>
+                <div className={`${isDark ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-200'} border rounded-2xl p-6 text-center relative`}>
+                  <School className={`w-8 h-8 ${isDark ? 'text-emerald-400' : 'text-emerald-600'} mx-auto mb-3`} />
+                  <h4 className={`font-black ${isDark ? 'text-white' : 'text-slate-900'} text-base`}>Escola / Unidade</h4>
+                  <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-600'} mt-1`}>Turmas, salas, assiduidade e regras locais</p>
+                  <span className={`inline-block mt-3 px-2.5 py-0.5 ${isDark ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-900 font-bold'} text-[10px] font-mono rounded-md`}>escola_id</span>
                 </div>
               </div>
 
@@ -1009,9 +1015,9 @@ export default function BrandbookView({
                   "Permissões diferenciadas por nível hierárquico (módulo de permissões globais)",
                   "Relatórios tabulares agregados por tenant e filtráveis por escola individual"
                 ].map((txt, idx) => (
-                  <div key={idx} className="flex items-start gap-3 bg-slate-900/60 p-4 rounded-xl border border-slate-800/60">
-                    <CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0 mt-0.5" />
-                    <span className="text-xs text-slate-300 leading-relaxed">{txt}</span>
+                  <div key={idx} className={`flex items-start gap-3 ${isDark ? 'bg-slate-900/60 border-slate-800/60' : 'bg-slate-50 border-slate-200'} p-4 rounded-xl border`}>
+                    <CheckCircle2 className="w-4 h-4 text-teal-500 shrink-0 mt-0.5" />
+                    <span className={`text-xs ${isDark ? 'text-slate-300' : 'text-slate-700'} leading-relaxed`}>{txt}</span>
                   </div>
                 ))}
               </div>
@@ -1023,37 +1029,37 @@ export default function BrandbookView({
             <section id="section-modules" className="space-y-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <span className="text-xs font-bold uppercase tracking-wider text-blue-400">O Ecossistema</span>
-                  <h2 className="text-2xl font-extrabold text-white tracking-tight">16 módulos nativos, um único core</h2>
+                  <span className="text-xs font-bold uppercase tracking-wider text-blue-500 dark:text-blue-400">O Ecossistema</span>
+                  <h2 className={`text-2xl font-extrabold ${isDark ? 'text-white' : 'text-slate-900'} tracking-tight`}>16 módulos nativos, um único core</h2>
                 </div>
-                <span className="text-xs text-slate-500 font-mono">Slide 06</span>
+                <span className={`text-xs ${isDark ? 'text-slate-500' : 'text-slate-400'} font-mono`}>Slide 06</span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
                 {[
-                  { n: "01", t: "Dashboard Executivo", icon: <LayoutDashboard className="w-4 h-4 text-blue-400" /> },
-                  { n: "02", t: "Províncias / Regiões", icon: <MapPin className="w-4 h-4 text-blue-400" /> },
-                  { n: "03", t: "Escolas", icon: <School className="w-4 h-4 text-blue-400" /> },
-                  { n: "04", t: "Docentes", icon: <Users className="w-4 h-4 text-blue-400" /> },
-                  { n: "05", t: "Estudantes", icon: <GraduationCap className="w-4 h-4 text-teal-400" /> },
-                  { n: "06", t: "Turmas", icon: <BookOpen className="w-4 h-4 text-teal-400" /> },
-                  { n: "07", t: "Disciplinas", icon: <BookMarked className="w-4 h-4 text-teal-400" /> },
-                  { n: "08", t: "Classes Escolares", icon: <ListOrdered className="w-4 h-4 text-teal-400" /> },
-                  { n: "09", t: "Calendário & Horários", icon: <Calendar className="w-4 h-4 text-emerald-400" /> },
-                  { n: "10", t: "Pauta Geral & Avaliações", icon: <Award className="w-4 h-4 text-emerald-400" /> },
-                  { n: "11", t: "Facturação & Propinas", icon: <DollarSign className="w-4 h-4 text-emerald-400" /> },
-                  { n: "12", t: "Processos de Alunos", icon: <FileText className="w-4 h-4 text-emerald-400" /> },
-                  { n: "13", t: "Biblioteca Digital", icon: <BookOpen className="w-4 h-4 text-blue-300" /> },
-                  { n: "14", t: "Assiduidade & QR", icon: <QrCode className="w-4 h-4 text-blue-300" /> },
-                  { n: "15", t: "Workflows de Tarefas", icon: <CheckSquare className="w-4 h-4 text-blue-300" /> },
-                  { n: "16", t: "Permissões & Utilizadores", icon: <Lock className="w-4 h-4 text-blue-300" /> }
+                  { n: "01", t: "Dashboard Executivo", icon: <LayoutDashboard className="w-4 h-4 text-blue-500 dark:text-blue-400" /> },
+                  { n: "02", t: "Províncias / Regiões", icon: <MapPin className="w-4 h-4 text-blue-500 dark:text-blue-400" /> },
+                  { n: "03", t: "Escolas", icon: <School className="w-4 h-4 text-blue-500 dark:text-blue-400" /> },
+                  { n: "04", t: "Docentes", icon: <Users className="w-4 h-4 text-blue-500 dark:text-blue-400" /> },
+                  { n: "05", t: "Estudantes", icon: <GraduationCap className="w-4 h-4 text-teal-500 dark:text-teal-400" /> },
+                  { n: "06", t: "Turmas", icon: <BookOpen className="w-4 h-4 text-teal-500 dark:text-teal-400" /> },
+                  { n: "07", t: "Disciplinas", icon: <BookMarked className="w-4 h-4 text-teal-500 dark:text-teal-400" /> },
+                  { n: "08", t: "Classes Escolares", icon: <ListOrdered className="w-4 h-4 text-teal-500 dark:text-teal-400" /> },
+                  { n: "09", t: "Calendário & Horários", icon: <Calendar className="w-4 h-4 text-emerald-500 dark:text-emerald-400" /> },
+                  { n: "10", t: "Pauta Geral & Avaliações", icon: <Award className="w-4 h-4 text-emerald-500 dark:text-emerald-400" /> },
+                  { n: "11", t: "Facturação & Propinas", icon: <DollarSign className="w-4 h-4 text-emerald-400 dark:text-emerald-400" /> },
+                  { n: "12", t: "Processos de Alunos", icon: <FileText className="w-4 h-4 text-emerald-500 dark:text-emerald-400" /> },
+                  { n: "13", t: "Biblioteca Digital", icon: <BookOpen className="w-4 h-4 text-indigo-500 dark:text-blue-300" /> },
+                  { n: "14", t: "Assiduidade & QR", icon: <QrCode className="w-4 h-4 text-indigo-500 dark:text-blue-300" /> },
+                  { n: "15", t: "Workflows de Tarefas", icon: <CheckSquare className="w-4 h-4 text-indigo-500 dark:text-blue-300" /> },
+                  { n: "16", t: "Permissões & Utilizadores", icon: <Lock className="w-4 h-4 text-indigo-500 dark:text-blue-300" /> }
                 ].map((mod, idx) => (
-                  <div key={idx} className="bg-slate-950 border border-slate-800 rounded-2xl p-4 hover:border-slate-700 transition-all flex items-center gap-3">
-                    <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 shrink-0">
+                  <div key={idx} className={`${isDark ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200 shadow-2xs'} border rounded-2xl p-4 hover:border-blue-400 transition-all flex items-center gap-3`}>
+                    <div className={`p-2 rounded-xl ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-slate-100 border-slate-200'} border shrink-0`}>
                       {mod.icon}
                     </div>
                     <div>
-                      <span className="text-[10px] font-mono text-slate-500">{mod.n}</span>
-                      <h4 className="font-bold text-xs text-slate-200 leading-tight">{mod.t}</h4>
+                      <span className={`text-[10px] font-mono font-bold ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{mod.n}</span>
+                      <h4 className={`font-bold text-xs ${isDark ? 'text-slate-200' : 'text-slate-800'} leading-tight`}>{mod.t}</h4>
                     </div>
                   </div>
                 ))}
@@ -1065,16 +1071,16 @@ export default function BrandbookView({
           {(activeCategory === 'all' || activeCategory === 'academic') && (
             <section id="section-academic-student" className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               {/* Gestão Académica */}
-              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className={`${isDark ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200 shadow-sm'} border rounded-3xl p-6 sm:p-8 space-y-6`}>
+                <div className={`flex items-center justify-between border-b ${isDark ? 'border-slate-800' : 'border-slate-200'} pb-4`}>
                   <div>
-                    <span className="text-xs font-bold uppercase tracking-wider text-blue-400">Módulo Académico</span>
-                    <h3 className="text-xl font-black text-white mt-1">Gestão académica ponta a ponta</h3>
+                    <span className="text-xs font-bold uppercase tracking-wider text-blue-500 dark:text-blue-400">Módulo Académico</span>
+                    <h3 className={`text-xl font-black ${isDark ? 'text-white' : 'text-slate-900'} mt-1`}>Gestão académica ponta a ponta</h3>
                   </div>
-                  <span className="text-xs text-slate-500 font-mono">Slide 08</span>
+                  <span className={`text-xs ${isDark ? 'text-slate-500' : 'text-slate-400'} font-mono`}>Slide 08</span>
                 </div>
 
-                <div className="rounded-2xl overflow-hidden border border-slate-800 shadow-md">
+                <div className={`rounded-2xl overflow-hidden border ${isDark ? 'border-slate-800' : 'border-slate-200'} shadow-md`}>
                   <img src={academicMgmtImg} alt="Academic Management" referrerPolicy="no-referrer" className="w-full h-44 object-cover" />
                 </div>
 
@@ -1082,45 +1088,45 @@ export default function BrandbookView({
                 <div className="flex items-center gap-1.5 overflow-x-auto py-2">
                   {["Ano Letivo", "Classes & Turmas", "Disciplinas", "Avaliação Contínua", "Pauta Final"].map((st, i) => (
                     <React.Fragment key={i}>
-                      <span className="px-2.5 py-1 bg-slate-900 border border-slate-800 text-[11px] font-bold text-slate-300 rounded-lg shrink-0">
+                      <span className={`px-2.5 py-1 ${isDark ? 'bg-slate-900 border-slate-800 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-700'} border text-[11px] font-bold rounded-lg shrink-0`}>
                         {st}
                       </span>
-                      {i < 4 && <ArrowRight className="w-3 h-3 text-slate-600 shrink-0" />}
+                      {i < 4 && <ArrowRight className={`w-3 h-3 ${isDark ? 'text-slate-600' : 'text-slate-400'} shrink-0`} />}
                     </React.Fragment>
                   ))}
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/80">
-                    <h5 className="font-bold text-xs text-white mb-1">Classes Escolares</h5>
-                    <p className="text-[11px] text-slate-400">Primário, Secundário, Médio e Pré-escolar com estrutura própria.</p>
+                  <div className={`${isDark ? 'bg-slate-900/60 border-slate-800/80' : 'bg-slate-50 border-slate-200'} p-3.5 rounded-xl border`}>
+                    <h5 className={`font-bold text-xs ${isDark ? 'text-white' : 'text-slate-900'} mb-1`}>Classes Escolares</h5>
+                    <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>Primário, Secundário, Médio e Pré-escolar com estrutura própria.</p>
                   </div>
-                  <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/80">
-                    <h5 className="font-bold text-xs text-white mb-1">Turmas & Salas</h5>
-                    <p className="text-[11px] text-slate-400">Vinculadas a escola, docente titular e capacidade máxima.</p>
+                  <div className={`${isDark ? 'bg-slate-900/60 border-slate-800/80' : 'bg-slate-50 border-slate-200'} p-3.5 rounded-xl border`}>
+                    <h5 className={`font-bold text-xs ${isDark ? 'text-white' : 'text-slate-900'} mb-1`}>Turmas & Salas</h5>
+                    <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>Vinculadas a escola, docente titular e capacidade máxima.</p>
                   </div>
-                  <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/80">
-                    <h5 className="font-bold text-xs text-white mb-1">Disciplinas & Grade</h5>
-                    <p className="text-[11px] text-slate-400">Agendamento com salas, docentes e dias da semana.</p>
+                  <div className={`${isDark ? 'bg-slate-900/60 border-slate-800/80' : 'bg-slate-50 border-slate-200'} p-3.5 rounded-xl border`}>
+                    <h5 className={`font-bold text-xs ${isDark ? 'text-white' : 'text-slate-900'} mb-1`}>Disciplinas & Grade</h5>
+                    <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>Agendamento com salas, docentes e dias da semana.</p>
                   </div>
-                  <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/80">
-                    <h5 className="font-bold text-xs text-white mb-1">Pautas & Resultados</h5>
-                    <p className="text-[11px] text-slate-400">Trimestres, exames, reavaliação e cálculo automático de média.</p>
+                  <div className={`${isDark ? 'bg-slate-900/60 border-slate-800/80' : 'bg-slate-50 border-slate-200'} p-3.5 rounded-xl border`}>
+                    <h5 className={`font-bold text-xs ${isDark ? 'text-white' : 'text-slate-900'} mb-1`}>Pautas & Resultados</h5>
+                    <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>Trimestres, exames, reavaliação e cálculo automático de média.</p>
                   </div>
                 </div>
               </div>
 
               {/* Student 360 */}
-              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className={`${isDark ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200 shadow-sm'} border rounded-3xl p-6 sm:p-8 space-y-6`}>
+                <div className={`flex items-center justify-between border-b ${isDark ? 'border-slate-800' : 'border-slate-200'} pb-4`}>
                   <div>
-                    <span className="text-xs font-bold uppercase tracking-wider text-teal-400">Perfil Unificado</span>
-                    <h3 className="text-xl font-black text-white mt-1">Gestão do aluno — visão 360º</h3>
+                    <span className="text-xs font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400">Perfil Unificado</span>
+                    <h3 className={`text-xl font-black ${isDark ? 'text-white' : 'text-slate-900'} mt-1`}>Gestão do aluno — visão 360º</h3>
                   </div>
-                  <span className="text-xs text-slate-500 font-mono">Slide 09</span>
+                  <span className={`text-xs ${isDark ? 'text-slate-500' : 'text-slate-400'} font-mono`}>Slide 09</span>
                 </div>
 
-                <div className="rounded-2xl overflow-hidden border border-slate-800 shadow-md">
+                <div className={`rounded-2xl overflow-hidden border ${isDark ? 'border-slate-800' : 'border-slate-200'} shadow-md`}>
                   <img src={student360Img} alt="Student 360" referrerPolicy="no-referrer" className="w-full h-44 object-cover" />
                 </div>
 
@@ -1132,11 +1138,11 @@ export default function BrandbookView({
                     { cat: "Financeiros", desc: "Plano de propina, histórico de faturas e recibos emitidos." },
                     { cat: "Comportamentais", desc: "Assiduidade em tempo real, crachá digital e QR Code." }
                   ].map((c, idx) => (
-                    <div key={idx} className="bg-slate-900/60 p-3 rounded-xl border border-slate-800/80 flex items-start gap-3">
-                      <span className="px-2 py-0.5 bg-blue-500/10 text-blue-300 border border-blue-500/20 text-[10px] font-bold rounded-md uppercase tracking-wider shrink-0 mt-0.5">
+                    <div key={idx} className={`${isDark ? 'bg-slate-900/60 border-slate-800/80' : 'bg-slate-50 border-slate-200'} p-3 rounded-xl border flex items-start gap-3`}>
+                      <span className={`px-2 py-0.5 ${isDark ? 'bg-blue-500/10 text-blue-300 border-blue-500/20' : 'bg-blue-100 text-blue-800 border-blue-200'} border text-[10px] font-bold rounded-md uppercase tracking-wider shrink-0 mt-0.5`}>
                         {c.cat}
                       </span>
-                      <p className="text-xs text-slate-300">{c.desc}</p>
+                      <p className={`text-xs ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{c.desc}</p>
                     </div>
                   ))}
                 </div>
@@ -1148,16 +1154,16 @@ export default function BrandbookView({
           {(activeCategory === 'all' || activeCategory === 'academic') && (
             <section id="section-finance-rh" className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               {/* Financeiro */}
-              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className={`${isDark ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200 shadow-sm'} border rounded-3xl p-6 sm:p-8 space-y-6`}>
+                <div className={`flex items-center justify-between border-b ${isDark ? 'border-slate-800' : 'border-slate-200'} pb-4`}>
                   <div>
-                    <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">Módulo Financeiro</span>
-                    <h3 className="text-xl font-black text-white mt-1">Gestão financeira e faturação</h3>
+                    <span className="text-xs font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Módulo Financeiro</span>
+                    <h3 className={`text-xl font-black ${isDark ? 'text-white' : 'text-slate-900'} mt-1`}>Gestão financeira e faturação</h3>
                   </div>
-                  <span className="text-xs text-slate-500 font-mono">Slide 10</span>
+                  <span className={`text-xs ${isDark ? 'text-slate-500' : 'text-slate-400'} font-mono`}>Slide 10</span>
                 </div>
 
-                <div className="rounded-2xl overflow-hidden border border-slate-800 shadow-md">
+                <div className={`rounded-2xl overflow-hidden border ${isDark ? 'border-slate-800' : 'border-slate-200'} shadow-md`}>
                   <img src={financeMgmtImg} alt="Finance Management" referrerPolicy="no-referrer" className="w-full h-44 object-cover" />
                 </div>
 
@@ -1165,42 +1171,42 @@ export default function BrandbookView({
                 <div className="flex items-center gap-1.5 overflow-x-auto py-2">
                   {["Preçário", "Facturação", "Pagamento", "Reconciliação", "Dívida"].map((st, i) => (
                     <React.Fragment key={i}>
-                      <span className="px-2.5 py-1 bg-slate-900 border border-slate-800 text-[11px] font-bold text-slate-300 rounded-lg shrink-0">
+                      <span className={`px-2.5 py-1 ${isDark ? 'bg-slate-900 border-slate-800 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-700'} border text-[11px] font-bold rounded-lg shrink-0`}>
                         {st}
                       </span>
-                      {i < 4 && <ArrowRight className="w-3 h-3 text-slate-600 shrink-0" />}
+                      {i < 4 && <ArrowRight className={`w-3 h-3 ${isDark ? 'text-slate-600' : 'text-slate-400'} shrink-0`} />}
                     </React.Fragment>
                   ))}
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/80">
-                    <h5 className="font-bold text-xs text-white mb-1">Preçário Configurável</h5>
-                    <p className="text-[11px] text-slate-400">Propina base, multa por atraso e taxa de IVA por tenant.</p>
+                  <div className={`${isDark ? 'bg-slate-900/60 border-slate-800/80' : 'bg-slate-50 border-slate-200'} p-3.5 rounded-xl border`}>
+                    <h5 className={`font-bold text-xs ${isDark ? 'text-white' : 'text-slate-900'} mb-1`}>Preçário Configurável</h5>
+                    <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>Propina base, multa por atraso e taxa de IVA por tenant.</p>
                   </div>
-                  <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/80">
-                    <h5 className="font-bold text-xs text-white mb-1">Faturação Flexível</h5>
-                    <p className="text-[11px] text-slate-400">Emissão por período: mensal, semestral ou anual.</p>
+                  <div className={`${isDark ? 'bg-slate-900/60 border-slate-800/80' : 'bg-slate-50 border-slate-200'} p-3.5 rounded-xl border`}>
+                    <h5 className={`font-bold text-xs ${isDark ? 'text-white' : 'text-slate-900'} mb-1`}>Faturação Flexível</h5>
+                    <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>Emissão por período: mensal, semestral ou anual.</p>
                   </div>
-                  <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/80">
-                    <h5 className="font-bold text-xs text-white mb-1">Pagamento & Recibo</h5>
-                    <p className="text-[11px] text-slate-400">Estado (pendente → pago), método e número de recibo.</p>
+                  <div className={`${isDark ? 'bg-slate-900/60 border-slate-800/80' : 'bg-slate-50 border-slate-200'} p-3.5 rounded-xl border`}>
+                    <h5 className={`font-bold text-xs ${isDark ? 'text-white' : 'text-slate-900'} mb-1`}>Pagamento & Recibo</h5>
+                    <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>Estado (pendente → pago), método e número de recibo.</p>
                   </div>
-                  <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/80">
-                    <h5 className="font-bold text-xs text-white mb-1">Controlo de Dívida</h5>
-                    <p className="text-[11px] text-slate-400">Faturas em atraso e saldo devedor consolidado.</p>
+                  <div className={`${isDark ? 'bg-slate-900/60 border-slate-800/80' : 'bg-slate-50 border-slate-200'} p-3.5 rounded-xl border`}>
+                    <h5 className={`font-bold text-xs ${isDark ? 'text-white' : 'text-slate-900'} mb-1`}>Controlo de Dívida</h5>
+                    <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>Faturas em atraso e saldo devedor consolidado.</p>
                   </div>
                 </div>
               </div>
 
               {/* Recursos Humanos */}
-              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className={`${isDark ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200 shadow-sm'} border rounded-3xl p-6 sm:p-8 space-y-6`}>
+                <div className={`flex items-center justify-between border-b ${isDark ? 'border-slate-800' : 'border-slate-200'} pb-4`}>
                   <div>
-                    <span className="text-xs font-bold uppercase tracking-wider text-blue-400">Recursos Humanos</span>
-                    <h3 className="text-xl font-black text-white mt-1">Gestão de pessoas (docentes e colaboradores)</h3>
+                    <span className="text-xs font-bold uppercase tracking-wider text-blue-500 dark:text-blue-400">Recursos Humanos</span>
+                    <h3 className={`text-xl font-black ${isDark ? 'text-white' : 'text-slate-900'} mt-1`}>Gestão de pessoas (docentes e colaboradores)</h3>
                   </div>
-                  <span className="text-xs text-slate-500 font-mono">Slide 11</span>
+                  <span className={`text-xs ${isDark ? 'text-slate-500' : 'text-slate-400'} font-mono`}>Slide 11</span>
                 </div>
 
                 <div className="space-y-3.5">
@@ -1210,13 +1216,13 @@ export default function BrandbookView({
                     { n: "3", title: "Assiduidade por Turno", desc: "Registo diário (manhã, tarde, noite) validado contra a tolerância de cada escola." },
                     { n: "4", title: "Justificativas de Ausência", desc: "Fluxo de submissão e avaliação de justificativas, com atualização de estado da falta." }
                   ].map((rh, idx) => (
-                    <div key={idx} className="bg-slate-900/70 border border-slate-800/80 rounded-2xl p-4 flex items-start gap-3">
-                      <span className="w-7 h-7 rounded-xl bg-blue-500/20 text-blue-400 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">
+                    <div key={idx} className={`${isDark ? 'bg-slate-900/70 border-slate-800/80' : 'bg-slate-50 border-slate-200'} border rounded-2xl p-4 flex items-start gap-3`}>
+                      <span className={`w-7 h-7 rounded-xl ${isDark ? 'bg-blue-500/20 text-blue-400' : 'bg-blue-100 text-blue-800 font-bold'} font-bold text-xs flex items-center justify-center shrink-0 mt-0.5`}>
                         {rh.n}
                       </span>
                       <div>
-                        <h4 className="font-bold text-xs text-white mb-0.5">{rh.title}</h4>
-                        <p className="text-[11px] text-slate-400">{rh.desc}</p>
+                        <h4 className={`font-bold text-xs ${isDark ? 'text-white' : 'text-slate-900'} mb-0.5`}>{rh.title}</h4>
+                        <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{rh.desc}</p>
                       </div>
                     </div>
                   ))}
@@ -1228,11 +1234,11 @@ export default function BrandbookView({
           {/* SLIDE 13 & 14: PORTAIS & DASHBOARDS */}
           {(activeCategory === 'all' || activeCategory === 'tech') && (
             <section id="section-portals-dashboards" className="space-y-6">
-              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-10 space-y-8">
+              <div className={`${isDark ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200 shadow-sm'} border rounded-3xl p-6 sm:p-10 space-y-8`}>
                 <div>
-                  <span className="text-xs font-bold uppercase tracking-wider text-teal-400">Experiência Multi-Perfil</span>
-                  <h2 className="text-2xl font-extrabold text-white mt-1">5 Portais e experiências dedicadas</h2>
-                  <p className="text-xs text-slate-400 mt-1">Web SPA responsiva — adaptada a cada perfil com alta fidelidade.</p>
+                  <span className="text-xs font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400">Experiência Multi-Perfil</span>
+                  <h2 className={`text-2xl font-extrabold ${isDark ? 'text-white' : 'text-slate-900'} mt-1`}>5 Portais e experiências dedicadas</h2>
+                  <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-600'} mt-1`}>Web SPA responsiva — adaptada a cada perfil com alta fidelidade.</p>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-5 gap-3.5">
@@ -1243,43 +1249,43 @@ export default function BrandbookView({
                     { n: "4", role: "Professor", desc: "Turmas atribuídas, lançamento de notas e agendamento de aulas." },
                     { n: "5", role: "Aluno / Encarregado", desc: "Boletim, propinas, biblioteca digital e crachá QR Code." }
                   ].map((p, idx) => (
-                    <div key={idx} className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between">
+                    <div key={idx} className={`${isDark ? 'bg-slate-900/80 border-slate-800' : 'bg-slate-50 border-slate-200'} border rounded-2xl p-4 flex flex-col justify-between`}>
                       <div>
-                        <span className="w-6 h-6 rounded-lg bg-blue-600/30 text-blue-400 font-bold text-xs flex items-center justify-center mb-3">
+                        <span className={`w-6 h-6 rounded-lg ${isDark ? 'bg-blue-600/30 text-blue-400' : 'bg-blue-100 text-blue-800 font-bold'} font-bold text-xs flex items-center justify-center mb-3`}>
                           {p.n}
                         </span>
-                        <h4 className="font-bold text-sm text-white mb-1.5">{p.role}</h4>
-                        <p className="text-[11px] text-slate-400 leading-normal">{p.desc}</p>
+                        <h4 className={`font-bold text-sm ${isDark ? 'text-white' : 'text-slate-900'} mb-1.5`}>{p.role}</h4>
+                        <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-600'} leading-normal`}>{p.desc}</p>
                       </div>
                     </div>
                   ))}
                 </div>
 
-                <div className="border-t border-slate-800/80 pt-6">
+                <div className={`border-t ${isDark ? 'border-slate-800/80' : 'border-slate-200'} pt-6`}>
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-center">
                     <div className="lg:col-span-2 space-y-4">
-                      <span className="text-xs font-bold uppercase tracking-wider text-blue-400">Inteligência & Analytics</span>
-                      <h3 className="text-xl font-black text-white">Dashboards & Analytics em tempo real</h3>
+                      <span className="text-xs font-bold uppercase tracking-wider text-blue-500 dark:text-blue-400">Inteligência & Analytics</span>
+                      <h3 className={`text-xl font-black ${isDark ? 'text-white' : 'text-slate-900'}`}>Dashboards & Analytics em tempo real</h3>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                        <div className="bg-slate-900 p-3 rounded-xl border border-slate-800">
-                          <p className="text-[10px] text-slate-500 uppercase font-mono">SaaS</p>
-                          <p className="text-xs font-bold text-white mt-1">MRR & Tenants</p>
+                        <div className={`${isDark ? 'bg-slate-900 border-slate-800' : 'bg-slate-100 border-slate-200'} p-3 rounded-xl border`}>
+                          <p className={`text-[10px] uppercase font-bold font-mono ${isDark ? 'text-slate-400' : 'text-slate-700'}`}>SaaS</p>
+                          <p className={`text-xs font-bold ${isDark ? 'text-white' : 'text-slate-900'} mt-1`}>MRR & Tenants</p>
                         </div>
-                        <div className="bg-slate-900 p-3 rounded-xl border border-slate-800">
-                          <p className="text-[10px] text-slate-500 uppercase font-mono">Operação</p>
-                          <p className="text-xs font-bold text-white mt-1">Escolas & Alunos</p>
+                        <div className={`${isDark ? 'bg-slate-900 border-slate-800' : 'bg-slate-100 border-slate-200'} p-3 rounded-xl border`}>
+                          <p className={`text-[10px] uppercase font-bold font-mono ${isDark ? 'text-slate-400' : 'text-slate-700'}`}>Operação</p>
+                          <p className={`text-xs font-bold ${isDark ? 'text-white' : 'text-slate-900'} mt-1`}>Escolas & Alunos</p>
                         </div>
-                        <div className="bg-slate-900 p-3 rounded-xl border border-slate-800">
-                          <p className="text-[10px] text-slate-500 uppercase font-mono">Presença</p>
-                          <p className="text-xs font-bold text-white mt-1">Assiduidade Real</p>
+                        <div className={`${isDark ? 'bg-slate-900 border-slate-800' : 'bg-slate-100 border-slate-200'} p-3 rounded-xl border`}>
+                          <p className={`text-[10px] uppercase font-bold font-mono ${isDark ? 'text-slate-400' : 'text-slate-700'}`}>Presença</p>
+                          <p className={`text-xs font-bold ${isDark ? 'text-white' : 'text-slate-900'} mt-1`}>Assiduidade Real</p>
                         </div>
-                        <div className="bg-slate-900 p-3 rounded-xl border border-slate-800">
-                          <p className="text-[10px] text-slate-500 uppercase font-mono">Finanças</p>
-                          <p className="text-xs font-bold text-white mt-1">Propinas & Dívida</p>
+                        <div className={`${isDark ? 'bg-slate-900 border-slate-800' : 'bg-slate-100 border-slate-200'} p-3 rounded-xl border`}>
+                          <p className={`text-[10px] uppercase font-bold font-mono ${isDark ? 'text-slate-400' : 'text-slate-700'}`}>Finanças</p>
+                          <p className={`text-xs font-bold ${isDark ? 'text-white' : 'text-slate-900'} mt-1`}>Propinas & Dívida</p>
                         </div>
                       </div>
                     </div>
-                    <div className="rounded-2xl overflow-hidden border border-slate-800 shadow-lg">
+                    <div className={`rounded-2xl overflow-hidden border ${isDark ? 'border-slate-800' : 'border-slate-200'} shadow-lg`}>
                       <img src={analyticsKpiImg} alt="Analytics KPI" referrerPolicy="no-referrer" className="w-full h-36 object-cover" />
                     </div>
                   </div>
@@ -1292,29 +1298,29 @@ export default function BrandbookView({
           {(activeCategory === 'all' || activeCategory === 'tech') && (
             <section id="section-tech-security" className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               {/* Tecnologia */}
-              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className={`${isDark ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200 shadow-sm'} border rounded-3xl p-6 sm:p-8 space-y-6`}>
+                <div className={`flex items-center justify-between border-b ${isDark ? 'border-slate-800' : 'border-slate-200'} pb-4`}>
                   <div>
-                    <span className="text-xs font-bold uppercase tracking-wider text-blue-400">Tecnologia</span>
-                    <h3 className="text-xl font-black text-white mt-1">Arquitetura cloud moderna</h3>
+                    <span className="text-xs font-bold uppercase tracking-wider text-blue-500 dark:text-blue-400">Tecnologia</span>
+                    <h3 className={`text-xl font-black ${isDark ? 'text-white' : 'text-slate-900'} mt-1`}>Arquitetura cloud moderna</h3>
                   </div>
-                  <Server className="w-5 h-5 text-blue-400" />
+                  <Server className="w-5 h-5 text-blue-500 dark:text-blue-400" />
                 </div>
 
                 <div className="space-y-3">
                   {[
-                    { l: "Interface", d: "React 18 + TypeScript — Single Page Application", i: <Laptop className="w-4 h-4 text-blue-400" /> },
-                    { l: "Dados & Autenticação", d: "Firebase Firestore (NoSQL) + Firebase Authentication", i: <Server className="w-4 h-4 text-teal-400" /> },
-                    { l: "Comunicação", d: "SMTP customizado e Gmail OAuth2 / App Password", i: <Mail className="w-4 h-4 text-amber-400" /> },
-                    { l: "Ficheiros & QR", d: "SheetJS (Excel), visualizador PDF e geração/leitura de QR Code", i: <FileSpreadsheet className="w-4 h-4 text-emerald-400" /> }
+                    { l: "Interface", d: "React 18 + TypeScript — Single Page Application", i: <Laptop className="w-4 h-4 text-blue-500 dark:text-blue-400" /> },
+                    { l: "Dados & Autenticação", d: "Firebase Firestore (NoSQL) + Firebase Authentication", i: <Server className="w-4 h-4 text-teal-500 dark:text-teal-400" /> },
+                    { l: "Comunicação", d: "SMTP customizado e Gmail OAuth2 / App Password", i: <Mail className="w-4 h-4 text-amber-500 dark:text-amber-400" /> },
+                    { l: "Ficheiros & QR", d: "SheetJS (Excel), visualizador PDF e geração/leitura de QR Code", i: <FileSpreadsheet className="w-4 h-4 text-emerald-500 dark:text-emerald-400" /> }
                   ].map((st, idx) => (
-                    <div key={idx} className="bg-slate-900/70 border border-slate-800/80 rounded-2xl p-4 flex items-start gap-3">
-                      <div className="p-2 rounded-xl bg-slate-950 border border-slate-800 shrink-0">
+                    <div key={idx} className={`${isDark ? 'bg-slate-900/70 border-slate-800/80' : 'bg-slate-50 border-slate-200'} border rounded-2xl p-4 flex items-start gap-3`}>
+                      <div className={`p-2 rounded-xl ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200 shadow-2xs'} border shrink-0`}>
                         {st.i}
                       </div>
                       <div>
-                        <h4 className="font-bold text-xs text-white mb-0.5">{st.l}</h4>
-                        <p className="text-[11px] text-slate-400">{st.d}</p>
+                        <h4 className={`font-bold text-xs ${isDark ? 'text-white' : 'text-slate-900'} mb-0.5`}>{st.l}</h4>
+                        <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{st.d}</p>
                       </div>
                     </div>
                   ))}
@@ -1322,13 +1328,13 @@ export default function BrandbookView({
               </div>
 
               {/* Segurança e Governança */}
-              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className={`${isDark ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200 shadow-sm'} border rounded-3xl p-6 sm:p-8 space-y-6`}>
+                <div className={`flex items-center justify-between border-b ${isDark ? 'border-slate-800' : 'border-slate-200'} pb-4`}>
                   <div>
-                    <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">Confiança</span>
-                    <h3 className="text-xl font-black text-white mt-1">Segurança e governança</h3>
+                    <span className="text-xs font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Confiança</span>
+                    <h3 className={`text-xl font-black ${isDark ? 'text-white' : 'text-slate-900'} mt-1`}>Segurança e governança</h3>
                   </div>
-                  <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                  <ShieldCheck className="w-5 h-5 text-emerald-500 dark:text-emerald-400" />
                 </div>
 
                 <div className="space-y-2.5">
@@ -1339,11 +1345,11 @@ export default function BrandbookView({
                     { label: "Auditoria completa", desc: "Registo de log administrativo para todas as operações de gestão." },
                     { label: "Soft delete", desc: "Exclusão lógica (deleted_at) em mantenedoras e escolas, sem perda de histórico." }
                   ].map((sec, idx) => (
-                    <div key={idx} className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/80 flex items-start gap-3">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    <div key={idx} className={`${isDark ? 'bg-slate-900/60 border-slate-800/80' : 'bg-slate-50 border-slate-200'} p-3.5 rounded-xl border flex items-start gap-3`}>
+                      <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
                       <div>
-                        <span className="text-xs font-bold text-white mr-1.5">{sec.label}:</span>
-                        <span className="text-xs text-slate-400">{sec.desc}</span>
+                        <span className={`text-xs font-bold ${isDark ? 'text-white' : 'text-slate-900'} mr-1.5`}>{sec.label}:</span>
+                        <span className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{sec.desc}</span>
                       </div>
                     </div>
                   ))}
@@ -1356,13 +1362,13 @@ export default function BrandbookView({
           {(activeCategory === 'all' || activeCategory === 'vision') && (
             <section id="section-differentials-stakeholders" className="space-y-8">
               {/* Diferenciais Competitivos */}
-              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-10 space-y-6">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className={`${isDark ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200 shadow-sm'} border rounded-3xl p-6 sm:p-10 space-y-6`}>
+                <div className={`flex items-center justify-between border-b ${isDark ? 'border-slate-800' : 'border-slate-200'} pb-4`}>
                   <div>
-                    <span className="text-xs font-bold uppercase tracking-wider text-blue-400">Por Que Esta Plataforma</span>
-                    <h2 className="text-2xl font-extrabold text-white mt-1">Diferenciais competitivos</h2>
+                    <span className="text-xs font-bold uppercase tracking-wider text-blue-500 dark:text-blue-400">Por Que Esta Plataforma</span>
+                    <h2 className={`text-2xl font-extrabold ${isDark ? 'text-white' : 'text-slate-900'} mt-1`}>Diferenciais competitivos</h2>
                   </div>
-                  <span className="text-xs text-slate-500 font-mono">5 Pilares</span>
+                  <span className={`text-xs ${isDark ? 'text-slate-500' : 'text-slate-400'} font-mono`}>5 Pilares</span>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-5 gap-3.5">
@@ -1373,13 +1379,13 @@ export default function BrandbookView({
                     { n: "4", p: "Inteligência", d: "Tolerância de assiduidade por turno e cálculo automatizado de aprovação." },
                     { n: "5", p: "Automação", d: "Motor de pautas trimestrais com transição automática do histórico do aluno." }
                   ].map((pil, idx) => (
-                    <div key={idx} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between">
+                    <div key={idx} className={`${isDark ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-200'} border rounded-2xl p-4 flex flex-col justify-between`}>
                       <div>
-                        <span className="w-7 h-7 rounded-xl bg-blue-500/20 text-blue-400 font-bold text-xs flex items-center justify-center mb-3">
+                        <span className={`w-7 h-7 rounded-xl font-bold text-xs flex items-center justify-center mb-3 border ${isDark ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' : 'bg-blue-100 text-blue-700 border-blue-200'}`}>
                           {pil.n}
                         </span>
-                        <h4 className="font-bold text-sm text-white mb-1.5">{pil.p}</h4>
-                        <p className="text-[11px] text-slate-400 leading-normal">{pil.d}</p>
+                        <h4 className={`font-bold text-sm ${isDark ? 'text-white' : 'text-slate-900'} mb-1.5`}>{pil.p}</h4>
+                        <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-600'} leading-normal`}>{pil.d}</p>
                       </div>
                     </div>
                   ))}
@@ -1387,13 +1393,13 @@ export default function BrandbookView({
               </div>
 
               {/* Benefícios por Stakeholder */}
-              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-10 space-y-6">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className={`${isDark ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200 shadow-sm'} border rounded-3xl p-6 sm:p-10 space-y-6`}>
+                <div className={`flex items-center justify-between border-b ${isDark ? 'border-slate-800' : 'border-slate-200'} pb-4`}>
                   <div>
-                    <span className="text-xs font-bold uppercase tracking-wider text-teal-400">Impacto</span>
-                    <h2 className="text-2xl font-extrabold text-white mt-1">Benefícios por stakeholder</h2>
+                    <span className="text-xs font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400">Impacto</span>
+                    <h2 className={`text-2xl font-extrabold ${isDark ? 'text-white' : 'text-slate-900'} mt-1`}>Benefícios por stakeholder</h2>
                   </div>
-                  <span className="text-xs text-slate-500 font-mono">6 Perspetivas</span>
+                  <span className={`text-xs ${isDark ? 'text-slate-500' : 'text-slate-400'} font-mono`}>6 Perspetivas</span>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -1405,11 +1411,11 @@ export default function BrandbookView({
                     { s: "Financeiro", d: "Automação de faturamento, regras de mora e recibos numerados." },
                     { s: "TI / Administradores", d: "RBAC customizável por função, sem gerir infraestrutura física." }
                   ].map((st, idx) => (
-                    <div key={idx} className="bg-slate-900/70 border border-slate-800/80 rounded-2xl p-4">
-                      <h4 className="font-bold text-xs text-teal-300 mb-1.5 flex items-center gap-2">
+                    <div key={idx} className={`${isDark ? 'bg-slate-900/70 border-slate-800/80' : 'bg-slate-50 border-slate-200'} border rounded-2xl p-4`}>
+                      <h4 className={`font-bold text-xs ${isDark ? 'text-teal-300' : 'text-teal-700'} mb-1.5 flex items-center gap-2`}>
                         <User className="w-3.5 h-3.5" /> {st.s}
                       </h4>
-                      <p className="text-xs text-slate-400 leading-relaxed">{st.d}</p>
+                      <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-600'} leading-relaxed`}>{st.d}</p>
                     </div>
                   ))}
                 </div>
@@ -1421,13 +1427,13 @@ export default function BrandbookView({
           {(activeCategory === 'all' || activeCategory === 'tech') && (
             <section id="section-roadmap-business" className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               {/* Roadmap */}
-              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className={`${isDark ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200 shadow-sm'} border rounded-3xl p-6 sm:p-8 space-y-6`}>
+                <div className={`flex items-center justify-between border-b ${isDark ? 'border-slate-800' : 'border-slate-200'} pb-4`}>
                   <div>
-                    <span className="text-xs font-bold uppercase tracking-wider text-blue-400">Evolução do Produto</span>
-                    <h3 className="text-xl font-black text-white mt-1">Roadmap de maturidade</h3>
+                    <span className="text-xs font-bold uppercase tracking-wider text-blue-500 dark:text-blue-400">Evolução do Produto</span>
+                    <h3 className={`text-xl font-black ${isDark ? 'text-white' : 'text-slate-900'} mt-1`}>Roadmap de maturidade</h3>
                   </div>
-                  <span className="text-xs text-slate-500 font-mono">Estado Real</span>
+                  <span className={`text-xs ${isDark ? 'text-slate-500' : 'text-slate-400'} font-mono`}>Estado Real</span>
                 </div>
 
                 <div className="space-y-4">
@@ -1438,28 +1444,28 @@ export default function BrandbookView({
                     { f: "Fase 4 — Inteligência", p: 20, d: "Dashboards ativos; faltam modelos preditivos de evasão escolar.", c: "bg-blue-500" },
                     { f: "Fase 5 — Ecossistema", p: 5, d: "Ausência de API pública aberta para integrações de terceiros.", c: "bg-slate-600" }
                   ].map((phase, idx) => (
-                    <div key={idx} className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-3.5">
+                    <div key={idx} className={`${isDark ? 'bg-slate-900/60 border-slate-800/80' : 'bg-slate-50 border-slate-200'} border rounded-2xl p-3.5`}>
                       <div className="flex justify-between items-center mb-1.5">
-                        <span className="font-bold text-xs text-white">{phase.f}</span>
-                        <span className="font-mono text-xs font-bold text-slate-300">{phase.p}%</span>
+                        <span className={`font-bold text-xs ${isDark ? 'text-white' : 'text-slate-900'}`}>{phase.f}</span>
+                        <span className={`font-mono text-xs font-bold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{phase.p}%</span>
                       </div>
-                      <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden mb-2">
+                      <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-2 overflow-hidden mb-2">
                         <div className={`h-2 rounded-full ${phase.c}`} style={{ width: `${phase.p}%` }}></div>
                       </div>
-                      <p className="text-[11px] text-slate-400">{phase.d}</p>
+                      <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{phase.d}</p>
                     </div>
                   ))}
                 </div>
               </div>
 
               {/* Modelo de Negócio */}
-              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className={`${isDark ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200 shadow-sm'} border rounded-3xl p-6 sm:p-8 space-y-6`}>
+                <div className={`flex items-center justify-between border-b ${isDark ? 'border-slate-800' : 'border-slate-200'} pb-4`}>
                   <div>
-                    <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">Comercial</span>
-                    <h3 className="text-xl font-black text-white mt-1">Modelo de negócio SaaS</h3>
+                    <span className="text-xs font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Comercial</span>
+                    <h3 className={`text-xl font-black ${isDark ? 'text-white' : 'text-slate-900'} mt-1`}>Modelo de negócio SaaS</h3>
                   </div>
-                  <CreditCard className="w-5 h-5 text-emerald-400" />
+                  <CreditCard className="w-5 h-5 text-emerald-500 dark:text-emerald-400" />
                 </div>
 
                 <div className="space-y-3.5">
@@ -1468,20 +1474,20 @@ export default function BrandbookView({
                     { n: "2", t: "Precificação por camadas", d: "Planos com limites parametrizados de escolas, docentes, estudantes, turmas e disciplinas para atender desde escolas individuais a redes nacionais." },
                     { n: "3", t: "Faturação centralizada", d: "Histórico de pagamentos e faturas da mantenedora geridos numa única coleção com comprovativo e controle de renovação." }
                   ].map((bn, idx) => (
-                    <div key={idx} className="bg-slate-900/70 border border-slate-800/80 rounded-2xl p-4 flex items-start gap-3">
-                      <span className="w-7 h-7 rounded-xl bg-emerald-500/20 text-emerald-300 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">
+                    <div key={idx} className={`${isDark ? 'bg-slate-900/70 border-slate-800/80' : 'bg-slate-50 border-slate-200'} border rounded-2xl p-4 flex items-start gap-3`}>
+                      <span className={`w-7 h-7 rounded-xl ${isDark ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-100 text-emerald-800 font-bold'} font-bold text-xs flex items-center justify-center shrink-0 mt-0.5`}>
                         {bn.n}
                       </span>
                       <div>
-                        <h4 className="font-bold text-xs text-white mb-0.5">{bn.t}</h4>
-                        <p className="text-[11px] text-slate-400">{bn.d}</p>
+                        <h4 className={`font-bold text-xs ${isDark ? 'text-white' : 'text-slate-900'} mb-0.5`}>{bn.t}</h4>
+                        <p className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{bn.d}</p>
                       </div>
                     </div>
                   ))}
                 </div>
 
-                <div className="p-4 bg-slate-900/90 rounded-2xl border border-slate-800 text-center">
-                  <p className="text-xs italic text-slate-300 font-serif">
+                <div className={`p-4 ${isDark ? 'bg-slate-900/90 border-slate-800 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-700'} rounded-2xl border text-center`}>
+                  <p className="text-xs italic font-serif">
                     “Previsibilidade de receita alinhada ao crescimento de cada mantenedora.”
                   </p>
                 </div>
@@ -1500,7 +1506,7 @@ export default function BrandbookView({
                     Uma única plataforma.
                   </span>
                 </h2>
-                <p className="text-sm sm:text-base text-slate-300 font-normal">
+                <p className="text-sm sm:text-base text-slate-200 font-normal">
                   Uma visão consolidada de dados e uma experiência integrada para toda a comunidade educativa.
                 </p>
                 <p className="text-sm italic text-teal-300 font-serif pt-2">
@@ -1514,13 +1520,13 @@ export default function BrandbookView({
               GUIA DE MARCA & ASSETS VISUAIS (BRANDBOOK COMPLETO)
              ========================================================================= */}
           {(activeCategory === 'all' || activeCategory === 'branding') && (
-            <section id="section-brandbook-assets" className="space-y-8 pt-8 border-t border-slate-800">
+            <section id="section-brandbook-assets" className={`space-y-8 pt-8 border-t ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
-                  <span className="text-xs font-bold uppercase tracking-wider text-blue-400">Guia de Marca</span>
-                  <h2 className="text-2xl font-extrabold text-white">Identidade Visual & Assets Oficiais</h2>
+                  <span className="text-xs font-bold uppercase tracking-wider text-blue-500 dark:text-blue-400">Guia de Marca</span>
+                  <h2 className={`text-2xl font-extrabold ${isDark ? 'text-white' : 'text-slate-900'}`}>Identidade Visual & Assets Oficiais</h2>
                 </div>
-                <span className="text-xs text-slate-400">Diretrizes de Aplicação SysEdu</span>
+                <span className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Diretrizes de Aplicação SysEdu</span>
               </div>
 
               {/* Logo Showcase Grid */}
