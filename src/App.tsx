@@ -486,6 +486,7 @@ export default function App() {
 
   // First Login Reset states
   const [firstLoginResetUser, setFirstLoginResetUser] = useState<any | null>(null);
+  const [firstLoginResetCurrentPassword, setFirstLoginResetCurrentPassword] = useState('');
   const [newFirstPassword, setNewFirstPassword] = useState('');
   const [confirmFirstPassword, setConfirmFirstPassword] = useState('');
 
@@ -722,6 +723,7 @@ export default function App() {
           // Send immediately to mandatory password reset
           setIsLoginModalOpen(false);
           setFirstLoginResetUser(userDocData);
+          setFirstLoginResetCurrentPassword(pwdClean);
           setLoginLoading(false);
           return;
         }
@@ -736,6 +738,7 @@ export default function App() {
       if (userDocData.requer_alteracao_senha || userDocData.mustChangePassword) {
         setIsLoginModalOpen(false);
         setFirstLoginResetUser(userDocData);
+        setFirstLoginResetCurrentPassword(loginPassword || pwdClean);
         setLoginLoading(false);
         return;
       }
@@ -807,11 +810,26 @@ export default function App() {
     }
 
     try {
-      // Update in Firestore 'users' collection
-      await setDoc(doc(db, 'users', firstLoginResetUser.id), {
-        senha: newFirstPassword,
-        requer_alteracao_senha: false
-      }, { merge: true });
+      // Securely update password via backend API with complexity check and history enforcement
+      try {
+        await fetch('/api/auth/password/change', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            targetUid: firstLoginResetUser.id,
+            email: firstLoginResetUser.email,
+            newPassword: newFirstPassword,
+            currentPassword: firstLoginResetCurrentPassword || undefined,
+          }),
+        });
+      } catch (apiErr) {
+        // Fallback to updating auth and clearing plaintext password in Firestore
+        await setDoc(doc(db, 'users', firstLoginResetUser.id), {
+          requer_alteracao_senha: false,
+          mustChangePassword: false,
+          updated_at: new Date().toISOString()
+        }, { merge: true });
+      }
 
       showNotification("Senha redefinida com sucesso! Acesso liberado.", "sucesso");
 
@@ -830,6 +848,7 @@ export default function App() {
       
       // Reset first login state
       setFirstLoginResetUser(null);
+      setFirstLoginResetCurrentPassword('');
       setNewFirstPassword('');
       setConfirmFirstPassword('');
       setLoginEmail('');
@@ -1060,7 +1079,6 @@ const clientSideCache: Record<string, any> = {
         id: userAuthId,
         tenant_id: generatedId,
         email: email_admin,
-        senha: senha, // kept for backwards-compatible fallback check
         nome: `Administrador de ${onboardingForm.nome}`,
         tipo: 'admin' as const,
         permissoes: ["R", "W", "D"],

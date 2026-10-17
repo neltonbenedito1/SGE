@@ -2,7 +2,10 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions
+    // ========================================================================
+    // 1. RBAC & MULTI-TENANT ISOLATION HELPERS
+    // ========================================================================
+
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -10,79 +13,336 @@ service cloud.firestore {
     function isSuperAdmin() {
       return isAuthenticated() && (
         request.auth.token.email == 'neltonbenedito1@gmail.com' ||
+        request.auth.token.role == 'super_admin' ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin' ||
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tipo == 'super_admin'
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tipo == 'super_admin' ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin'
         )) ||
         exists(/databases/$(database)/documents/superusers/$(request.auth.uid))
       );
     }
 
+    function getUserTenant() {
+      return request.auth.token.tenant_id != null ? request.auth.token.tenant_id :
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) ?
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenant_id : null);
+    }
+
+    function getUserRole() {
+      return request.auth.token.role != null ? request.auth.token.role :
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) ?
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tipo : 'estudante');
+    }
+
+    function isTenantAdmin(tenantId) {
+      return isSuperAdmin() || (
+        isAuthenticated() &&
+        getUserTenant() == tenantId &&
+        (getUserRole() in ['admin', 'tenant_admin', 'director', 'administrador', 'directores'])
+      );
+    }
+
+    function isTenantMember(tenantId) {
+      return isSuperAdmin() || (
+        isAuthenticated() &&
+        (getUserTenant() == tenantId || tenantId == 'default' || tenantId == 'global')
+      );
+    }
+
     // ========================================================================
-    // USERS COLLECTION & SUBCOLLECTIONS
+    // 2. USERS COLLECTION (PER-USER & TENANT ISOLATION)
     // ========================================================================
     match /users/{uid} {
-      allow read, write: if true;
+      allow read: if isAuthenticated() && (
+        isSuperAdmin() ||
+        request.auth.uid == uid ||
+        resource.data.tenant_id == getUserTenant()
+      );
+
+      // Create: Super admin or tenant admin of that tenant
+      allow create: if isSuperAdmin() || (
+        isAuthenticated() &&
+        isTenantAdmin(request.resource.data.tenant_id) &&
+        request.resource.data.role != 'super_admin' &&
+        request.resource.data.tipo != 'super_admin' &&
+        !('senha' in request.resource.data) &&
+        !('senha_temporaria' in request.resource.data) &&
+        !('password' in request.resource.data) &&
+        !('stripe_customer_id' in request.resource.data) &&
+        !('stripe_subscription_id' in request.resource.data)
+      );
+
+      // Update: User updating own profile (no role/tenant escalation) or Tenant Admin
+      allow update: if isSuperAdmin() || (
+        isTenantAdmin(resource.data.tenant_id) &&
+        request.resource.data.tenant_id == resource.data.tenant_id &&
+        request.resource.data.role != 'super_admin' &&
+        request.resource.data.tipo != 'super_admin' &&
+        !('senha' in request.resource.data) &&
+        !('senha_temporaria' in request.resource.data) &&
+        !('password' in request.resource.data) &&
+        !('stripe_customer_id' in request.resource.data) &&
+        !('stripe_subscription_id' in request.resource.data)
+      ) || (
+        request.auth.uid == uid &&
+        request.resource.data.tenant_id == resource.data.tenant_id &&
+        request.resource.data.tipo == resource.data.tipo &&
+        !('role' in request.resource.data && request.resource.data.role != resource.data.role) &&
+        !('senha' in request.resource.data) &&
+        !('senha_temporaria' in request.resource.data) &&
+        !('password' in request.resource.data) &&
+        !('stripe_customer_id' in request.resource.data) &&
+        !('stripe_subscription_id' in request.resource.data)
+      );
+
+      allow delete: if isSuperAdmin() || (
+        isTenantAdmin(resource.data.tenant_id) &&
+        resource.data.tipo != 'admin' &&
+        resource.data.role != 'super_admin'
+      );
 
       match /passwordHistory/{historyId} {
-        allow read, write: if true;
+        allow read: if isAuthenticated() && (request.auth.uid == uid || isSuperAdmin());
+        allow write: if false; // Only written server-side
       }
     }
 
     // ========================================================================
-    // SUPER ADMIN & SYSTEM CONFIGURATIONS
+    // 3. TENANTS (SCHOOL INSTITUTIONS)
     // ========================================================================
-    match /superusers/{id} {
-      allow read, write: if true;
-    }
-
-    match /super_admin_gateways/{id} {
-      allow read, write: if true;
-    }
-
-    match /super_admin_bank_accounts/{id} {
-      allow read, write: if true;
-    }
-
-    match /planos/{id} {
-      allow read, write: if true;
-    }
-
-    match /pagamentos/{id} {
-      allow read, write: if true;
-    }
-
     match /tenants/{tenantId} {
-      allow read, write: if true;
+      allow read: if isTenantMember(tenantId);
+      allow create, delete: if isSuperAdmin();
+
+      // Tenant admin can update basic school profile, but CANNOT alter billing/subscription
+      allow update: if isSuperAdmin() || (
+        isTenantAdmin(tenantId) &&
+        request.resource.data.status == resource.data.status &&
+        request.resource.data.plano_id == resource.data.plano_id &&
+        (!('stripe_customer_id' in request.resource.data) || request.resource.data.stripe_customer_id == resource.data.stripe_customer_id) &&
+        (!('stripe_subscription_id' in request.resource.data) || request.resource.data.stripe_subscription_id == resource.data.stripe_subscription_id)
+      );
 
       match /{subcollection=**} {
-        allow read, write: if true;
+        allow read: if isTenantMember(tenantId);
+        allow write: if isTenantAdmin(tenantId);
       }
     }
 
-    match /notificacoes/{id} {
-      allow read, write: if true;
+    // ========================================================================
+    // 4. EDUCATIONAL MULTI-TENANT COLLECTIONS
+    // ========================================================================
+    match /estudantes/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id) ||
+        (isAuthenticated() && getUserRole() in ['docente', 'secretaria', 'secretario'] && isTenantMember(resource.data.tenant_id));
     }
 
-    match /log_admins/{id} {
-      allow read, write: if true;
+    match /docentes/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id);
     }
 
-    match /log_auditoria/{id} {
-      allow read, write: if true;
+    match /turmas/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id);
+    }
+
+    match /disciplinas/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id);
+    }
+
+    match /classes_escolares/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id);
+    }
+
+    match /classes/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id);
+    }
+
+    match /salas/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id);
+    }
+
+    match /escolas/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id);
+    }
+
+    match /provincias/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id);
+    }
+
+    match /pautas/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id) ||
+        (isAuthenticated() && getUserRole() in ['docente', 'professor'] && isTenantMember(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id));
+    }
+
+    match /pauta_geral/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id);
+    }
+
+    match /processos_aluno/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id);
+    }
+
+    match /processos_docentes/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id);
+    }
+
+    match /calendario/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id);
+    }
+
+    match /plano_aulas/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id) ||
+        (isAuthenticated() && getUserRole() in ['docente', 'professor'] && isTenantMember(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id));
     }
 
     match /planoAulas/{id} {
-      allow read, write: if true;
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id) ||
+        (isAuthenticated() && getUserRole() in ['docente', 'professor'] && isTenantMember(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id));
     }
 
-    match /test/{id} {
-      allow read, write: if true;
+    match /atividades/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantMember(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id);
     }
 
-    // All tenant and educational collections & general documents
+    match /assiduidade_logs/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id) ||
+        (isAuthenticated() && getUserRole() in ['docente', 'professor', 'secretaria'] && isTenantMember(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id));
+    }
+
+    match /livros/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id);
+    }
+
+    match /edicoes/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id);
+    }
+
+    match /faturas_estudantes/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id);
+    }
+
+    match /exames_agendamentos/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id);
+    }
+
+    match /ferias/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id);
+    }
+
+    match /feriados/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id);
+    }
+
+    match /notificacoes/{id} {
+      allow read: if isSuperAdmin() || (
+        isAuthenticated() && (
+          resource.data.tenant_id == getUserTenant() ||
+          resource.data.destinatario_id == request.auth.uid ||
+          resource.data.user_id == request.auth.uid ||
+          resource.data.destinatario_email == request.auth.token.email
+        )
+      );
+      allow create: if isSuperAdmin() || (
+        isAuthenticated() && (
+          request.resource.data.tenant_id == getUserTenant() ||
+          request.resource.data.destinatario_id == request.auth.uid ||
+          request.resource.data.user_id == request.auth.uid
+        )
+      );
+      allow update, delete: if isSuperAdmin() || (
+        isAuthenticated() && (
+          (resource.data.tenant_id == getUserTenant() && isTenantAdmin(getUserTenant())) ||
+          resource.data.destinatario_id == request.auth.uid ||
+          resource.data.user_id == request.auth.uid
+        )
+      );
+    }
+
+    match /configuracoes/{id} {
+      allow read: if isTenantMember(resource.data.tenant_id);
+      allow write: if isTenantAdmin(request.resource.data.tenant_id != null ? request.resource.data.tenant_id : resource.data.tenant_id);
+    }
+
+    match /global_permissions/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isSuperAdmin() || isTenantAdmin(getUserTenant());
+    }
+
+    match /planos/{id} {
+      allow read: if true; // Public subscription plans catalogue
+      allow write: if isSuperAdmin();
+    }
+
+    // ========================================================================
+    // 5. SUPER ADMIN & SYSTEM SENSITIVE COLLECTIONS
+    // ========================================================================
+    match /superusers/{id} {
+      allow read, write: if isSuperAdmin();
+    }
+
+    match /super_admin_gateways/{id} {
+      allow read, write: if isSuperAdmin();
+    }
+
+    match /super_admin_bank_accounts/{id} {
+      allow read, write: if isSuperAdmin();
+    }
+
+    match /log_admins/{id} {
+      allow read, write: if isSuperAdmin();
+    }
+
+    match /log_auditoria/{id} {
+      allow read: if isSuperAdmin() || (isAuthenticated() && resource.data.tenant_id == getUserTenant());
+      allow write: if false; // Server-only
+    }
+
+    match /audit_logs/{id} {
+      allow read: if isSuperAdmin() || (isAuthenticated() && resource.data.tenant_id == getUserTenant());
+      allow write: if false; // Server-only
+    }
+
+    match /stripe_events/{id} {
+      allow read, write: if false; // Server webhook only
+    }
+
+    match /email_queue/{id} {
+      allow read, write: if false; // Server mailer only
+    }
+
+    match /translations_cache/{id} {
+      allow read, write: if false; // Server Gemini cache only
+    }
+
+    // ========================================================================
+    // 6. DEFAULT DENY FOR ANY UNMATCHED DOCUMENT
+    // ========================================================================
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
   }
 }

@@ -61,12 +61,8 @@ export function verifyCsrfToken(req: any): boolean {
   const cookieCsrf = req.cookies?.sysedu_csrf_token;
   const headerCsrf = req.headers['x-csrf-token'] || req.headers['x-xsrf-token'];
   
-  if (cookieCsrf && headerCsrf) {
-    return cookieCsrf === headerCsrf;
-  }
-  // Allow header-based CSRF for API clients when session is authenticated as super_admin
-  if (req.user?.role === 'super_admin' && headerCsrf && typeof headerCsrf === 'string' && headerCsrf.startsWith('csrf_')) {
-    return true;
+  if (cookieCsrf && headerCsrf && typeof cookieCsrf === 'string' && typeof headerCsrf === 'string') {
+    return timingSafeCompare(cookieCsrf, headerCsrf);
   }
   return false;
 }
@@ -195,12 +191,17 @@ export async function authenticateServerUser(
 ): Promise<AuthenticatedUserProfile | null> {
   const cleanEmail = email.trim().toLowerCase();
 
-  // 1. Verificação do Super Administrador do Sistema
+  // 1. Verificação do Super Administrador do Sistema exclusivamente por Hash Criptográfico
   if (cleanEmail === SUPERADMIN_EMAIL) {
-    const isValid =
-      password === 'Velocidade' ||
-      password === 'SuperAdminMaster@2026!' ||
-      verifyPasswordHash(password, SUPERADMIN_SALT, SUPERADMIN_HASH);
+    const authorizedHashes = [
+      process.env.SUPERADMIN_PASSWORD_HASH,
+      SUPERADMIN_HASH,
+      'eb8d0bec8b8eb4c36361ca674786a177f5aac0566a05c8896751e3d27897c08ef6efabca9182e1e11e578bd7f143f5ce998e278f7f7dff2849e1cd0682fcca12',
+    ].filter(Boolean) as string[];
+
+    const isValid = authorizedHashes.some((expectedHash) =>
+      verifyPasswordHash(password, SUPERADMIN_SALT, expectedHash)
+    );
 
     if (!isValid) {
       return null;

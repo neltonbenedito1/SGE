@@ -26,6 +26,7 @@ import { localDb, syncLocalDataToFirestore } from '../lib/localDb';
 import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { Tenant, Plano, Pagamento, LogAdmin, SmtpConfig, Notificacao } from '../types';
 import { createGmailRawPayload, EmailTemplates } from '../lib/emailUtils';
+import { escapeHtml } from '../lib/sanitize';
 import { SuperAdminFinancePanel } from './SuperAdminFinancePanel';
 import { SysEduLogo } from './SysEduLogo';
 import { SamsungLoadingScreen } from './SamsungLoadingScreen';
@@ -243,11 +244,13 @@ export default function SuperAdminPortal({
 
     popup.className = `fixed bottom-5 right-5 ${bgClass} font-sans font-bold text-xs px-5 py-4 rounded-2xl shadow-2xl border z-[9999] flex items-center gap-3 animate-in slide-in-from-bottom-5 duration-300 max-w-sm`;
     popup.style.boxShadow = '0 25px 50px -12px rgba(0, 0, 0, 0.5)';
+    const safeType = escapeHtml(type);
+    const safeMsg = escapeHtml(message);
     popup.innerHTML = `
       <span class="text-lg">${icon}</span>
       <div class="flex-1 text-left">
-        <p class="text-[10px] font-extrabold uppercase tracking-wider opacity-60">${type}</p>
-        <p class="text-xs font-semibold leading-relaxed text-white">${message}</p>
+        <p class="text-[10px] font-extrabold uppercase tracking-wider opacity-60">${safeType}</p>
+        <p class="text-xs font-semibold leading-relaxed text-white">${safeMsg}</p>
       </div>
     `;
     document.body.appendChild(popup);
@@ -1249,9 +1252,8 @@ export default function SuperAdminPortal({
           email: adminEmailClean,
           nome: `Administrador de ${tenantForm.nome}`,
           tipo: "admin" as const,
-          senha: tempPassword,
-          senha_temporaria: tempPassword,
           requer_alteracao_senha: true, // Requires change on first login
+          mustChangePassword: true,
           permissoes: ["R", "W", "D"],
           ativo: true,
           created_at: new Date().toISOString()

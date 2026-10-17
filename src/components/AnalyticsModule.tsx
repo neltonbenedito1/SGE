@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, getDocs, addDoc, query, orderBy, getDoc, doc } from 'firebase/firestore';
-import { ActividadePendente } from '../types';
+import { ActividadePendente, PlanoAula } from '../types';
 import { PerformanceEvaluationModule } from './PerformanceEvaluationModule';
 
 // --- TS INTERFACES ---
@@ -84,6 +84,7 @@ interface AnalyticsModuleProps {
   atividades?: ActividadePendente[];
   assiduidadeLogs?: any[];
   processosAluno?: any[];
+  planoAulas?: PlanoAula[];
   tenantId?: string;
 }
 
@@ -128,6 +129,7 @@ export function AnalyticsModule({
   atividades = [],
   assiduidadeLogs = [],
   processosAluno = [],
+  planoAulas = [],
   tenantId = 'default'
 }: AnalyticsModuleProps) {
 
@@ -1059,6 +1061,7 @@ export function AnalyticsModule({
           tenantUsers={tenantUsers}
           assiduidadeLogs={assiduidadeLogs}
           processosAluno={processosAluno}
+          planoAulas={planoAulas}
           currentUserRole={role}
           loggedInUser={loggedInUser}
           tenantId={tenantId}

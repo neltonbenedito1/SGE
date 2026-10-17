@@ -78,8 +78,8 @@ let clientFirestoreInstance: any = null;
 function getClientFirestore() {
   if (!clientFirestoreInstance) {
     let cfg: any = {
-      projectId: 'sentinel-fef50',
-      apiKey: 'AIzaSyDWcU1jZxn9wpIRQXz6OURFt7LIrdpLrdA',
+      projectId: process.env.FIREBASE_PROJECT_ID || 'sentinel-fef50',
+      apiKey: process.env.FIREBASE_API_KEY || '',
     };
     try {
       const cfgPath = path.join(process.cwd(), 'firebase-applet-config.json');

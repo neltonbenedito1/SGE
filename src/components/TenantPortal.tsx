@@ -61,6 +61,7 @@ import { StudentQrDisplay } from './StudentQrDisplay';
 import { ModuloConfiguracoes, DEFAULT_INTERVALOS } from './ModuloConfiguracoes';
 import { generateStudentQrPayload, generateQrDataUrl } from '../utils/qrCodeHelper';
 import { EmailTemplates, createMimeMessage, createGmailRawPayload } from '../lib/emailUtils';
+import { escapeHtml } from '../lib/sanitize';
 import DocenteFormModal from './DocenteFormModal';
 import ProcessoIndividualModule from './ProcessoIndividualModule';
 import { 
@@ -585,11 +586,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
     popup.className = `fixed bottom-5 right-5 ${bgClass} font-sans font-bold text-xs px-5 py-4 rounded-2xl shadow-2xl border z-[1000000] flex items-center gap-3 animate-in slide-in-from-bottom-5 duration-300 max-w-sm`;
     popup.style.boxShadow = '0 25px 50px -12px rgba(0, 0, 0, 0.5)';
+    const safeType = escapeHtml(type);
+    const safeMsg = escapeHtml(message);
     popup.innerHTML = `
       <span class="text-lg">${icon}</span>
       <div class="flex-1 text-left">
-        <p class="text-[10px] font-extrabold uppercase tracking-wider opacity-60">${type}</p>
-        <p class="text-xs font-semibold leading-relaxed text-white">${message}</p>
+        <p class="text-[10px] font-extrabold uppercase tracking-wider opacity-60">${safeType}</p>
+        <p class="text-xs font-semibold leading-relaxed text-white">${safeMsg}</p>
       </div>
     `;
     document.body.appendChild(popup);
@@ -2466,12 +2469,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             icon: <Edit className="w-3.5 h-3.5" />,
             onClick: () => {
               setEditingItem(target);
+              const inherited = getInheritedModuloAcessos(target.tipo || 'docente');
+              const currentAccess = target.modulo_acessos && Object.keys(target.modulo_acessos).length > 0
+                ? { ...inherited, ...target.modulo_acessos }
+                : inherited;
               setUserForm({
                 email: target.email,
                 nome: target.nome,
                 tipo: target.tipo,
                 ativo: target.ativo,
-                modulo_acessos: target.modulo_acessos || DEFAULT_MODULO_ACESSOS
+                modulo_acessos: currentAccess
               });
               setModalType('user');
               setIsModalOpen(true);
@@ -2683,7 +2690,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           disabled: !isCreationAllowed,
           onClick: () => {
             setEditingItem(null);
-            setUserForm({ email: '', nome: '', tipo: 'docente', ativo: true, modulo_acessos: DEFAULT_MODULO_ACESSOS });
+            setUserForm({ email: '', nome: '', tipo: 'docente', ativo: true, modulo_acessos: getInheritedModuloAcessos('docente') });
             setModalType('user');
             setIsModalOpen(true);
           }
@@ -5103,7 +5110,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   }
 
   const getInheritedModuloAcessos = (tipo: string) => {
-    const normTipo = tipo.toLowerCase().trim();
+    const normTipo = (tipo || 'docente').toLowerCase().trim();
+    // 1. Try matching with globalCategories from Firestore
     const category = globalCategories.find(c => {
       const catCode = (c.codigo || '').toLowerCase().trim();
       const catId = (c.id || '').toLowerCase().trim();
@@ -5113,16 +5121,22 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     if (category && category.modulos) {
       return JSON.parse(JSON.stringify(category.modulos));
     }
-    // Fallback based on type
-    if (normTipo === 'estudante') {
-      const estCat = DEFAULT_CATEGORIES.find(c => c.id === 'estudantes');
-      if (estCat) return JSON.parse(JSON.stringify(estCat.modulos));
+    // 2. Fallback matching with DEFAULT_CATEGORIES
+    const defCat = DEFAULT_CATEGORIES.find(c => {
+      const catCode = (c.codigo || '').toLowerCase().trim();
+      const catId = (c.id || '').toLowerCase().trim();
+      const catNome = (c.nome || '').toLowerCase().trim();
+      return catCode === normTipo || catId === normTipo || catNome === normTipo || catCode.includes(normTipo) || catId.includes(normTipo);
+    });
+    if (defCat && defCat.modulos) {
+      return JSON.parse(JSON.stringify(defCat.modulos));
     }
-    if (normTipo === 'docente' || normTipo === 'professor') {
-      const profCat = DEFAULT_CATEGORIES.find(c => c.id === 'professores');
-      if (profCat) return JSON.parse(JSON.stringify(profCat.modulos));
+    // 3. Fallback to professores/docentes default or first category
+    const profCat = DEFAULT_CATEGORIES.find(c => c.id === 'professores');
+    if (profCat && profCat.modulos) {
+      return JSON.parse(JSON.stringify(profCat.modulos));
     }
-    return JSON.parse(JSON.stringify(DEFAULT_MODULO_ACESSOS));
+    return DEFAULT_CATEGORIES[0]?.modulos ? JSON.parse(JSON.stringify(DEFAULT_CATEGORIES[0].modulos)) : {};
   };
 
   function hasPermission(moduleKey: string, featureKey?: 'visualizar' | 'criar' | 'editar' | 'excluir'): boolean {
@@ -5169,9 +5183,22 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     }
 
     const effectiveRole = (loggedInUser?.tipo || currentUserRole || '').toString().toLowerCase().trim();
-    if (effectiveRole === 'admin' || currentUserRole === 'admin') return true;
+    if (effectiveRole === 'admin' || currentUserRole === 'admin' || effectiveRole === 'administrador' || effectiveRole === 'superadmin') return true;
 
-    // Check dynamic category permissions from Global Permissions module
+    // 1. SPECIFIC USER PERMISSIONS: Checked first so customizations in Users module immediately take effect
+    const userModConfig = loggedInUser?.modulo_acessos?.[normalizedKey] || loggedInUser?.modulo_acessos?.[moduleKey];
+    if (userModConfig) {
+      if (!userModConfig.habilitado) return false;
+      if (featureKey) {
+        const actionPerm = userModConfig.acoes?.[featureKey] ?? (userModConfig as any).funcionalidades?.[featureKey];
+        if (actionPerm !== undefined) {
+          return !!actionPerm;
+        }
+      }
+      return !!userModConfig.habilitado;
+    }
+
+    // 2. DYNAMIC CATEGORY PERMISSIONS: From Global Permissions module
     if (globalCategories && globalCategories.length > 0) {
       const category = globalCategories.find(c => {
         const catCode = (c.codigo || '').toLowerCase().trim();
@@ -5181,7 +5208,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       });
 
       if (category && category.modulos) {
-        const modConfig = category.modulos[normalizedKey];
+        const modConfig = category.modulos[normalizedKey] || category.modulos[moduleKey];
         if (modConfig) {
           if (!modConfig.habilitado) return false;
           if (featureKey && modConfig.acoes) {
@@ -5197,7 +5224,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       }
     }
 
-    // Fallback to static/legacy rules if category config is not loaded or not found
+    // 3. FALLBACK TO STATIC/LEGACY RULES IF CATEGORY CONFIG IS NOT LOADED OR NOT FOUND
     const isDocente = effectiveRole === 'docente' || effectiveRole.includes('docent') || effectiveRole.includes('prof');
     const isEstudante = effectiveRole === 'estudante' || effectiveRole.includes('estudant') || effectiveRole.includes('alun');
     const isPai = effectiveRole === 'pai' || effectiveRole.includes('pai') || effectiveRole.includes('encarregado');
@@ -5226,27 +5253,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       return false;
     }
 
-    // Fallback
-    if (!loggedInUser) {
-      if (effectiveRole === 'director' || effectiveRole.includes('direc')) return true;
-      if (featureKey === 'visualizar') return true;
-      return false;
-    }
-
-    const access = loggedInUser.modulo_acessos?.[normalizedKey];
-    if (!access) {
-      if (loggedInUser.tipo === 'director' || loggedInUser.tipo?.toString().toLowerCase().includes('direc')) return true;
-      if (featureKey === 'visualizar') return true;
-      return false;
-    }
-
-    if (!access.habilitado) return false;
-
-    if (featureKey) {
-      return !!access.funcionalidades?.[featureKey];
-    }
-
-    return true;
+    if (effectiveRole === 'director' || effectiveRole.includes('direc')) return true;
+    if (featureKey === 'visualizar') return true;
+    return false;
   }
 
   async function handleTeacherBatchAction(action: string) {
@@ -5467,6 +5476,47 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
     return () => unsubscribe();
   }, []);
+
+  // Real-time synchronization for users and permissions across the system
+  useEffect(() => {
+    if (!currentTenantId) return;
+
+    const qUsers = query(
+      collection(db, 'users'),
+      where('tenant_id', '==', currentTenantId)
+    );
+
+    const unsubscribe = onSnapshot(qUsers, (snapshot) => {
+      try {
+        const usersList: User[] = [];
+        const seenUserEmails = new Set<string>();
+        snapshot.forEach(d => {
+          const u = { ...d.data() as User, id: d.id };
+          const cleanEmail = (u.email || '').toLowerCase().trim();
+          if ((u as any).tipo === 'super_admin' || (u as any).role === 'super_admin' || cleanEmail === 'neltonbenedito1@gmail.com') return;
+          if (cleanEmail && seenUserEmails.has(cleanEmail)) return;
+          if (cleanEmail) seenUserEmails.add(cleanEmail);
+          usersList.push(u);
+        });
+        setTenantUsers(usersList);
+      } catch (err) {
+        console.warn("Snapshot error for tenant users:", err);
+      }
+    }, (err) => {
+      console.warn("Snapshot error for tenant users:", err);
+    });
+
+    const handlePermissionsUpdated = () => {
+      loadTenantContext();
+    };
+
+    window.addEventListener('sysedu:permissions_updated', handlePermissionsUpdated);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener('sysedu:permissions_updated', handlePermissionsUpdated);
+    };
+  }, [currentTenantId]);
 
   useEffect(() => {
     if (!currentTenantId) return;
@@ -6276,8 +6326,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             email: teacherEmail,
             nome: teacherForm.nome,
             tipo: "docente" as const,
-            senha: "12345678",
-            senha_temporaria: "12345678",
+            requer_alteracao_senha: true,
+            mustChangePassword: true,
             permissoes: ["R", "W"],
             ativo: true,
             modulo_acessos: getInheritedModuloAcessos('docente'),
@@ -6396,8 +6446,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             email: studentEmail,
             nome: studentForm.nome,
             tipo: "estudante" as const,
-            senha: studentPwd,
-            senha_temporaria: studentPwd,
+            requer_alteracao_senha: true,
+            mustChangePassword: true,
             permissoes: ["R"],
             ativo: true,
             modulo_acessos: getInheritedModuloAcessos('estudante'),
@@ -7295,30 +7345,34 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
         const userPwd = userForm.senha_temporaria || '12345678';
         if (editingItem) {
-          await setDoc(doc(db, 'users', editingItem.id), {
+          const updatedUserData = {
             email: cleanedUserEmail,
             nome: userForm.nome,
-            tipo: userForm.tipo,
+            tipo: userForm.tipo as any,
             ativo: userForm.ativo,
             modulo_acessos: userForm.modulo_acessos,
             foto_url: userForm.foto_url || '',
-            senha: userPwd,
-            senha_temporaria: userPwd
-          }, { merge: true });
-          if (cleanedUserEmail) {
+            updated_at: new Date().toISOString()
+          };
+          await setDoc(doc(db, 'users', editingItem.id), updatedUserData, { merge: true });
+          if (cleanedUserEmail && userForm.senha_temporaria) {
             await registerUserInFirebaseAuth(cleanedUserEmail, userPwd);
           }
+          setTenantUsers((prev: any) => prev.map((u: any) => u.id === editingItem.id ? { ...u, ...updatedUserData } : u));
+          try {
+            window.dispatchEvent(new CustomEvent('sysedu:permissions_updated', { detail: { userId: editingItem.id } }));
+          } catch (e) {}
         } else {
           if (!checkLimit('max_usuarios', tenantUsers.length)) return;
           const userGenId = "user-gen-" + Math.random().toString(36).substr(2, 9);
-          const newUser = {
+          const newUser: any = {
             id: userGenId,
             tenant_id: currentTenantId,
             email: cleanedUserEmail,
             nome: userForm.nome,
             tipo: userForm.tipo,
-            senha: userPwd,
-            senha_temporaria: userPwd,
+            requer_alteracao_senha: true,
+            mustChangePassword: true,
             permissoes: userForm.tipo === 'admin' || userForm.tipo === 'director' ? ["R", "W", "D"] : ["R"],
             ativo: userForm.ativo,
             modulo_acessos: userForm.modulo_acessos,
@@ -7329,6 +7383,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           if (cleanedUserEmail) {
             await registerUserInFirebaseAuth(cleanedUserEmail, userPwd);
           }
+          setTenantUsers((prev: any) => [...prev, newUser]);
+          try {
+            window.dispatchEvent(new CustomEvent('sysedu:permissions_updated', { detail: { userId: userGenId } }));
+          } catch (e) {}
         }
       }
 
@@ -8703,6 +8761,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     atividades={rawAtividades}
                     assiduidadeLogs={assiduidadeLogs}
                     processosAluno={rawProcessos}
+                    planoAulas={rawPlanoAulas}
                     tenantId={tenant?.id}
                   />
                 </div>
@@ -15127,7 +15186,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 email: '',
                                 tipo: 'docente',
                                 ativo: true,
-                                modulo_acessos: JSON.parse(JSON.stringify(DEFAULT_MODULO_ACESSOS))
+                                modulo_acessos: getInheritedModuloAcessos('docente')
                               });
                               setModalType('user');
                               setIsModalOpen(true);
@@ -15507,12 +15566,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                 onClick={() => {
                                                   const isAdm = (u as any).tipo === 'admin' || (u as any).tipo === 'administrador' || (u as any).tipo === 'superadmin' || (u as any).role === 'admin';
                                                   setEditingItem(u);
+                                                  const inherited = getInheritedModuloAcessos(u.tipo || 'docente');
+                                                  const currentAccess = u.modulo_acessos && Object.keys(u.modulo_acessos).length > 0
+                                                    ? { ...inherited, ...u.modulo_acessos }
+                                                    : inherited;
                                                   setUserForm({
                                                     nome: u.nome,
                                                     email: u.email,
                                                     tipo: u.tipo,
                                                     ativo: isAdm ? true : u.ativo,
-                                                    modulo_acessos: u.modulo_acessos || JSON.parse(JSON.stringify(DEFAULT_MODULO_ACESSOS)),
+                                                    modulo_acessos: currentAccess,
                                                     foto_url: u.foto_url || '',
                                                     senha_temporaria: u.senha_temporaria || ''
                                                   });

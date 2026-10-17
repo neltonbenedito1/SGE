@@ -228,24 +228,24 @@ export async function seedDatabaseIfEmpty() {
       batch.set(doc(db, "super_admin_bank_accounts", b.id), b);
     }
 
-    // Default Gateways
+    // Default Gateways metadata (Credentials are securely stored in server environment variables)
     const defaultGateways = [
       {
         id: "gateway-mpesa",
         gatewayName: "M-Pesa Moçambique",
         environment: "production",
-        apiKey: "mpesa_live_sysedu_key_99",
-        secretKey: "cipher::v1::encrypted_mpesa_key",
-        webhookSecret: "whsec_mpesa_default",
+        apiKey: "",
+        secretKey: "",
+        webhookSecret: "",
         isActive: true
       },
       {
         id: "gateway-stripe",
         gatewayName: "Stripe Global",
         environment: "production",
-        apiKey: "pk_live_sysedu_pk",
-        secretKey: "cipher::v1::encrypted_stripe_key",
-        webhookSecret: "whsec_stripe_default",
+        apiKey: "",
+        secretKey: "",
+        webhookSecret: "",
         isActive: true
       }
     ];
