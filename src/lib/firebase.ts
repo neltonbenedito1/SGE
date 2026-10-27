@@ -7,8 +7,7 @@ import { initializeApp, getApps } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { 
   initializeFirestore,
-  persistentLocalCache,
-  persistentMultipleTabManager,
+  memoryLocalCache,
   collection, 
   doc, 
   getDocs, 
@@ -16,6 +15,7 @@ import {
   writeBatch
 } from "firebase/firestore";
 import configData from "../../firebase-applet-config.json";
+import { isFirestoreQuotaExhausted, markFirestoreQuotaExhausted, isQuotaError } from "./localDb";
 
 const firebaseConfig = {
   apiKey: configData.apiKey,
@@ -33,9 +33,7 @@ export const db = initializeFirestore(
   app,
   {
     experimentalAutoDetectLongPolling: true,
-    localCache: persistentLocalCache({
-      tabManager: persistentMultipleTabManager()
-    })
+    localCache: memoryLocalCache()
   },
   firestoreDbId
 );
@@ -46,9 +44,12 @@ export const auth = getAuth(app);
  * Register user account in Firebase Authentication if not already registered.
  */
 export async function registerUserInFirebaseAuth(email: string, password?: string): Promise<boolean> {
-  if (!email || !email.trim()) return false;
+  if (!email || !email.trim() || !password || password.trim().length < 6) {
+    console.warn('[registerUserInFirebaseAuth] Falha: e-mail e palavra-passe válida são obrigatórios para cadastro.');
+    return false;
+  }
   const emailClean = email.trim();
-  const pwdToUse = (password && password.trim().length >= 6) ? password.trim() : "12345678";
+  const pwdToUse = password.trim();
   
   try {
     const secondaryAppName = "secondaryAuthApp";
@@ -63,22 +64,19 @@ export async function registerUserInFirebaseAuth(email: string, password?: strin
     return true;
   } catch (err: any) {
     if (err?.code === 'auth/email-already-in-use') {
-      // If user already exists and a specific password was supplied, sync/update the password via backend Admin SDK
-      if (password && password.trim().length >= 6) {
-        try {
-          await fetch('/api/auth/password/change', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              targetUid: emailClean,
-              email: emailClean,
-              newPassword: pwdToUse,
-              callerRole: 'super_admin'
-            })
-          });
-        } catch (serverErr) {
-          console.warn('[registerUserInFirebaseAuth] Server sync note:', serverErr);
-        }
+      try {
+        await fetch('/api/auth/password/change', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            targetUid: emailClean,
+            email: emailClean,
+            newPassword: pwdToUse,
+            callerRole: 'super_admin'
+          })
+        });
+      } catch (serverErr) {
+        console.warn('[registerUserInFirebaseAuth] Server sync note:', serverErr);
       }
       return true;
     }
@@ -87,35 +85,17 @@ export async function registerUserInFirebaseAuth(email: string, password?: strin
   }
 }
 
-/**
- * Ensures Firebase Auth session is active for the current user.
- */
-export async function ensureFirebaseAuthSession(email: string, password?: string): Promise<boolean> {
-  if (!email || !email.trim()) return false;
-  const emailClean = email.trim().toLowerCase();
-  if (auth.currentUser && auth.currentUser.email?.toLowerCase() === emailClean) {
-    return true;
-  }
-  const pwdToUse = password || (emailClean === 'neltonbenedito1@gmail.com' ? 'Errado23x' : '12345678');
-  try {
-    await signInWithEmailAndPassword(auth, emailClean, pwdToUse);
-    return true;
-  } catch {
-    try {
-      await registerUserInFirebaseAuth(emailClean, pwdToUse);
-      await signInWithEmailAndPassword(auth, emailClean, pwdToUse);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-}
 
 // Validation check on database initialization with resilient error absorption
 async function testConnection() {
+  if (isFirestoreQuotaExhausted()) return;
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error: any) {
+    if (isQuotaError(error)) {
+      markFirestoreQuotaExhausted();
+      return;
+    }
     if (
       error?.code === 'unavailable' ||
       error?.message?.includes('the client is offline') ||
@@ -132,12 +112,21 @@ testConnection();
 
 // Initial database seeding helper to provide instant high-fidelity experience
 export async function seedDatabaseIfEmpty() {
+  // If already seeded in this browser or if quota is exhausted, skip to prevent write storms
+  if (typeof window !== 'undefined' && localStorage.getItem('sysedu_db_seeded') === 'true') {
+    return;
+  }
+  if (isFirestoreQuotaExhausted()) {
+    return;
+  }
+
   try {
     const plansRef = collection(db, "planos");
     const plansSnapshot = await getDocs(plansRef);
     
     // Only seed if empty
     if (!plansSnapshot.empty) {
+      if (typeof window !== 'undefined') localStorage.setItem('sysedu_db_seeded', 'true');
       return;
     }
 
@@ -210,7 +199,7 @@ export async function seedDatabaseIfEmpty() {
         titular: "SysEdu Tecnologia Escolar, Lda",
         nif: "400987123",
         banco: "BCI - Banco Comercial e de Investimentos",
-        conta_iban: "MZ59000100000123456789012",
+        conta_iban: "MZ59000100000987654321012",
         swift: "BCIMMZM",
         moeda: "MZN"
       },
@@ -254,8 +243,13 @@ export async function seedDatabaseIfEmpty() {
     }
 
     await batch.commit();
+    if (typeof window !== 'undefined') localStorage.setItem('sysedu_db_seeded', 'true');
     console.log("Database plans updated/created successfully");
   } catch (err: any) {
+    if (isQuotaError(err)) {
+      markFirestoreQuotaExhausted();
+      if (typeof window !== 'undefined') localStorage.setItem('sysedu_db_seeded', 'true');
+    }
     console.warn("Notice during database seeding (using local defaults if offline/unauthenticated):", err?.message || err);
   }
 }

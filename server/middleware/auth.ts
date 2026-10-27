@@ -173,6 +173,52 @@ export function getFirestoreInstance(): any {
     collection(colName: string) {
       return createCollectionRef(cDb, colName);
     },
+    async runTransaction(updateFunction: (transaction: any) => Promise<any>) {
+      const pendingOps: Promise<any>[] = [];
+      const transactionWrapper = {
+        async get(docRef: any) {
+          if (docRef && typeof docRef.get === 'function') {
+            return docRef.get();
+          }
+          return { exists: false, data: () => null };
+        },
+        set(docRef: any, data: any, options?: any) {
+          if (docRef && typeof docRef.set === 'function') {
+            const res = docRef.set(data, options);
+            if (res && typeof res.then === 'function') {
+              pendingOps.push(res);
+            }
+            return res;
+          }
+          return transactionWrapper;
+        },
+        update(docRef: any, data: any) {
+          if (docRef && typeof docRef.update === 'function') {
+            const res = docRef.update(data);
+            if (res && typeof res.then === 'function') {
+              pendingOps.push(res);
+            }
+            return res;
+          }
+          return transactionWrapper;
+        },
+        delete(docRef: any) {
+          if (docRef && typeof docRef.delete === 'function') {
+            const res = docRef.delete();
+            if (res && typeof res.then === 'function') {
+              pendingOps.push(res);
+            }
+            return res;
+          }
+          return transactionWrapper;
+        },
+      };
+      const result = await updateFunction(transactionWrapper);
+      if (pendingOps.length > 0) {
+        await Promise.all(pendingOps);
+      }
+      return result;
+    },
   };
 }
 
@@ -232,7 +278,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     const admin = getFirebaseAdminInstance();
     const decoded = await getAuth(admin).verifyIdToken(idToken, true);
 
-    const role = (decoded.role as string) || (decoded.tipo as string) || (decoded.email === 'neltonbenedito1@gmail.com' ? 'super_admin' : 'estudante');
+    const role = (decoded.role as string) || (decoded.tipo as string) || (decoded.super_admin ? 'super_admin' : 'estudante');
     const tenant_id = (decoded.tenant_id as string) || (decoded.tenantId as string) || 'default';
     const must_reset_password = Boolean(decoded.must_reset_password || decoded.requer_alteracao_senha);
 
@@ -322,7 +368,7 @@ export function requireRole(allowedRoles: string[]) {
     }
 
     const userRole = req.user.role;
-    const isSuperAdmin = userRole === 'super_admin' || req.user.email === 'neltonbenedito1@gmail.com';
+    const isSuperAdmin = userRole === 'super_admin' || userRole === 'superadmin';
 
     if (isSuperAdmin || allowedRoles.includes(userRole)) {
       return next();
@@ -345,7 +391,7 @@ export function requireSameTenant(getTargetTenantId: (req: Request) => string | 
       return res.status(401).json({ code: 'unauthorized', message: 'Requer autenticação.' });
     }
 
-    if (req.user.role === 'super_admin' || req.user.email === 'neltonbenedito1@gmail.com') {
+    if (req.user.role === 'super_admin' || req.user.role === 'superadmin') {
       return next(); // Super Admin has global tenant access
     }
 

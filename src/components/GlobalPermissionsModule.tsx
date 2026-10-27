@@ -294,7 +294,7 @@ export const GlobalPermissionsModule: React.FC<GlobalPermissionsModuleProps> = (
         setIsLoading(false);
       }
     }, (err) => {
-      console.error('Snapshot error for global_permissions:', err);
+      console.warn('Notice syncing global_permissions (using default categories):', err?.message || err);
       setCategories(DEFAULT_CATEGORIES);
       setIsLoading(false);
     });

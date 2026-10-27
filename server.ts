@@ -49,6 +49,14 @@ import {
   deleteBankAccountServer,
 } from "./server/services/tenantDeletionService";
 import {
+  checkBootstrapStatus,
+  executeInitialBootstrap,
+  resetSuperAdminAndEnableBootstrap,
+} from "./server/security/bootstrapManager";
+import { executeOwnershipTransfer } from "./server/services/ownershipTransferService";
+import {
+  BootstrapInitializeSchema,
+  TransferOwnershipSchema,
   PasswordChangeSchema,
   UserCreateSchema,
   SessionCreateSchema,
@@ -69,6 +77,7 @@ import {
 } from "./src/shared/schemas";
 import { validateFileMagicBytes } from "./server/security/fileValidator";
 import { logSecurityEvent } from "./server/security/logger";
+import { validatePasswordPolicy } from "./src/shared/passwordPolicy";
 
 const app = express();
 const PORT = 3000;
@@ -79,10 +88,11 @@ app.disable("x-powered-by");
 // Trust reverse proxy (Cloud Run / AI Studio preview environment)
 app.set("trust proxy", 1);
 
-// Force HTTPS in production environments
+// Force HTTPS in production environments (only for non-API GET requests to avoid 301 POST->GET conversion)
 if (process.env.NODE_ENV === "production") {
   app.use((req: Request, res: Response, next: NextFunction) => {
-    if (req.header("x-forwarded-proto") !== "https") {
+    const proto = req.header("x-forwarded-proto");
+    if (!req.path.startsWith("/api") && req.method === "GET" && proto && !proto.includes("https")) {
       return res.redirect(301, `https://${req.header("host")}${req.url}`);
     }
     next();
@@ -186,11 +196,13 @@ const rateLimitValidationConfig = {
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 400,
+  max: 500,
   standardHeaders: true,
   legacyHeaders: false,
   validate: rateLimitValidationConfig,
-  message: { code: "too_many_requests", message: "Muitas requisições. Tente novamente mais tarde." },
+  handler: (req: Request, res: Response) => {
+    res.status(429).json({ error: "Muitas requisições. Tente novamente mais tarde." });
+  },
 });
 
 const aiLimiter = rateLimit({
@@ -199,25 +211,31 @@ const aiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   validate: rateLimitValidationConfig,
-  message: { code: "ai_rate_limited", message: "Limite de requisições de IA atingido. Aguarde um minuto." },
+  handler: (req: Request, res: Response) => {
+    res.status(429).json({ error: "Limite de requisições de IA atingido. Aguarde um minuto." });
+  },
 });
 
 const emailLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,
-  max: 20,
+  max: 30,
   standardHeaders: true,
   legacyHeaders: false,
   validate: rateLimitValidationConfig,
-  message: { code: "email_rate_limited", message: "Limite de envio de e-mails atingido. Aguarde alguns minutos." },
+  handler: (req: Request, res: Response) => {
+    res.status(429).json({ error: "Limite de envio de e-mails atingido. Aguarde alguns minutos." });
+  },
 });
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: 50,
   standardHeaders: true,
   legacyHeaders: false,
   validate: rateLimitValidationConfig,
-  message: { code: "auth_rate_limited", message: "Muitas tentativas de operação de segurança. Tente novamente em 15 minutos." },
+  handler: (req: Request, res: Response) => {
+    res.status(429).json({ error: "Muitas tentativas de operação de segurança. Tente novamente em 15 minutos." });
+  },
 });
 
 app.use("/api/", apiLimiter);
@@ -406,6 +424,361 @@ const failedLoginAttempts = new Map<string, FailedLoginTracker>();
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_DURATION_MS = 15 * 60 * 1000;
 
+// 6.0.1 Verificar status do Bootstrap Inicial
+app.get("/api/auth/bootstrap/status", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const status = await checkBootstrapStatus();
+    return res.json(status);
+  } catch (err: any) {
+    return res.status(500).json({ initialized: true, allowsBootstrap: false, error: err.message });
+  }
+});
+
+// 6.0.2 Executar o Bootstrap Inicial do Primeiro Superadministrador (Exclusivo e Atômico)
+app.post("/api/auth/bootstrap", authLimiter, async (req: Request, res: Response): Promise<any> => {
+  try {
+    const currentStatus = await checkBootstrapStatus();
+    if (currentStatus.initialized && !currentStatus.allowsBootstrap) {
+      return res.status(403).json({
+        error: "O superadministrador do sistema já foi cadastrado. Novos superadministradores devem ser adicionados exclusivamente através do Painel Super Admin.",
+      });
+    }
+
+    const parseResult = BootstrapInitializeSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({
+        error: parseResult.error.issues[0]?.message || "Dados de bootstrap inválidos.",
+      });
+    }
+
+    const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.ip || "unknown_ip";
+    const userAgent = req.headers["user-agent"] || "";
+
+    const result = await executeInitialBootstrap({
+      ...parseResult.data,
+      clientIp,
+      userAgent,
+    });
+
+    // Criar sessão de login para o superadmin recém-criado
+    const sessionId = "sysedu_sess_" + crypto.randomUUID();
+    const csrfToken = "csrf_" + crypto.randomBytes(16).toString("hex");
+    const isHttps = req.secure || req.headers["x-forwarded-proto"] === "https";
+    const now = Date.now();
+
+    serverSessions.set(sessionId, {
+      userId: result.uid,
+      role: "super_admin",
+      tenantId: "super-admin",
+      email: result.email,
+      createdAt: now,
+      lastActivity: now,
+      must_reset_password: false,
+    });
+
+    res.cookie("sysedu_session_id", sessionId, {
+      httpOnly: true,
+      secure: isHttps || process.env.NODE_ENV === "production",
+      sameSite: isHttps ? "none" : "lax",
+      path: "/",
+      maxAge: 24 * 60 * 60 * 1000,
+    });
+
+    res.cookie("sysedu_csrf_token", csrfToken, {
+      httpOnly: false,
+      secure: isHttps || process.env.NODE_ENV === "production",
+      sameSite: isHttps ? "none" : "lax",
+      path: "/",
+      maxAge: 24 * 60 * 60 * 1000,
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Primeiro superadministrador do sistema criado com sucesso.",
+      user: {
+        id: result.uid,
+        email: result.email,
+        nome: result.nome,
+        role: "super_admin",
+        tipo: "super_admin",
+        tenant_id: "super-admin",
+        ativo: true,
+        mustChangePassword: false,
+      },
+      sessionId,
+      csrfToken,
+    });
+  } catch (err: any) {
+    console.error("[Bootstrap Error]:", err);
+    return res.status(400).json({ error: err.message || "Falha ao inicializar superadministrador." });
+  }
+});
+
+// 6.0.3 Reset do Superadministrador e Reativação do Bootstrap Inicial (Exclusivo para Super Admin autenticado)
+app.post("/api/auth/bootstrap/reset", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const currentStatus = await checkBootstrapStatus();
+    if (currentStatus.initialized) {
+      // Exigir autenticação válida de Super Admin
+      let isSuperAdmin = false;
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        try {
+          const admin = getFirebaseAdminInstance();
+          const decoded = await getAuth(admin).verifyIdToken(authHeader.substring(7), true);
+          if (decoded.role === "super_admin" || decoded.super_admin) {
+            isSuperAdmin = true;
+          }
+        } catch {}
+      }
+
+      if (!isSuperAdmin) {
+        const sessionId = req.cookies?.sysedu_session_id || (req.headers["x-session-id"] as string);
+        if (sessionId) {
+          const session = getSession(sessionId);
+          if (session && (session.role === "super_admin" || session.role === "superadmin")) {
+            isSuperAdmin = true;
+          }
+        }
+      }
+
+      if (!isSuperAdmin) {
+        return res.status(403).json({
+          error: "Acesso negado: o sistema já possui um superadministrador configurado. A reinicialização ou cadastro deve ser efetuada exclusivamente por um Superadministrador através do Painel Super Admin.",
+        });
+      }
+    }
+
+    const result = await resetSuperAdminAndEnableBootstrap();
+    return res.json(result);
+  } catch (err: any) {
+    console.error("[Bootstrap Reset Error]:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// 6.0.4 Esqueci Palavra-Passe: Solicitar Código OTP
+app.post("/api/auth/forgot-password/request-otp", authLimiter, async (req: Request, res: Response): Promise<any> => {
+  try {
+    const email = req.body?.email;
+    if (!email || typeof email !== 'string') {
+      return res.status(400).json({ error: "Por favor, introduza o seu endereço de e-mail institucional." });
+    }
+    const cleanEmail = email.trim().toLowerCase();
+
+    const admin = getFirebaseAdminInstance();
+    const auth = getAuth(admin);
+    const db = getFirestoreInstance();
+
+    let userExists = false;
+    let targetUid = '';
+    try {
+      const fbUser = await auth.getUserByEmail(cleanEmail);
+      if (fbUser) {
+        userExists = true;
+        targetUid = fbUser.uid;
+      }
+    } catch {}
+
+    if (!userExists) {
+      const userSnap = await db.collection('users').where('email', '==', cleanEmail).limit(1).get();
+      if (!userSnap.empty) {
+        userExists = true;
+        targetUid = userSnap.docs[0].id;
+      } else {
+        const superSnap = await db.collection('superusers').where('email', '==', cleanEmail).limit(1).get();
+        if (!superSnap.empty) {
+          userExists = true;
+          targetUid = superSnap.docs[0].id;
+        }
+      }
+    }
+
+    if (!userExists) {
+      return res.status(404).json({ error: "Nenhuma conta associada a este e-mail foi encontrada no sistema." });
+    }
+
+    // Gerar código OTP de 6 dígitos numéricos
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutos de validade
+
+    await db.collection('password_reset_otps').doc(cleanEmail).set({
+      email: cleanEmail,
+      otp,
+      uid: targetUid,
+      expiresAt,
+      attempts: 0,
+      createdAt: new Date().toISOString(),
+    });
+
+    let emailSent = false;
+    try {
+      if (process.env.SMTP_HOST && process.env.SMTP_USER) {
+        const transporter = nodemailer.createTransport({
+          host: process.env.SMTP_HOST,
+          port: Number(process.env.SMTP_PORT) || 587,
+          secure: process.env.SMTP_SECURE === 'true',
+          auth: {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASS,
+          },
+        });
+
+        await transporter.sendMail({
+          from: `"SGE - Gestão Educacional" <${process.env.SMTP_USER}>`,
+          to: cleanEmail,
+          subject: "Código de Recuperação de Palavra-Passe (OTP) - SGE",
+          text: `O seu código de verificação para redefinição de palavra-passe é: ${otp}. Válido por 15 minutos.`,
+          html: `<div style="font-family: sans-serif; padding: 20px; color: #1e293b;">
+            <h2 style="color: #4f46e5;">Recuperação de Palavra-Passe - SGE</h2>
+            <p>Recebemos uma solicitação para redefinir a palavra-passe da sua conta.</p>
+            <p>Utilize o código de verificação abaixo no formulário de recuperação:</p>
+            <div style="font-size: 32px; font-weight: bold; letter-spacing: 6px; padding: 14px 24px; background: #e0e7ff; color: #3730a3; display: inline-block; border-radius: 10px; margin: 12px 0;">${otp}</div>
+            <p style="color: #64748b; font-size: 13px;">Este código é válido por 15 minutos. Se não solicitou esta redefinição, desconsidere esta mensagem.</p>
+          </div>`
+        });
+        emailSent = true;
+      }
+    } catch (mailErr: any) {
+      console.warn('[Request OTP Email Note]:', mailErr.message);
+    }
+
+    return res.json({
+      success: true,
+      message: emailSent
+        ? "Código OTP enviado com sucesso para o seu e-mail."
+        : "Código OTP gerado com sucesso.",
+      emailSent,
+      // Fornecer código de desenvolvimento se SMTP não estiver configurado
+      debugOtp: !emailSent ? otp : undefined,
+    });
+  } catch (err: any) {
+    console.error("[Request OTP Error]:", err);
+    return res.status(500).json({ error: err.message || "Erro ao gerar código OTP." });
+  }
+});
+
+// 6.0.5 Esqueci Palavra-Passe: Validar OTP e Redefinir Senha no Firebase Authentication e Firestore
+app.post("/api/auth/forgot-password/verify-and-reset", authLimiter, async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { email, otp, newPassword, confirmPassword } = req.body || {};
+    if (!email || !otp || !newPassword) {
+      return res.status(400).json({ error: "E-mail, código OTP e nova palavra-passe são obrigatórios." });
+    }
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ error: "A confirmação da nova palavra-passe não coincide." });
+    }
+    const cleanEmail = String(email).trim().toLowerCase();
+
+    const policy = validatePasswordPolicy(newPassword, cleanEmail);
+    if (!policy.valid) {
+      return res.status(400).json({ error: policy.errors[0] || "A palavra-passe não cumpre os requisitos de segurança." });
+    }
+
+    const admin = getFirebaseAdminInstance();
+    const auth = getAuth(admin);
+    const db = getFirestoreInstance();
+
+    const otpDoc = await db.collection('password_reset_otps').doc(cleanEmail).get();
+    if (!otpDoc.exists) {
+      return res.status(400).json({ error: "Nenhum pedido de código OTP ativo encontrado para este e-mail. Solicite um novo código." });
+    }
+
+    const otpData = otpDoc.data()!;
+    if (Date.now() > otpData.expiresAt) {
+      await db.collection('password_reset_otps').doc(cleanEmail).delete();
+      return res.status(400).json({ error: "O código OTP expirou. Por favor, solicite um novo código." });
+    }
+
+    if (String(otpData.otp).trim() !== String(otp).trim()) {
+      const attempts = (otpData.attempts || 0) + 1;
+      if (attempts >= 5) {
+        await db.collection('password_reset_otps').doc(cleanEmail).delete();
+        return res.status(400).json({ error: "Demasiadas tentativas inválidas. O código foi cancelado por motivos de segurança. Solicite um novo código." });
+      }
+      await db.collection('password_reset_otps').doc(cleanEmail).update({ attempts });
+      return res.status(400).json({ error: `Código OTP incorreto. Restam ${5 - attempts} tentativas.` });
+    }
+
+    // OTP válido! Atualizar a palavra-passe no Firebase Authentication
+    let uid = otpData.uid;
+    try {
+      if (!uid) {
+        const fbUser = await auth.getUserByEmail(cleanEmail);
+        uid = fbUser.uid;
+      }
+      await auth.updateUser(uid, {
+        password: newPassword,
+      });
+    } catch (authErr: any) {
+      try {
+        const created = await auth.createUser({
+          email: cleanEmail,
+          password: newPassword,
+        });
+        uid = created.uid;
+      } catch (innerErr: any) {
+        console.error('[Verify and Reset Password Auth Error]:', innerErr);
+        throw new Error('Falha ao atualizar a conta no Firebase Authentication: ' + (innerErr.message || authErr.message));
+      }
+    }
+
+    // Atualizar registro no Firestore
+    const salt = crypto.randomBytes(16).toString('hex');
+    const passwordHash = hashPasswordPBKDF2(newPassword, salt);
+    const nowIso = new Date().toISOString();
+
+    if (uid) {
+      try {
+        await db.collection('users').doc(uid).set({
+          passwordHash,
+          salt,
+          mustChangePassword: false,
+          requer_alteracao_senha: false,
+          senha_temporaria: FieldValue.delete(),
+          passwordLastChangedAt: nowIso,
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+      } catch {}
+    }
+
+    const usersByEmail = await db.collection('users').where('email', '==', cleanEmail).get();
+    for (const d of usersByEmail.docs) {
+      await d.ref.set({
+        passwordHash,
+        salt,
+        mustChangePassword: false,
+        requer_alteracao_senha: false,
+        senha_temporaria: FieldValue.delete(),
+        passwordLastChangedAt: nowIso,
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+    }
+
+    const superusersByEmail = await db.collection('superusers').where('email', '==', cleanEmail).get();
+    for (const d of superusersByEmail.docs) {
+      await d.ref.set({
+        passwordHash,
+        salt,
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+    }
+
+    // Invalidar OTP consumido
+    await db.collection('password_reset_otps').doc(cleanEmail).delete();
+
+    logSecurityEvent("INFO", "password_reset_otp_success", { email: cleanEmail, uid });
+
+    return res.json({
+      success: true,
+      message: "Palavra-passe alterada com sucesso no Firebase Authentication. Já pode iniciar sessão.",
+    });
+  } catch (err: any) {
+    console.error("[Verify and Reset Password Error]:", err);
+    return res.status(500).json({ error: err.message || "Erro ao redefinir a palavra-passe." });
+  }
+});
+
 // 6.0 Server-Side User Authentication with Hashed Salted Credentials & Brute Force Guard
 app.post("/api/auth/login", authLimiter, async (req: Request, res: Response): Promise<any> => {
   try {
@@ -470,7 +843,7 @@ app.post("/api/auth/login", authLimiter, async (req: Request, res: Response): Pr
     res.cookie("sysedu_session_id", sessionId, {
       httpOnly: true,
       secure: isHttps || process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      sameSite: isHttps ? "none" : "lax",
       path: "/",
       maxAge: 24 * 60 * 60 * 1000,
     });
@@ -478,7 +851,7 @@ app.post("/api/auth/login", authLimiter, async (req: Request, res: Response): Pr
     res.cookie("sysedu_csrf_token", csrfToken, {
       httpOnly: false,
       secure: isHttps || process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      sameSite: isHttps ? "none" : "lax",
       path: "/",
       maxAge: 24 * 60 * 60 * 1000,
     });
@@ -522,7 +895,7 @@ app.post("/api/auth/session/create", async (req: Request, res: Response): Promis
       res.cookie("sysedu_session_id", sessionId, {
         httpOnly: true,
         secure: isHttps,
-        sameSite: "strict",
+        sameSite: isHttps ? "none" : "lax",
         path: "/",
         maxAge: 24 * 60 * 60 * 1000,
       });
@@ -539,7 +912,7 @@ app.post("/api/auth/session/create", async (req: Request, res: Response): Promis
 
     const userId = decoded.uid;
     const email = decoded.email || "";
-    const role = (decoded.role as string) || (email === "neltonbenedito1@gmail.com" ? "super_admin" : "estudante");
+    const role = (decoded.role as string) || (decoded.super_admin ? "super_admin" : "estudante");
     const tenantId = (decoded.tenant_id as string) || "default";
 
     const sessionId = "sysedu_sess_" + crypto.randomUUID();
@@ -559,7 +932,7 @@ app.post("/api/auth/session/create", async (req: Request, res: Response): Promis
     res.cookie("sysedu_session_id", sessionId, {
       httpOnly: true,
       secure: isHttps,
-      sameSite: "strict",
+      sameSite: isHttps ? "none" : "lax",
       path: "/",
       maxAge: 24 * 60 * 60 * 1000,
     });
@@ -567,7 +940,7 @@ app.post("/api/auth/session/create", async (req: Request, res: Response): Promis
     res.cookie("sysedu_csrf_token", csrfToken, {
       httpOnly: true,
       secure: isHttps,
-      sameSite: "strict",
+      sameSite: isHttps ? "none" : "lax",
       path: "/",
       maxAge: 24 * 60 * 60 * 1000,
     });
@@ -674,7 +1047,7 @@ app.post("/api/auth/password/change", authLimiter, async (req: Request, res: Res
         caller = {
           uid: decoded.uid,
           email: decoded.email || '',
-          role: (decoded.role as string) || (decoded.tipo as string) || (decoded.email === 'neltonbenedito1@gmail.com' ? 'super_admin' : 'estudante'),
+          role: (decoded.role as string) || (decoded.tipo as string) || (decoded.super_admin ? 'super_admin' : 'estudante'),
           tenant_id: (decoded.tenant_id as string) || (decoded.tenantId as string) || 'default',
           must_reset_password: Boolean(decoded.must_reset_password),
         };
@@ -1157,6 +1530,413 @@ app.post("/api/security/claims/migrate", requireAuth, requireRole(["super_admin"
     return res.status(500).json({ error: error.message });
   }
 });
+
+// 7.4.1 Transferência de Administração Principal ("Seder Administracao")
+app.post("/api/superadmin/transfer-ownership", authLimiter, async (req: Request, res: Response): Promise<any> => {
+  try {
+    // 1. Validar CSRF
+    if (!verifyCsrfToken(req)) {
+      return res.status(403).json({ error: "Falha de validação CSRF. Pedido rejeitado." });
+    }
+
+    // 2. Identificar e autorizar o superadministrador requisitante
+    let caller: { uid: string; email: string; role: string } | null = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      try {
+        const admin = getFirebaseAdminInstance();
+        const decoded = await getAuth(admin).verifyIdToken(authHeader.substring(7), true);
+        caller = {
+          uid: decoded.uid,
+          email: decoded.email || "",
+          role: (decoded.role as string) || (decoded.super_admin ? "super_admin" : ""),
+        };
+      } catch (tokenErr) {
+        // Fallback to session
+      }
+    }
+
+    if (!caller) {
+      const sessionId = req.cookies?.sysedu_session_id || (req.headers["x-session-id"] as string);
+      if (sessionId) {
+        const session = getSession(sessionId);
+        if (session && (session.role === "super_admin" || session.role === "superadmin")) {
+          caller = {
+            uid: session.userId,
+            email: session.email,
+            role: "super_admin",
+          };
+        }
+      }
+    }
+
+    if (!caller || (caller.role !== "super_admin" && caller.role !== "superadmin")) {
+      return res.status(403).json({
+        error: "Acesso negado: a funcionalidade 'Seder Administracao' é restrita exclusivamente ao Superadministrador ativo.",
+      });
+    }
+
+    // 3. Validação do schema da transferência e política global de senhas
+    const parseResult = TransferOwnershipSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({
+        error: parseResult.error.issues[0]?.message || "Dados de transferência de administração inválidos.",
+      });
+    }
+
+    const { newAdminEmail, newPassword, confirmPassword, currentAdminPassword } = parseResult.data;
+    const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.ip || "unknown_ip";
+    const userAgent = req.headers["user-agent"] || "";
+
+    const result = await executeOwnershipTransfer({
+      callerUid: caller.uid,
+      callerEmail: caller.email,
+      callerRole: "super_admin",
+      newAdminEmail,
+      newPassword,
+      confirmPassword,
+      currentAdminPassword,
+      clientIp,
+      userAgent,
+    });
+
+    // 4. Invalidar a sessão e limpar cookies do superadmin antigo
+    const sessionId = req.cookies?.sysedu_session_id;
+    if (sessionId) {
+      serverSessions.delete(sessionId);
+    }
+    const isHttps = req.secure || req.headers["x-forwarded-proto"] === "https";
+    res.clearCookie("sysedu_session_id", { path: "/", secure: isHttps, sameSite: "lax" });
+    res.clearCookie("sysedu_csrf_token", { path: "/", secure: isHttps, sameSite: "lax" });
+
+    return res.json({
+      success: true,
+      message: "Titularidade e administração principal transferidas com sucesso. A sessão atual foi revogada.",
+      newAdminUid: result.newAdminUid,
+      transferId: result.transferId,
+    });
+  } catch (err: any) {
+    console.error("[transfer-ownership] Error:", err);
+    return res.status(400).json({ error: err.message || "Falha ao transferir administração." });
+  }
+});
+
+// 7.4.2 Cadastrar Novo Superadministrador Diretamente pelo Painel Super Admin
+app.post("/api/superadmin/create-admin", authLimiter, async (req: Request, res: Response): Promise<any> => {
+  try {
+    // 1. Identificar e autorizar o superadministrador requisitante
+    let caller: { uid: string; email: string; role: string } | null = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      try {
+        const admin = getFirebaseAdminInstance();
+        const decoded = await getAuth(admin).verifyIdToken(authHeader.substring(7), true);
+        caller = {
+          uid: decoded.uid,
+          email: decoded.email || "",
+          role: (decoded.role as string) || (decoded.super_admin ? "super_admin" : ""),
+        };
+      } catch (tokenErr) {}
+    }
+
+    if (!caller) {
+      const sessionId = req.cookies?.sysedu_session_id || (req.headers["x-session-id"] as string);
+      if (sessionId) {
+        const session = getSession(sessionId);
+        if (session && (session.role === "super_admin" || session.role === "superadmin")) {
+          caller = {
+            uid: session.userId,
+            email: session.email,
+            role: "super_admin",
+          };
+        }
+      }
+    }
+
+    // Verificar se o sistema está em fase de bootstrap inicial
+    const currentBootstrapStatus = await checkBootstrapStatus();
+    const isBootstrapping = !currentBootstrapStatus.initialized && currentBootstrapStatus.allowsBootstrap;
+
+    if (!isBootstrapping && (!caller || (caller.role !== "super_admin" && caller.role !== "superadmin"))) {
+      return res.status(403).json({
+        error: "Acesso negado: o cadastro de superadministradores é restrito exclusivamente ao Superadministrador ativo.",
+      });
+    }
+
+    const { nome, email, password, confirmPassword, uid: clientProvidedUid } = req.body || {};
+    if (!email || !password) {
+      return res.status(400).json({ error: "E-mail e senha são obrigatórios." });
+    }
+    const cleanEmail = String(email).trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      return res.status(400).json({ error: "Formato de e-mail institucional inválido." });
+    }
+    if (password !== confirmPassword) {
+      return res.status(400).json({ error: "A confirmação de senha não coincide com a senha digitada." });
+    }
+    if (typeof password !== "string" || password.length < 8) {
+      return res.status(400).json({ error: "A senha do superadministrador deve ter no mínimo 8 caracteres." });
+    }
+
+    const admin = getFirebaseAdminInstance();
+    const auth = getAuth(admin);
+    const db = getFirestoreInstance();
+
+    let newUid = clientProvidedUid;
+
+    if (!newUid) {
+      let userRecord: any = null;
+      try {
+        userRecord = await auth.getUserByEmail(cleanEmail);
+        newUid = userRecord?.uid;
+      } catch {
+        userRecord = null;
+      }
+
+      if (!newUid) {
+        try {
+          const createdRecord = await auth.createUser({
+            email: cleanEmail,
+            password: password,
+            displayName: nome || "Super Administrador",
+            emailVerified: true,
+          });
+          newUid = createdRecord.uid;
+        } catch (authErr: any) {
+          console.warn("[create-admin] Auth createUser warning:", authErr.message);
+          try {
+            const cfgPath = path.join(process.cwd(), "firebase-applet-config.json");
+            if (fs.existsSync(cfgPath)) {
+              const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+              if (cfg.apiKey) {
+                const signUpRes = await fetch(
+                  `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${cfg.apiKey}`,
+                  {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ email: cleanEmail, password, returnSecureToken: true }),
+                  }
+                );
+                const signUpData = await signUpRes.json();
+                if (signUpRes.ok && signUpData.localId) {
+                  newUid = signUpData.localId;
+                }
+              }
+            }
+          } catch (restErr: any) {
+            console.warn("[create-admin] REST Auth fallback note:", restErr.message);
+          }
+        }
+      }
+    }
+
+    if (!newUid) {
+      newUid = `superadmin_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
+    }
+
+    // Definir custom claims
+    try {
+      await setUserCustomClaims(newUid, {
+        role: "super_admin",
+        super_admin: true,
+        tenant_id: "super-admin",
+      });
+    } catch (claimsErr: any) {
+      console.warn("[create-admin] Custom claims error:", claimsErr.message);
+    }
+
+    const salt = crypto.randomBytes(32).toString("hex");
+    const hash = hashPasswordPBKDF2(password, salt);
+    const nowIso = new Date().toISOString();
+    const creatorEmail = caller?.email || "system_bootstrap";
+    const creatorUid = caller?.uid || newUid;
+
+    // Gravar em 'superusers'
+    await db.collection("superusers").doc(newUid).set({
+      uid: newUid,
+      email: cleanEmail,
+      nome: nome || "Super Administrador",
+      role: "super_admin",
+      tipo: "super_admin",
+      ativo: true,
+      passwordHash: hash,
+      salt: salt,
+      createdAt: nowIso,
+      createdBy: creatorEmail,
+    }, { merge: true });
+
+    // Gravar em 'users'
+    await db.collection("users").doc(newUid).set({
+      id: newUid,
+      uid: newUid,
+      email: cleanEmail,
+      nome: nome || "Super Administrador",
+      role: "super_admin",
+      tipo: "super_admin",
+      tenant_id: "super-admin",
+      ativo: true,
+      mustChangePassword: false,
+      createdAt: nowIso,
+      createdBy: creatorEmail,
+    }, { merge: true });
+
+    // Se estiver em bootstrap inicial, marcar sistema como inicializado
+    if (isBootstrapping) {
+      try {
+        await db.collection("system_config").doc("bootstrap").set({
+          initialized: true,
+          allowsBootstrap: false,
+          primarySuperadminEmail: cleanEmail,
+          primarySuperadminUid: newUid,
+          initializedAt: nowIso,
+        }, { merge: true });
+
+        await db.collection("system_config").doc("ownership").set({
+          currentOwnerEmail: cleanEmail,
+          currentOwnerUid: newUid,
+          transferredAt: nowIso,
+          history: [{ email: cleanEmail, uid: newUid, timestamp: nowIso, type: "bootstrap_initial" }],
+        }, { merge: true });
+      } catch (bootDbErr) {
+        console.warn("[create-admin] bootstrap config note:", bootDbErr);
+      }
+    }
+
+    // Criar/renovar sessão para o superadmin
+    const sessionId = "sysedu_sess_" + crypto.randomUUID();
+    const csrfToken = "csrf_" + crypto.randomBytes(16).toString("hex");
+    const isHttps = req.secure || req.headers["x-forwarded-proto"] === "https";
+    const now = Date.now();
+
+    serverSessions.set(sessionId, {
+      userId: newUid,
+      role: "super_admin",
+      tenantId: "super-admin",
+      email: cleanEmail,
+      createdAt: now,
+      lastActivity: now,
+      must_reset_password: false,
+    });
+
+    res.cookie("sysedu_session_id", sessionId, {
+      httpOnly: true,
+      secure: isHttps || process.env.NODE_ENV === "production",
+      sameSite: isHttps ? "none" : "lax",
+      path: "/",
+      maxAge: 24 * 60 * 60 * 1000,
+    });
+
+    res.cookie("sysedu_csrf_token", csrfToken, {
+      httpOnly: false,
+      secure: isHttps || process.env.NODE_ENV === "production",
+      sameSite: isHttps ? "none" : "lax",
+      path: "/",
+      maxAge: 24 * 60 * 60 * 1000,
+    });
+
+    await recordAuditLog({
+      action: "create",
+      actor_id: creatorUid,
+      actor_email: creatorEmail,
+      actor_role: "super_admin",
+      entity: "superusers",
+      entity_id: newUid,
+      tenant_id: "super-admin",
+      metadata: { newAdminEmail: cleanEmail, newAdminName: nome, isBootstrap: isBootstrapping },
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: `Superadministrador ${cleanEmail} cadastrado e autenticado com sucesso no Firebase!`,
+      sessionId,
+      csrfToken,
+      user: {
+        id: newUid,
+        email: cleanEmail,
+        nome: nome || "Super Administrador",
+        role: "super_admin",
+      },
+    });
+  } catch (err: any) {
+    console.error("[create-admin error]:", err);
+    return res.status(500).json({ error: err.message || "Falha ao cadastrar novo superadministrador." });
+  }
+});
+
+// 7.4.3 Listar Todos os Superadministradores do Sistema
+app.get("/api/superadmin/list-admins", async (req: Request, res: Response): Promise<any> => {
+  try {
+    let caller: { uid: string; email: string; role: string } | null = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      try {
+        const admin = getFirebaseAdminInstance();
+        const decoded = await getAuth(admin).verifyIdToken(authHeader.substring(7), true);
+        caller = {
+          uid: decoded.uid,
+          email: decoded.email || "",
+          role: (decoded.role as string) || (decoded.super_admin ? "super_admin" : ""),
+        };
+      } catch {}
+    }
+
+    if (!caller) {
+      const sessionId = req.cookies?.sysedu_session_id || (req.headers["x-session-id"] as string);
+      if (sessionId) {
+        const session = getSession(sessionId);
+        if (session && (session.role === "super_admin" || session.role === "superadmin")) {
+          caller = {
+            uid: session.userId,
+            email: session.email,
+            role: "super_admin",
+          };
+        }
+      }
+    }
+
+    const bStatus = await checkBootstrapStatus();
+    const isBootstrapping = !bStatus.initialized && bStatus.allowsBootstrap;
+
+    if (!isBootstrapping && (!caller || (caller.role !== "super_admin" && caller.role !== "superadmin"))) {
+      return res.status(403).json({ error: "Acesso negado: restrito a Superadministradores." });
+    }
+
+    const db = getFirestoreInstance();
+    const snap = await db.collection("superusers").get();
+    const admins = snap.docs.map((d) => {
+      const data = d.data();
+      return {
+        id: d.id,
+        email: data.email,
+        nome: data.nome || "Super Administrador",
+        role: data.role || "super_admin",
+        ativo: data.ativo !== false,
+        createdAt: data.createdAt || null,
+        createdBy: data.createdBy || null,
+      };
+    });
+
+    if (admins.length === 0) {
+      const bStatus = await checkBootstrapStatus();
+      if (bStatus.ownerEmail) {
+        admins.push({
+          id: "super_admin_owner",
+          email: bStatus.ownerEmail,
+          nome: "Super Administrador Titular",
+          role: "super_admin",
+          ativo: true,
+          createdAt: bStatus.initializedAt || null,
+          createdBy: "bootstrap_system",
+        });
+      }
+    }
+
+    return res.json({ admins });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 
 // 7.5 Delete Client / Tenant Endpoint (Super Admin Only with Anti-CSRF)
 app.delete("/api/admin/tenants/:id", authLimiter, requireAuth, requireRole(["super_admin"]), async (req: Request, res: Response): Promise<any> => {
@@ -1729,8 +2509,13 @@ app.post("/api/upload/validate-file", requireAuth, express.json({ limit: "15mb" 
 });
 
 // ============================================================================
-// 14. GLOBAL ERROR HANDLER & SPA FALLBACK
+// 14. API 404 GUARD & GLOBAL ERROR HANDLER
 // ============================================================================
+
+// 404 API Guard: any unmatched /api route returns JSON (prevents Vite SPA HTML fallback from returning <!doctype html>)
+app.use("/api", (req: Request, res: Response) => {
+  res.status(404).json({ error: `Endpoint de API não encontrado: ${req.method} ${req.originalUrl}` });
+});
 
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   logSecurityEvent("ERROR", "unhandled_server_error", {
@@ -1761,11 +2546,20 @@ async function startServer() {
       server: { middlewareMode: true },
       appType: "spa",
     });
-    app.use(vite.middlewares);
+    // Never allow /api requests to fall through to Vite SPA index.html
+    app.use((req: Request, res: Response, next: NextFunction) => {
+      if (req.path.startsWith("/api")) {
+        return res.status(404).json({ error: `Endpoint de API não encontrado: ${req.method} ${req.originalUrl}` });
+      }
+      vite.middlewares(req, res, next);
+    });
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
     app.get("*", (req: Request, res: Response) => {
+      if (req.path.startsWith("/api")) {
+        return res.status(404).json({ error: `Endpoint de API não encontrado: ${req.method} ${req.originalUrl}` });
+      }
       res.sendFile(path.join(distPath, "index.html"));
     });
   }

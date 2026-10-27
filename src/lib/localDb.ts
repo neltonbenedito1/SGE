@@ -57,25 +57,7 @@ export const localDb = {
   },
 
   // Users
-  getUsers: () => {
-    const list = getList<any>(KEYS.USERS);
-    if (!list.some(u => u.email === 'neltonbenedito1@gmail.com')) {
-      const superAdminUser = {
-        id: 'super_admin_nelton',
-        email: 'neltonbenedito1@gmail.com',
-        nome: 'Administrador do Sistema',
-        tipo: 'super_admin',
-        role: 'super_admin',
-        tenant_id: 'super-admin',
-        ativo: true,
-        mustChangePassword: false,
-        created_at: new Date().toISOString()
-      };
-      list.unshift(superAdminUser);
-      saveList(KEYS.USERS, list);
-    }
-    return list;
-  },
+  getUsers: () => getList<any>(KEYS.USERS),
   saveUser: (user: any) => {
     const list = getList<any>(KEYS.USERS);
     const index = list.findIndex(u => u.id === user.id);
@@ -187,10 +169,45 @@ export const localDb = {
   }
 };
 
+// Quota cooldown circuit breaker (persisted in sessionStorage)
+let quotaCooldownUntil = 0;
+try {
+  const savedQuota = sessionStorage.getItem('firestore_quota_cooldown_until');
+  if (savedQuota) {
+    quotaCooldownUntil = parseInt(savedQuota, 10) || 0;
+  }
+} catch {}
+
+export function isFirestoreQuotaExhausted(): boolean {
+  return Date.now() < quotaCooldownUntil;
+}
+
+export function markFirestoreQuotaExhausted(minutes: number = 30): void {
+  quotaCooldownUntil = Date.now() + minutes * 60 * 1000;
+  try {
+    sessionStorage.setItem('firestore_quota_cooldown_until', String(quotaCooldownUntil));
+  } catch {}
+  console.warn(`[Firestore Quota Protection] Limite diário de escrita atingido. Sincronização em pausa por ${minutes} minutos.`);
+}
+
+export function isQuotaError(err: any): boolean {
+  if (!err) return false;
+  const str = String(err?.message || err?.code || err?.stack || err);
+  return (
+    err?.code === 'resource-exhausted' ||
+    str.includes('resource-exhausted') ||
+    str.includes('RESOURCE_EXHAUSTED') ||
+    str.includes('Quota limit exceeded') ||
+    str.includes('Free daily write units') ||
+    str.includes('Quota exceeded for quota metric')
+  );
+}
+
 /**
  * Background synchronizer function.
  * Attempts to push each temporary record in our local database to Firestore.
  * If successful, deletes it from the temporary local storage list.
+ * Respects Firestore daily write quotas to avoid quota exhaustion loops.
  */
 export async function syncLocalDataToFirestore(): Promise<{
   tenantsSynced: number;
@@ -215,6 +232,11 @@ export async function syncLocalDataToFirestore(): Promise<{
     plansSynced: 0
   };
 
+  // If quota is exhausted, immediately return without hitting Firestore
+  if (isFirestoreQuotaExhausted()) {
+    return result;
+  }
+
   // Sync Tenants
   const tenants = localDb.getTenants();
   for (const tenant of tenants) {
@@ -223,9 +245,13 @@ export async function syncLocalDataToFirestore(): Promise<{
       localDb.deleteTenant(tenant.id);
       result.tenantsSynced++;
       console.log(`[Sync] Tenant ${tenant.id} successfully synced and removed from temp DB.`);
-    } catch (e) {
+    } catch (e: any) {
+      if (isQuotaError(e)) {
+        markFirestoreQuotaExhausted();
+        return result;
+      }
       console.warn(`[Sync] Failed to sync tenant ${tenant.id}:`, e);
-      break; // stop on first failure to preserve order/prevent endless errors
+      break;
     }
   }
 
@@ -237,7 +263,11 @@ export async function syncLocalDataToFirestore(): Promise<{
       localDb.deleteUser(user.id);
       result.usersSynced++;
       console.log(`[Sync] User ${user.id} successfully synced and removed from temp DB.`);
-    } catch (e) {
+    } catch (e: any) {
+      if (isQuotaError(e)) {
+        markFirestoreQuotaExhausted();
+        return result;
+      }
       console.warn(`[Sync] Failed to sync user ${user.id}:`, e);
       break;
     }
@@ -251,7 +281,11 @@ export async function syncLocalDataToFirestore(): Promise<{
       localDb.deleteConfig(config.id);
       result.configsSynced++;
       console.log(`[Sync] Configuration ${config.id} successfully synced and removed from temp DB.`);
-    } catch (e) {
+    } catch (e: any) {
+      if (isQuotaError(e)) {
+        markFirestoreQuotaExhausted();
+        return result;
+      }
       console.warn(`[Sync] Failed to sync configuration ${config.id}:`, e);
       break;
     }
@@ -265,7 +299,11 @@ export async function syncLocalDataToFirestore(): Promise<{
       localDb.deleteLog(log.id);
       result.logsSynced++;
       console.log(`[Sync] Admin Log ${log.id} successfully synced and removed from temp DB.`);
-    } catch (e) {
+    } catch (e: any) {
+      if (isQuotaError(e)) {
+        markFirestoreQuotaExhausted();
+        return result;
+      }
       console.warn(`[Sync] Failed to sync admin log ${log.id}:`, e);
       break;
     }
@@ -275,12 +313,15 @@ export async function syncLocalDataToFirestore(): Promise<{
   const notifications = localDb.getNotifications();
   for (const notif of notifications) {
     try {
-      // Create copy without id to let firestore assign it, or use setDoc with its ID
       await setDoc(doc(db, 'notificacoes', notif.id), notif);
       localDb.deleteNotification(notif.id);
       result.notificationsSynced++;
       console.log(`[Sync] Notification ${notif.id} successfully synced and removed from temp DB.`);
-    } catch (e) {
+    } catch (e: any) {
+      if (isQuotaError(e)) {
+        markFirestoreQuotaExhausted();
+        return result;
+      }
       console.warn(`[Sync] Failed to sync notification ${notif.id}:`, e);
       break;
     }
@@ -294,7 +335,11 @@ export async function syncLocalDataToFirestore(): Promise<{
       localDb.deletePayment(payment.id);
       result.paymentsSynced++;
       console.log(`[Sync] Payment ${payment.id} successfully synced and removed from temp DB.`);
-    } catch (e) {
+    } catch (e: any) {
+      if (isQuotaError(e)) {
+        markFirestoreQuotaExhausted();
+        return result;
+      }
       console.warn(`[Sync] Failed to sync payment ${payment.id}:`, e);
       break;
     }
@@ -310,7 +355,11 @@ export async function syncLocalDataToFirestore(): Promise<{
       }
       result.smtpConfigsSynced++;
       console.log(`[Sync] SMTP Config ${smtp.id} successfully synced.`);
-    } catch (e) {
+    } catch (e: any) {
+      if (isQuotaError(e)) {
+        markFirestoreQuotaExhausted();
+        return result;
+      }
       console.warn(`[Sync] Failed to sync SMTP config ${smtp.id}:`, e);
       break;
     }
@@ -324,7 +373,11 @@ export async function syncLocalDataToFirestore(): Promise<{
       localDb.deletePlan(plan.id);
       result.plansSynced++;
       console.log(`[Sync] Plan ${plan.id} successfully synced and removed from temp DB.`);
-    } catch (e) {
+    } catch (e: any) {
+      if (isQuotaError(e)) {
+        markFirestoreQuotaExhausted();
+        return result;
+      }
       console.warn(`[Sync] Failed to sync plan ${plan.id}:`, e);
       break;
     }

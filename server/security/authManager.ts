@@ -123,7 +123,7 @@ export function canManageUserPassword(
   const targetLevel = getRoleLevel(target.role);
 
   // 2. Super Admin: unrestricted across all tenants
-  if (callerLevel >= 100 || callerRole === 'super_admin' || caller.email === 'neltonbenedito1@gmail.com') {
+  if (callerLevel >= 100 || callerRole === 'super_admin' || callerRole === 'superadmin') {
     return true;
   }
 
@@ -177,10 +177,7 @@ export function verifyPasswordHash(password: string, salt: string, expectedHash:
   }
 }
 
-const SUPERADMIN_EMAIL = 'neltonbenedito1@gmail.com';
 const SUPERADMIN_SALT = process.env.AUTH_SALT || 'sysedu_auth_salt_superadmin_sec_2026';
-// Hash PBKDF2-SHA512 (100.000 iterações) da senha autorizada
-const SUPERADMIN_HASH = 'd3ac3ac378773b568b44ac256a9a969d1e8248218ac0223b60fd4381b83cd62c1714374ea32be2822860d209c341a7370446d6c7fa6036fd4d6275413d69e9bc';
 
 /**
  * Autentica o usuário a nível do servidor com rigor criptográfico
@@ -190,33 +187,91 @@ export async function authenticateServerUser(
   password: string
 ): Promise<AuthenticatedUserProfile | null> {
   const cleanEmail = email.trim().toLowerCase();
+  const db = getFirestoreInstance();
 
-  // 1. Verificação do Super Administrador do Sistema exclusivamente por Hash Criptográfico
-  if (cleanEmail === SUPERADMIN_EMAIL) {
-    const authorizedHashes = [
-      process.env.SUPERADMIN_PASSWORD_HASH,
-      SUPERADMIN_HASH,
-      'eb8d0bec8b8eb4c36361ca674786a177f5aac0566a05c8896751e3d27897c08ef6efabca9182e1e11e578bd7f143f5ce998e278f7f7dff2849e1cd0682fcca12',
-    ].filter(Boolean) as string[];
+  // 1. Verificação dinâmica de Super Administrador (via superusers ou ownership no Firestore)
+  let superData: any = null;
+  let superusersSnapDocsId: string | null = null;
+  let currentOwnerEmail: string | null = null;
 
-    const isValid = authorizedHashes.some((expectedHash) =>
-      verifyPasswordHash(password, SUPERADMIN_SALT, expectedHash)
-    );
+  try {
+    const ownershipDoc = await db.collection('system_config').doc('ownership').get();
+    if (ownershipDoc.exists) {
+      currentOwnerEmail = ownershipDoc.data()?.currentOwnerEmail?.toLowerCase() || null;
+    }
+  } catch (err) {
+    // Firestore query failed, proceed
+  }
 
-    if (!isValid) {
-      return null;
+  try {
+    const superusersSnap = await db.collection('superusers').where('email', '==', cleanEmail).limit(1).get();
+    if (!superusersSnap.empty) {
+      superData = superusersSnap.docs[0].data();
+      superusersSnapDocsId = superusersSnap.docs[0].id;
+    } else {
+      // Também verificar na coleção users
+      const usersSnap = await db.collection('users').where('email', '==', cleanEmail).limit(1).get();
+      if (!usersSnap.empty) {
+        const uData = usersSnap.docs[0].data();
+        if (uData.role === 'super_admin' || uData.role === 'superadmin' || uData.tipo === 'super_admin') {
+          superData = uData;
+          superusersSnapDocsId = usersSnap.docs[0].id;
+        }
+      }
+    }
+  } catch (err) {
+    // Firestore query failed
+  }
+
+  const isDesignatedSuperadmin =
+    superData !== null ||
+    (currentOwnerEmail !== null && currentOwnerEmail === cleanEmail);
+
+  if (isDesignatedSuperadmin) {
+    // A. Verificação via hash PBKDF2 armazenado no documento do Firestore
+    let passwordMatches = false;
+    if (superData?.passwordHash) {
+      passwordMatches = verifyPasswordHash(password, superData.salt || SUPERADMIN_SALT, superData.passwordHash);
     }
 
-    return {
-      id: 'super_admin_nelton',
-      email: SUPERADMIN_EMAIL,
-      nome: 'Administrador do Sistema',
-      role: 'super_admin',
-      tipo: 'super_admin',
-      tenant_id: 'super-admin',
-      ativo: true,
-      mustChangePassword: false,
-    };
+    // B. Verificação via Firebase Authentication REST API
+    if (!passwordMatches) {
+      try {
+        const cfgPath = path.join(process.cwd(), 'firebase-applet-config.json');
+        if (fs.existsSync(cfgPath)) {
+          const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+          const apiKey = process.env.FIREBASE_API_KEY || cfg.apiKey;
+          if (apiKey) {
+            const authRes = await fetch(
+              `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: cleanEmail, password, returnSecureToken: true }),
+              }
+            );
+            if (authRes.ok) {
+              passwordMatches = true;
+            }
+          }
+        }
+      } catch {}
+    }
+
+    if (passwordMatches) {
+      return {
+        id: superData?.uid || superusersSnapDocsId || 'super_admin_active',
+        email: cleanEmail,
+        nome: superData?.nome || 'Administrador do Sistema',
+        role: 'super_admin',
+        tipo: 'super_admin',
+        tenant_id: 'super-admin',
+        ativo: true,
+        mustChangePassword: false,
+      };
+    } else {
+      return null;
+    }
   }
 
   // 2. Verificação de usuários institucionais (Tenant Admins, Directores, Docentes, Estudantes, etc.) no Firestore
@@ -286,11 +341,25 @@ export async function authenticateServerUser(
         );
         if (authRes.ok) {
           const authData = await authRes.json();
-          const isSuper = cleanEmail === SUPERADMIN_EMAIL;
+          let isSuper = false;
+          try {
+            const superSnap = await db.collection('superusers').where('email', '==', cleanEmail).limit(1).get();
+            if (!superSnap.empty) isSuper = true;
+            const ownDoc = await db.collection('system_config').doc('ownership').get();
+            if (ownDoc.exists && ownDoc.data()?.currentOwnerEmail?.toLowerCase() === cleanEmail) {
+              isSuper = true;
+            }
+            if (authData.localId) {
+              const uDoc = await db.collection('users').doc(authData.localId).get();
+              if (uDoc.exists && (uDoc.data()?.role === 'super_admin' || uDoc.data()?.tipo === 'super_admin')) {
+                isSuper = true;
+              }
+            }
+          } catch {}
           return {
             id: authData.localId || 'user_' + Date.now(),
             email: cleanEmail,
-            nome: cleanEmail.split('@')[0],
+            nome: authData.displayName || cleanEmail.split('@')[0],
             role: isSuper ? 'super_admin' : 'admin',
             tipo: isSuper ? 'super_admin' : 'admin',
             tenant_id: isSuper ? 'super-admin' : 'default',

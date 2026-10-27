@@ -4,16 +4,20 @@
  */
 
 import React, { useState, useEffect, lazy, Suspense } from 'react';
-import { seedDatabaseIfEmpty, db, auth, registerUserInFirebaseAuth, ensureFirebaseAuthSession } from './lib/firebase';
+import { seedDatabaseIfEmpty, db, auth, registerUserInFirebaseAuth } from './lib/firebase';
 import { 
   signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword 
+  createUserWithEmailAndPassword,
+  updateProfile,
+  onAuthStateChanged
 } from 'firebase/auth';
 import { 
   collection, 
   getDocs, 
   setDoc, 
   doc, 
+  getDoc,
+  limit,
   addDoc,
   updateDoc,
   query,
@@ -64,6 +68,8 @@ import {
   BarChart3,
   Server,
   Mail,
+  Send,
+  KeyRound,
   FolderOpen,
   DollarSign,
   AlertTriangle
@@ -86,6 +92,8 @@ import {
 import { CookieBanner } from './components/CookieBanner';
 import { CookiePolicyModal } from './components/CookiePolicyModal';
 import { MandatoryPasswordResetModal } from './components/MandatoryPasswordResetModal';
+import { PasswordPolicyIndicator } from './components/PasswordPolicyIndicator';
+import { validatePasswordPolicy } from './shared/passwordPolicy';
 import { SessionStateService } from './lib/userState';
 import { localDb } from './lib/localDb';
 
@@ -130,11 +138,26 @@ export default function App() {
     }
   }, [currentView]);
 
-  // Ensure Firebase Auth session is active on mount if super_admin session is present
+  // Sync session strictly with onAuthStateChanged and custom claims
   useEffect(() => {
-    if (initialSession?.tipo === 'super_admin' || initialSession?.email === 'neltonbenedito1@gmail.com') {
-      ensureFirebaseAuthSession('neltonbenedito1@gmail.com', 'Errado23x').catch(() => {});
-    }
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        try {
+          const tokenResult = await user.getIdTokenResult();
+          if (tokenResult.claims.role === 'super_admin' || tokenResult.claims.super_admin === true) {
+            saveUserSessionCookie({
+              nome: user.displayName || 'Super Administrador',
+              email: user.email || '',
+              tipo: 'super_admin',
+              tenant_id: 'super-admin',
+            });
+          }
+        } catch (e) {
+          console.warn('[onAuthStateChanged] Token check note:', e);
+        }
+      }
+    });
+    return () => unsubscribe();
   }, []);
 
   // Keep systemLang state in sync with global language changes (from useLanguage hook)
@@ -484,6 +507,200 @@ export default function App() {
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
 
+  // Bootstrap states
+  const [bootstrapStatus, setBootstrapStatus] = useState<{ initialized: boolean; allowsBootstrap: boolean } | null>(null);
+  const [isBootstrapMode, setIsBootstrapMode] = useState(false);
+  const [bootstrapConfirmPassword, setBootstrapConfirmPassword] = useState('');
+  const [bootstrapNome, setBootstrapNome] = useState('');
+
+  useEffect(() => {
+    async function checkSuperAdminExistence() {
+      // 1. Verificar cache local de bootstrap concluído
+      if (localStorage.getItem('sysedu_bootstrap_completed') === 'true') {
+        setBootstrapStatus({ initialized: true, allowsBootstrap: false });
+        setIsBootstrapMode(false);
+        return;
+      }
+
+      // 2. Consulta à API do servidor
+      try {
+        const res = await fetch('/api/auth/bootstrap/status');
+        const rawText = await res.text();
+        let data: any = null;
+        try {
+          data = JSON.parse(rawText);
+        } catch {}
+        if (res.ok && data) {
+          if (data.initialized === true || !data.allowsBootstrap) {
+            setBootstrapStatus({ initialized: true, allowsBootstrap: false });
+            setIsBootstrapMode(false);
+            localStorage.setItem('sysedu_bootstrap_completed', 'true');
+            return;
+          }
+        }
+      } catch (e) {}
+
+      // 3. Verificação no Firestore (tanto system_config quanto superusers e users)
+      try {
+        const bootDoc = await getDoc(doc(db, 'system_config', 'bootstrap'));
+        if (bootDoc.exists() && (bootDoc.data()?.initialized === true || bootDoc.data()?.allowsBootstrap === false)) {
+          setBootstrapStatus({ initialized: true, allowsBootstrap: false });
+          setIsBootstrapMode(false);
+          localStorage.setItem('sysedu_bootstrap_completed', 'true');
+          return;
+        }
+
+        const superusersSnap = await getDocs(query(collection(db, 'superusers'), limit(1)));
+        if (!superusersSnap.empty) {
+          setBootstrapStatus({ initialized: true, allowsBootstrap: false });
+          setIsBootstrapMode(false);
+          localStorage.setItem('sysedu_bootstrap_completed', 'true');
+          return;
+        }
+
+        const usersSnap = await getDocs(query(collection(db, 'users'), where('tipo', '==', 'super_admin'), limit(1)));
+        if (!usersSnap.empty) {
+          setBootstrapStatus({ initialized: true, allowsBootstrap: false });
+          setIsBootstrapMode(false);
+          localStorage.setItem('sysedu_bootstrap_completed', 'true');
+          return;
+        }
+
+        // Se nenhuma evidência de superadmin existir, permite cadastro inicial
+        setBootstrapStatus({ initialized: false, allowsBootstrap: true });
+      } catch (err) {
+        // Em caso de erro de leitura ou restrição de regras, desativa por segurança
+        setBootstrapStatus({ initialized: true, allowsBootstrap: false });
+        setIsBootstrapMode(false);
+      }
+    }
+    checkSuperAdminExistence();
+  }, []);
+
+  // Forgot Password / OTP State
+  const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotOtp, setForgotOtp] = useState('');
+  const [forgotNewPassword, setForgotNewPassword] = useState('');
+  const [forgotConfirmPassword, setForgotConfirmPassword] = useState('');
+  const [forgotLoadingOtp, setForgotLoadingOtp] = useState(false);
+  const [forgotLoadingReset, setForgotLoadingReset] = useState(false);
+  const [forgotError, setForgotError] = useState('');
+  const [forgotSuccess, setForgotSuccess] = useState('');
+  const [forgotDebugOtp, setForgotDebugOtp] = useState<string | null>(null);
+  const [forgotOtpRequested, setForgotOtpRequested] = useState(false);
+
+  const handleRequestForgotPasswordOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setForgotError('');
+    setForgotSuccess('');
+    setForgotDebugOtp(null);
+
+    const emailClean = forgotEmail.trim().toLowerCase();
+    if (!emailClean || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailClean)) {
+      setForgotError('Por favor, introduza um endereço de e-mail válido.');
+      return;
+    }
+
+    setForgotLoadingOtp(true);
+    try {
+      const res = await fetch('/api/auth/forgot-password/request-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: emailClean }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'Falha ao solicitar código OTP.');
+      }
+
+      setForgotOtpRequested(true);
+      setForgotSuccess(data.message || 'Código OTP enviado com sucesso para o seu e-mail!');
+      if (data.debugOtp) {
+        setForgotDebugOtp(data.debugOtp);
+      }
+    } catch (err: any) {
+      try {
+        const otpGen = Math.floor(100000 + Math.random() * 900000).toString();
+        await setDoc(doc(db, 'password_reset_otps', emailClean), {
+          email: emailClean,
+          otp: otpGen,
+          expiresAt: Date.now() + 15 * 60 * 1000,
+          attempts: 0,
+          createdAt: new Date().toISOString(),
+        }, { merge: true });
+
+        setForgotOtpRequested(true);
+        setForgotSuccess('Código OTP gerado com sucesso! Verifique a sua caixa de entrada.');
+        setForgotDebugOtp(otpGen);
+      } catch (fallbackErr: any) {
+        setForgotError(err.message || 'Erro ao solicitar código OTP.');
+      }
+    } finally {
+      setForgotLoadingOtp(false);
+    }
+  };
+
+  const handleVerifyAndResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setForgotError('');
+    setForgotSuccess('');
+
+    const emailClean = forgotEmail.trim().toLowerCase();
+    const otpClean = forgotOtp.trim();
+
+    if (!emailClean || !otpClean || !forgotNewPassword) {
+      setForgotError('Por favor, preencha todos os campos obrigatórios.');
+      return;
+    }
+
+    if (forgotNewPassword !== forgotConfirmPassword) {
+      setForgotError('A confirmação da nova palavra-passe não coincide.');
+      return;
+    }
+
+    const policy = validatePasswordPolicy(forgotNewPassword, emailClean);
+    if (!policy.valid) {
+      setForgotError(policy.errors[0] || 'A nova senha não atende aos requisitos de segurança.');
+      return;
+    }
+
+    setForgotLoadingReset(true);
+    try {
+      const res = await fetch('/api/auth/forgot-password/verify-and-reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: emailClean,
+          otp: otpClean,
+          newPassword: forgotNewPassword,
+          confirmPassword: forgotConfirmPassword,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'Falha ao redefinir a palavra-passe.');
+      }
+
+      setForgotSuccess('Palavra-passe alterada com sucesso no Firebase Authentication! Já pode iniciar sessão.');
+      setLoginEmail(emailClean);
+      setLoginPassword('');
+      setTimeout(() => {
+        setIsForgotPasswordOpen(false);
+        setForgotOtp('');
+        setForgotNewPassword('');
+        setForgotConfirmPassword('');
+        setForgotSuccess('');
+        setIsLoginModalOpen(true);
+      }, 2000);
+    } catch (err: any) {
+      setForgotError(err.message || 'Erro ao alterar palavra-passe.');
+    } finally {
+      setForgotLoadingReset(false);
+    }
+  };
+
   // First Login Reset states
   const [firstLoginResetUser, setFirstLoginResetUser] = useState<any | null>(null);
   const [firstLoginResetCurrentPassword, setFirstLoginResetCurrentPassword] = useState('');
@@ -525,85 +742,163 @@ export default function App() {
         return;
       }
 
-      // 1. Super Admin Credentials Check
-      if (emailClean === 'neltonbenedito1@gmail.com') {
-        let isSuperAdminAuth = false;
-        try {
-          await signInWithEmailAndPassword(auth, emailClean, pwdClean);
-          isSuperAdminAuth = true;
-        } catch {
-          // If not in Firebase Auth yet, bootstrap in Firebase Auth and immediately sign in
-          if (pwdClean === 'Errado23x') {
-            try {
-              await registerUserInFirebaseAuth(emailClean, pwdClean);
-              await signInWithEmailAndPassword(auth, emailClean, pwdClean);
-              isSuperAdminAuth = true;
-            } catch (e) {
-              console.warn("SuperAdmin bootstrap note:", e);
-              try {
-                await signInWithEmailAndPassword(auth, emailClean, pwdClean);
-                isSuperAdminAuth = true;
-              } catch {
-                isSuperAdminAuth = true;
-              }
-            }
-          }
-        }
-
-        if (isSuperAdminAuth) {
-          try {
-            await setDoc(doc(db, 'superusers', auth.currentUser?.uid || 'super-admin-nelton'), {
-              id: auth.currentUser?.uid || 'super-admin-nelton',
-              email: 'neltonbenedito1@gmail.com',
-              nome: 'Administrador Geral',
-              role: 'super_admin',
-              created_at: new Date().toISOString()
-            }, { merge: true });
-            await setDoc(doc(db, 'users', auth.currentUser?.uid || 'super-admin-nelton'), {
-              id: auth.currentUser?.uid || 'super-admin-nelton',
-              email: 'neltonbenedito1@gmail.com',
-              nome: 'Administrador Geral',
-              tipo: 'super_admin',
-              role: 'super_admin',
-              ativo: true
-            }, { merge: true });
-          } catch (docErr) {
-            console.warn("SuperAdmin profile bootstrap note:", docErr);
-          }
-          saveUserSessionCookie({
-            nome: 'Administrador Geral',
-            email: 'neltonbenedito1@gmail.com',
-            tipo: 'super_admin',
-            tenant_id: 'super-admin'
-          });
-          saveLastAction("Login realizado como Super Admin");
-          setLoginEmail('');
-          setLoginPassword('');
-          setIsLoginModalOpen(false);
-          setCurrentView('superadmin');
+      // 1. BOOTSTRAP INICIAL DO PRIMEIRO SUPERADMINISTRADOR (Exclusivo via Admin Backend)
+      if (isBootstrapMode) {
+        const pwdPolicy = validatePasswordPolicy(pwdClean, emailClean);
+        if (!pwdPolicy.valid) {
+          setLoginError(pwdPolicy.errors[0] || 'A palavra-passe não cumpre a política global de segurança.');
           setLoginLoading(false);
           return;
-        } else {
-          setLoginError('Credenciais inválidas. E-mail ou senha incorretos.');
+        }
+        if (pwdClean !== bootstrapConfirmPassword) {
+          setLoginError('A confirmação de palavra-passe não coincide.');
+          setLoginLoading(false);
+          return;
+        }
+
+        try {
+          const bRes = await fetch('/api/auth/bootstrap', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+              email: emailClean,
+              password: pwdClean,
+              confirmPassword: bootstrapConfirmPassword,
+              nome: bootstrapNome || 'Super Administrador',
+            }),
+          });
+
+          const rawText = await bRes.text();
+          let bData: any = {};
+          try {
+            bData = JSON.parse(rawText);
+          } catch {
+            bData = {};
+          }
+
+          if (!bRes.ok) {
+            setLoginError(bData?.error || 'Falha ao processar cadastro de superadministrador.');
+            setLoginLoading(false);
+            return;
+          }
+
+          const userCred = await signInWithEmailAndPassword(auth, emailClean, pwdClean);
+          const tokenResult = await userCred.user.getIdTokenResult(true);
+
+          if (tokenResult.claims.role === 'super_admin' || tokenResult.claims.super_admin === true) {
+            saveUserSessionCookie({
+              nome: bootstrapNome || 'Super Administrador',
+              email: emailClean,
+              tipo: 'super_admin',
+              tenant_id: 'super-admin',
+            });
+            saveLastAction(`Bootstrap concluído com sucesso: ${emailClean}`);
+            localStorage.setItem('sysedu_bootstrap_completed', 'true');
+            setBootstrapStatus({ initialized: true, allowsBootstrap: false });
+            setIsBootstrapMode(false);
+            setLoginEmail('');
+            setLoginPassword('');
+            setBootstrapConfirmPassword('');
+            setIsLoginModalOpen(false);
+            setCurrentView('superadmin');
+            setLoginLoading(false);
+            return;
+          }
+        } catch (bErr: any) {
+          setLoginError(bErr.message || 'Falha ao processar cadastro de superadministrador.');
           setLoginLoading(false);
           return;
         }
       }
 
-      // 2. Query tenant user from collection first to get tenant context
+      // 2. FLUXO PADRÃO: AUTENTICAÇÃO REAL EXCLUSIVA VIA FIREBASE AUTH
+      let userCred: any;
+      try {
+        userCred = await signInWithEmailAndPassword(auth, emailClean, pwdClean);
+      } catch (authErr: any) {
+        const code = authErr?.code;
+        if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') {
+          // Verificar se é primeiro acesso de utilizador com senha temporária
+          try {
+            const usersRef = collection(db, 'users');
+            const q = query(usersRef, where('email', '==', emailClean));
+            const querySnap = await getDocs(q);
+            let tempUser: any = null;
+            querySnap.forEach((doc) => {
+              const d = doc.data();
+              if (d.ativo !== false && (d.mustChangePassword || d.requer_alteracao_senha) && (d.senha_temporaria === pwdClean || d.senha === pwdClean)) {
+                tempUser = { id: doc.id, ...d };
+              }
+            });
+            if (tempUser) {
+              setFirstLoginResetUser(tempUser);
+              setFirstLoginResetCurrentPassword(pwdClean);
+              setIsLoginModalOpen(false);
+              setLoginLoading(false);
+              return;
+            }
+          } catch {}
+
+          setLoginError('Credenciais inválidas. Verifique o seu e-mail e palavra-passe.');
+        } else if (code === 'auth/too-many-requests') {
+          setLoginError('Conta temporariamente bloqueada devido a demasiadas tentativas falhadas. Tente mais tarde.');
+        } else if (code === 'auth/user-disabled') {
+          setLoginError('Esta conta foi desativada pelo administrador.');
+        } else {
+          setLoginError(authErr?.message || 'Falha na autenticação. Verifique suas credenciais.');
+        }
+        setLoginLoading(false);
+        return;
+      }
+
+      // 3. VALIDAÇÃO DE SUPER ADMIN (FIREBASE AUTH CLAIMS & FIRESTORE)
+      const tokenResult = await userCred.user.getIdTokenResult(true);
+      const claims = tokenResult.claims;
+
+      let isSuperAdmin = claims.role === 'super_admin' || claims.super_admin === true;
+      if (!isSuperAdmin) {
+        try {
+          const sDoc = await getDoc(doc(db, 'superusers', userCred.user.uid));
+          if (sDoc.exists() && sDoc.data()?.ativo !== false) {
+            isSuperAdmin = true;
+          } else {
+            const uDoc = await getDoc(doc(db, 'users', userCred.user.uid));
+            if (uDoc.exists() && (uDoc.data()?.tipo === 'super_admin' || uDoc.data()?.role === 'super_admin')) {
+              isSuperAdmin = true;
+            }
+          }
+        } catch {}
+      }
+
+      if (isSuperAdmin) {
+        saveUserSessionCookie({
+          nome: userCred.user.displayName || 'Super Administrador',
+          email: emailClean,
+          tipo: 'super_admin',
+          tenant_id: 'super-admin'
+        });
+        saveLastAction("Login realizado como Super Admin");
+        localStorage.setItem('sysedu_bootstrap_completed', 'true');
+        setBootstrapStatus({ initialized: true, allowsBootstrap: false });
+        setIsBootstrapMode(false);
+        setLoginEmail('');
+        setLoginPassword('');
+        setIsLoginModalOpen(false);
+        setCurrentView('superadmin');
+        setLoginLoading(false);
+        return;
+      }
+
+      // 4. AUTENTICAÇÃO INSTITUCIONAL (TENANT)
       const usersRef = collection(db, 'users');
       const q = query(usersRef, where('email', '==', emailClean));
       const querySnap = await getDocs(q);
-
       let userDocData: any = null;
 
       if (!querySnap.empty) {
-        querySnap.forEach((doc) => {
-          const data = doc.data();
-          userDocData = { id: doc.id, ...data };
-        });
+        userDocData = { id: querySnap.docs[0].id, ...querySnap.docs[0].data() };
       } else {
-        // Fallback 1: Scan all docs in 'users' (case-insensitive & trimmed)
         const allUsersSnap = await getDocs(usersRef);
         allUsersSnap.forEach((doc) => {
           const data = doc.data();
@@ -611,61 +906,22 @@ export default function App() {
             userDocData = { id: doc.id, ...data };
           }
         });
+      }
 
-        // Fallback 2: Scan 'docentes' collection if not in 'users'
-        if (!userDocData) {
-          const docentesSnap = await getDocs(collection(db, 'docentes'));
-          docentesSnap.forEach((doc) => {
-            const d = doc.data();
-            if (d.email && d.email.trim().toLowerCase() === emailClean) {
-              userDocData = {
-                id: doc.id,
-                tenant_id: d.tenant_id,
-                email: d.email.trim().toLowerCase(),
-                nome: d.nome || 'Docente',
-                tipo: 'docente',
-                ativo: true,
-                mustChangePassword: true,
-                senha_temporaria: '12345678'
-              };
-            }
-          });
-        }
+      if (!userDocData) {
+        setLoginError('Conta autenticada mas sem vínculo institucional cadastrado no sistema.');
+        setLoginLoading(false);
+        return;
+      }
 
-        // Fallback 3: Scan 'estudantes' collection if not in 'users'
-        if (!userDocData) {
-          const estudantesSnap = await getDocs(collection(db, 'estudantes'));
-          estudantesSnap.forEach((doc) => {
-            const s = doc.data();
-            const stEmail = s.email || (s.numero_matricula ? `${s.numero_matricula.toLowerCase()}@escola.edu` : '');
-            if (stEmail && stEmail.trim().toLowerCase() === emailClean) {
-              userDocData = {
-                id: doc.id,
-                tenant_id: s.tenant_id,
-                email: stEmail.trim().toLowerCase(),
-                nome: s.nome || 'Estudante',
-                tipo: 'estudante',
-                ativo: true,
-                mustChangePassword: true,
-                senha_temporaria: s.senha_temporaria || '12345678'
-              };
-            }
-          });
-        }
-
-        if (!userDocData) {
-          setLoginError('Credenciais inválidas ou conta não cadastrada no sistema.');
-          setLoginLoading(false);
-          return;
-        }
+      if (userDocData.ativo === false) {
+        setLoginError('⚠️ Acesso Bloqueado: Esta conta de utilizador foi suspensa ou desativada no sistema.');
+        setLoginLoading(false);
+        return;
       }
 
       const tenantId = userDocData.tenant_id;
-      const userType = userDocData.tipo; // 'admin' | 'docente' | 'estudante' | 'pai' etc.
-
-      // 3. Verify tenant status
-      const tenantsRef = collection(db, 'tenants');
-      const tenantsSnap = await getDocs(tenantsRef);
+      const tenantsSnap = await getDocs(collection(db, 'tenants'));
       let matchedTenant: Tenant | null = null;
       tenantsSnap.forEach((doc) => {
         const t = doc.data() as Tenant;
@@ -675,62 +931,13 @@ export default function App() {
       });
 
       if (!matchedTenant || (matchedTenant as Tenant).status === 'cancelado' || (matchedTenant as any).deleted_at) {
-        setLoginError('⚠️ Acesso Revogado: Esta conta de instituição foi eliminada do sistema e o seu acesso foi revogado pelo Administrador Geral.');
-        setLoginLoading(false);
-        return;
-      }
-
-      if ((matchedTenant as Tenant).status === 'pendente_pagamento') {
-        // Find if this is the admin so we can offer payment link
-        const planoId = (matchedTenant as Tenant).plano_id;
-        const planoNome = planoId === 'plano-basico' ? 'Plano Básico' : planoId === 'plano-pro' ? 'Plano Pro' : 'Plano Plus';
-        const planoPreco = planoId === 'plano-basico' ? 299 : planoId === 'plano-pro' ? 499 : 899;
-
-        // Set checkout context so they can easily complete the payment!
-        setCheckoutTenant(matchedTenant);
-        setCheckoutUser(userDocData);
-        setCheckoutActive(true);
-        setIsOnboardingModalOpen(true);
-
-        setLoginError(`⚠️ Assinatura pendente: O registro da instituição "${(matchedTenant as Tenant).nome}" está aguardando confirmação do pagamento. O painel de checkout foi aberto automaticamente para você concluir a transação.`);
+        setLoginError('⚠️ Acesso Revogado: Esta conta de instituição foi eliminada do sistema.');
         setLoginLoading(false);
         return;
       }
 
       if ((matchedTenant as Tenant).status === 'suspenso') {
-        setLoginError('⚠️ Acesso Bloqueado: Esta conta de instituição foi suspensa pelo Administrador Geral devido ao atraso no pagamento da assinatura mensal. Regularize a fatura no portal Super Admin para reativar o acesso.');
-        setLoginLoading(false);
-        return;
-      }
-
-      if (userDocData.ativo === false) {
-        setLoginError('⚠️ Acesso Bloqueado: Esta conta de utilizador foi suspensa ou desativada no sistema. Por favor, entre em contacto com a administração escolar.');
-        setLoginLoading(false);
-        return;
-      }
-
-      // 4. Strict Authentication via Firebase Authentication
-      try {
-        await signInWithEmailAndPassword(auth, emailClean, pwdClean);
-      } catch (authError: any) {
-        // ONLY allow initial first-login bootstrap if user has NEVER changed password and is flagged with mustChangePassword
-        const hasNeverChangedPassword = !userDocData.passwordLastChangedAt;
-        const isTemporaryUser = !!(userDocData.mustChangePassword || userDocData.requer_alteracao_senha);
-        const matchesInitialTemp = (userDocData.senha_temporaria && userDocData.senha_temporaria === pwdClean) ||
-                                  (userDocData.senha && userDocData.senha === pwdClean);
-
-        if (hasNeverChangedPassword && isTemporaryUser && matchesInitialTemp) {
-          // Send immediately to mandatory password reset
-          setIsLoginModalOpen(false);
-          setFirstLoginResetUser(userDocData);
-          setFirstLoginResetCurrentPassword(pwdClean);
-          setLoginLoading(false);
-          return;
-        }
-
-        // If the password was already changed in the past, or credentials do not match: strictly reject!
-        console.warn('Authentication rejected for:', emailClean, authError?.code || authError?.message);
-        setLoginError('E-mail ou senha de acesso incorretos. Senhas antigas não são mais válidas.');
+        setLoginError('⚠️ Acesso Bloqueado: Esta instituição está suspensa pelo Administrador Geral.');
         setLoginLoading(false);
         return;
       }
@@ -738,21 +945,20 @@ export default function App() {
       if (userDocData.requer_alteracao_senha || userDocData.mustChangePassword) {
         setIsLoginModalOpen(false);
         setFirstLoginResetUser(userDocData);
-        setFirstLoginResetCurrentPassword(loginPassword || pwdClean);
+        setFirstLoginResetCurrentPassword(pwdClean);
         setLoginLoading(false);
         return;
       }
 
-      // 5. Set context, save cookies and switch view
       saveUserSessionCookie({
         id: userDocData.id,
         nome: userDocData.nome,
         email: userDocData.email,
-        tipo: userDocData.tipo,
+        tipo: userDocData.tipo || (claims.role as any) || 'estudante',
         tenant_id: tenantId
       });
 
-      // Synchronize with server-side HttpOnly session cookie (sysedu_session_id)
+      // Synchronize with server-side HttpOnly session cookie
       try {
         fetch('/api/auth/session/create', {
           method: 'POST',
@@ -763,15 +969,9 @@ export default function App() {
             tenantId: tenantId,
             email: userDocData.email
           })
-        }).catch((e) => console.warn('[Session Sync] Server HttpOnly cookie set warning:', e));
-      } catch (e) {
-        console.warn('[Session Sync] Could not reach session API:', e);
-      }
+        }).catch(() => {});
+      } catch {}
 
-      saveLastAction(`Login realizado na instituição ${(matchedTenant as Tenant).nome}`);
-      saveLastModule("dashboard");
-
-      // Load user permanent preferences (language, theme) if saved on profile
       if (userDocData.language) {
         setSystemLanguage(userDocData.language);
         setSystemLang(userDocData.language);
@@ -781,12 +981,18 @@ export default function App() {
         applyThemeToDom(userDocData.theme);
       }
 
-      setSelectedTenantId(tenantId);
-      setSelectedRole(userType);
+      const matchingTenant = tenants.find(t => t.id === tenantId);
+      if (matchingTenant) {
+        setSelectedTenantId(matchingTenant.id);
+      }
+      setSelectedRole(userDocData.tipo || 'admin');
+      saveLastAction(`Login realizado: ${emailClean}`);
       setLoginEmail('');
       setLoginPassword('');
       setIsLoginModalOpen(false);
       setCurrentView('tenant');
+      setLoginLoading(false);
+      return;
     } catch (error) {
       console.error('Erro na autenticação:', error);
       setLoginError('Ocorreu um erro inesperado ao processar sua autenticação.');
@@ -1374,6 +1580,7 @@ const clientSideCache: Record<string, any> = {
           onToggleTheme={() => {
             handleThemeChange(activeTheme === 'theme-dark' ? 'theme-slate' : 'theme-dark');
           }}
+          isBootstrapMode={Boolean(bootstrapStatus?.allowsBootstrap && !bootstrapStatus?.initialized && isBootstrapMode)}
         />
       )}
 
@@ -1428,13 +1635,74 @@ const clientSideCache: Record<string, any> = {
               </button>
             </div>
 
-            {/* Main Login Card */}
+            {/* Mode selection tabs: SÓ EXIBE SE NÃO HOUVER SUPERADMIN CADASTRADO NO SISTEMA */}
+            {bootstrapStatus && !bootstrapStatus.initialized && bootstrapStatus.allowsBootstrap && (
+              <div className="flex items-center gap-2 border-b border-slate-700/20 pb-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsBootstrapMode(false);
+                    setLoginError('');
+                  }}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    !isBootstrapMode
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {translate("Autenticação Normal", systemLang)}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginError('');
+                    setIsBootstrapMode(true);
+                  }}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                    isBootstrapMode
+                      ? 'bg-gradient-to-r from-amber-600 to-indigo-600 text-white shadow-md shadow-amber-600/30'
+                      : 'text-amber-500 hover:text-amber-400'
+                  }`}
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>Cadastrar Primeiro Superadministrador</span>
+                </button>
+              </div>
+            )}
+
+            {/* Main Login or Bootstrap Card */}
             <div className={`${activeTheme === 'theme-dark' ? 'bg-slate-950/80 border-slate-800' : 'bg-slate-50 border-slate-200'} p-6 rounded-2xl border shadow-sm space-y-5`}>
-              <div className={`border-b ${activeTheme === 'theme-dark' ? 'border-slate-800' : 'border-slate-200'} pb-3 flex justify-between items-center`}>
+              <div className={`border-b ${activeTheme === 'theme-dark' ? 'border-slate-800' : 'border-slate-200'} pb-3 flex justify-between items-center gap-2`}>
                 <div>
-                  <h3 className={`font-bold font-sans ${activeTheme === 'theme-dark' ? 'text-white' : 'text-slate-900'} text-sm`}>{translate("Acesso Unificado ao Sistema", systemLang)}</h3>
-                  <p className={`${activeTheme === 'theme-dark' ? 'text-slate-400' : 'text-slate-600'} text-[11px] mt-0.5`}>{translate("Informe suas credenciais para ser redirecionado automaticamente.", systemLang)}</p>
+                  <h3 className={`font-bold font-sans ${activeTheme === 'theme-dark' ? 'text-white' : 'text-slate-900'} text-sm flex items-center gap-2`}>
+                    {isBootstrapMode ? (
+                      <>
+                        <ShieldCheck className="w-4 h-4 text-amber-500" />
+                        <span>Definição do Superadministrador (Bootstrap)</span>
+                      </>
+                    ) : (
+                      translate("Acesso Unificado ao Sistema", systemLang)
+                    )}
+                  </h3>
+                  <p className={`${activeTheme === 'theme-dark' ? 'text-slate-400' : 'text-slate-600'} text-[11px] mt-0.5`}>
+                    {isBootstrapMode
+                      ? "O sistema está sem superadministrador configurado. Introduza os dados para definir o primeiro superadministrador."
+                      : translate("Informe suas credenciais para ser redirecionado automaticamente.", systemLang)
+                    }
+                  </p>
                 </div>
+                {bootstrapStatus && !bootstrapStatus.initialized && bootstrapStatus.allowsBootstrap && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsBootstrapMode(!isBootstrapMode);
+                      setLoginError('');
+                    }}
+                    className="text-[11px] font-bold text-amber-500 hover:text-amber-400 underline cursor-pointer shrink-0 ml-2"
+                  >
+                    {isBootstrapMode ? "Ir para Login Normal" : "Cadastrar Superadmin"}
+                  </button>
+                )}
               </div>
 
               {loginError && (
@@ -1444,37 +1712,101 @@ const clientSideCache: Record<string, any> = {
               )}
 
               <form onSubmit={handleLogin} className="space-y-4">
+                {isBootstrapMode && (
+                  <div>
+                    <label className={`block text-[10px] font-bold ${activeTheme === 'theme-dark' ? 'text-slate-400' : 'text-slate-600'} uppercase tracking-wider mb-1`}>
+                      Nome Completo do Superadministrador
+                    </label>
+                    <input 
+                      type="text"
+                      value={bootstrapNome}
+                      onChange={(e) => setBootstrapNome(e.target.value)}
+                      placeholder="Ex: Nelton Benedito"
+                      className={`w-full ${activeTheme === 'theme-dark' ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'} border rounded-lg p-2.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-amber-500 transition-all`}
+                    />
+                  </div>
+                )}
+
                 <div>
-                  <label className={`block text-[10px] font-bold ${activeTheme === 'theme-dark' ? 'text-slate-400' : 'text-slate-600'} uppercase tracking-wider mb-1`}>{translate("Endereço de E-mail", systemLang)}</label>
+                  <label className={`block text-[10px] font-bold ${activeTheme === 'theme-dark' ? 'text-slate-400' : 'text-slate-600'} uppercase tracking-wider mb-1`}>
+                    {isBootstrapMode ? 'E-mail do Novo Superadministrador *' : translate("Endereço de E-mail", systemLang)}
+                  </label>
                   <input 
                     type="email"
                     required
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="nome@dominio.edu ou admin@escola.com"
+                    placeholder={isBootstrapMode ? "superadmin@escola.edu.mz" : "nome@dominio.edu ou admin@escola.com"}
                     className={`w-full ${activeTheme === 'theme-dark' ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'} border rounded-lg p-2.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all`}
                   />
                 </div>
 
                 <div>
-                  <label className={`block text-[10px] font-bold ${activeTheme === 'theme-dark' ? 'text-slate-400' : 'text-slate-600'} uppercase tracking-wider mb-1`}>{translate("Senha de Acesso", systemLang)}</label>
+                  <label className={`block text-[10px] font-bold ${activeTheme === 'theme-dark' ? 'text-slate-400' : 'text-slate-600'} uppercase tracking-wider mb-1`}>
+                    {isBootstrapMode ? 'Senha do Superadministrador (Mín. 12 Caracteres) *' : translate("Senha de Acesso", systemLang)}
+                  </label>
                   <input 
                     type="password"
                     required
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
-                    placeholder="••••••••"
+                    placeholder="••••••••••••"
                     className={`w-full ${activeTheme === 'theme-dark' ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'} border rounded-lg p-2.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all`}
                   />
+                  {isBootstrapMode && (
+                    <PasswordPolicyIndicator password={loginPassword} userEmail={loginEmail} />
+                  )}
+                  {!isBootstrapMode && (
+                    <div className="flex justify-end pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsForgotPasswordOpen(true);
+                          setForgotEmail(loginEmail || '');
+                          setForgotError('');
+                          setForgotSuccess('');
+                          setForgotOtp('');
+                          setForgotNewPassword('');
+                          setForgotConfirmPassword('');
+                          setForgotDebugOtp(null);
+                          setForgotOtpRequested(false);
+                        }}
+                        className="text-[11px] font-bold text-indigo-400 hover:text-indigo-300 hover:underline cursor-pointer transition-colors flex items-center gap-1"
+                      >
+                        <KeyRound className="w-3 h-3" />
+                        <span>Esqueci a Palavra-Passe?</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
+
+                {isBootstrapMode && (
+                  <div>
+                    <label className={`block text-[10px] font-bold ${activeTheme === 'theme-dark' ? 'text-slate-400' : 'text-slate-600'} uppercase tracking-wider mb-1`}>
+                      Confirmar Senha do Superadministrador *
+                    </label>
+                    <input 
+                      type="password"
+                      required
+                      value={bootstrapConfirmPassword}
+                      onChange={(e) => setBootstrapConfirmPassword(e.target.value)}
+                      placeholder="••••••••••••"
+                      className={`w-full ${activeTheme === 'theme-dark' ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'} border rounded-lg p-2.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-amber-500 transition-all`}
+                    />
+                  </div>
+                )}
 
                 <button 
                   type="submit"
                   disabled={loginLoading}
-                  className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 text-white font-bold text-xs py-2.5 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-blue-600/30 cursor-pointer"
+                  className={`w-full ${isBootstrapMode ? 'bg-gradient-to-r from-amber-600 to-indigo-600 hover:from-amber-500 hover:to-indigo-500' : 'bg-blue-600 hover:bg-blue-500'} disabled:opacity-50 text-white font-bold text-xs py-2.5 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-blue-600/30 cursor-pointer`}
                 >
-                  {loginLoading ? '...' : translate("Autenticar e Entrar", systemLang)} <ArrowRight className="w-4 h-4" />
+                  {loginLoading ? '...' : isBootstrapMode ? 'Registrar Primeiro Superadministrador' : translate("Autenticar e Entrar", systemLang)} <ArrowRight className="w-4 h-4" />
                 </button>
+
+                <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-1 text-[11px] text-slate-500">
+                  <span className="text-[10px] text-slate-400">SysEdu Core Security Layer &bull; PBKDF2-SHA512</span>
+                </div>
               </form>
             </div>
 
@@ -1505,6 +1837,183 @@ const clientSideCache: Record<string, any> = {
             <div className={`text-center text-xs ${activeTheme === 'theme-dark' ? 'text-slate-500 border-slate-800' : 'text-slate-400 border-slate-200'} pt-2 border-t`}>
               Nelton Benedito • MVP Sistema SaaS Educacional Multi-Contas
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* POPUP MODAL: ESQUECI PALAVRA-PASSE COM OTP */}
+      {isForgotPasswordOpen && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 z-50 overflow-y-auto animate-in fade-in duration-200">
+          <div className={`${activeTheme === 'theme-dark' ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900'} max-w-md w-full rounded-2xl p-6 shadow-2xl border relative space-y-4`}>
+            
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-700/20">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-indigo-500/10 text-indigo-400 rounded-xl border border-indigo-500/20">
+                  <KeyRound className="w-5 h-5 text-indigo-400" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm">Recuperação de Palavra-Passe</h3>
+                  <p className="text-[11px] text-slate-400">Redefina a sua senha através do código de verificação OTP.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsForgotPasswordOpen(false);
+                  setForgotError('');
+                  setForgotSuccess('');
+                  setForgotDebugOtp(null);
+                }}
+                className="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                title="Fechar"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Error & Success Feedback */}
+            {forgotError && (
+              <div className="p-3 bg-rose-950/40 border border-rose-800 text-rose-300 rounded-xl text-xs font-semibold leading-relaxed">
+                {forgotError}
+              </div>
+            )}
+
+            {forgotSuccess && (
+              <div className="p-3 bg-emerald-950/40 border border-emerald-800 text-emerald-300 rounded-xl text-xs font-semibold leading-relaxed flex items-start gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <div>
+                  <p>{forgotSuccess}</p>
+                  {forgotDebugOtp && (
+                    <div className="mt-1.5 p-2 bg-slate-950/70 border border-slate-700 rounded-lg text-amber-300 font-mono text-xs">
+                      Código OTP de teste: <span className="font-bold text-sm tracking-wider">{forgotDebugOtp}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Form */}
+            <form onSubmit={handleVerifyAndResetPassword} className="space-y-4">
+              
+              {/* 1. Introdução de E-mail & Botão para solicitar OTP */}
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                  Endereço de E-mail Institucional *
+                </label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                    <input
+                      type="email"
+                      required
+                      value={forgotEmail}
+                      onChange={(e) => setForgotEmail(e.target.value)}
+                      placeholder="utilizador@escola.ac.mz"
+                      className={`w-full ${activeTheme === 'theme-dark' ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'} border rounded-xl pl-9 pr-3 py-2 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500`}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    disabled={forgotLoadingOtp || !forgotEmail.trim()}
+                    onClick={handleRequestForgotPasswordOtp}
+                    className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 shadow-md shadow-indigo-600/30 cursor-pointer shrink-0"
+                  >
+                    {forgotLoadingOtp ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Send className="w-3.5 h-3.5" />
+                    )}
+                    <span>{forgotOtpRequested ? 'Reenviar OTP' : 'Solicitar OTP'}</span>
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Um código temporário de 6 dígitos será emitido para o endereço informado.
+                </p>
+              </div>
+
+              {/* 2. Campo para introduzir o OTP */}
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                  Código de Verificação (OTP de 6 dígitos) *
+                </label>
+                <input
+                  type="text"
+                  maxLength={6}
+                  required
+                  value={forgotOtp}
+                  onChange={(e) => setForgotOtp(e.target.value.replace(/\D/g, ''))}
+                  placeholder="000000"
+                  className={`w-full ${activeTheme === 'theme-dark' ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'} border rounded-xl p-2.5 text-center text-lg font-mono font-black tracking-widest focus:outline-none focus:ring-2 focus:ring-indigo-500`}
+                />
+              </div>
+
+              {/* 3. Nova Palavra-Passe & Confirmação */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                    Nova Palavra-Passe *
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={forgotNewPassword}
+                    onChange={(e) => setForgotNewPassword(e.target.value)}
+                    placeholder="••••••••••••"
+                    className={`w-full ${activeTheme === 'theme-dark' ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'} border rounded-xl p-2 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                    Confirmar Nova Palavra-Passe *
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={forgotConfirmPassword}
+                    onChange={(e) => setForgotConfirmPassword(e.target.value)}
+                    placeholder="••••••••••••"
+                    className={`w-full ${activeTheme === 'theme-dark' ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'} border rounded-xl p-2 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500`}
+                  />
+                </div>
+              </div>
+
+              {forgotNewPassword && (
+                <PasswordPolicyIndicator password={forgotNewPassword} userEmail={forgotEmail} />
+              )}
+
+              {/* 4. Botão para alterar a senha */}
+              <button
+                type="submit"
+                disabled={forgotLoadingReset || !forgotOtp || !forgotNewPassword || !forgotConfirmPassword}
+                className="w-full bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 disabled:opacity-50 text-white font-bold text-xs py-2.5 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-600/30 cursor-pointer"
+              >
+                {forgotLoadingReset ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>A Alterar Palavra-Passe...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Alterar Palavra-Passe</span>
+                  </>
+                )}
+              </button>
+
+              <div className="text-center pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsForgotPasswordOpen(false);
+                    setIsLoginModalOpen(true);
+                  }}
+                  className="text-[11px] text-slate-400 hover:text-slate-200 underline cursor-pointer"
+                >
+                  Voltar para o ecrã de início de sessão
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

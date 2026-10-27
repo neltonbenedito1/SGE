@@ -130,8 +130,7 @@ export function canManageUserPassword(
   // 2. Super Admin: unrestricted across all tenants
   if (
     callerLevel >= 100 ||
-    callerRole === 'super_admin' ||
-    caller.email === 'neltonbenedito1@gmail.com'
+    callerRole === 'super_admin'
   ) {
     return true;
   }
@@ -223,16 +222,20 @@ async function adminResetFirebaseAuthUser(email: string, newPassword: string): P
     return true;
   } catch (createErr: any) {
     if (createErr?.code === 'auth/email-already-in-use') {
-      // User exists in Firebase Auth. Sign in via REST and update password directly
       try {
-        // Attempt sign in with temporary passwords if available, or recreate
-        const signInRes = await directFirebaseAuthSignIn(emailClean, '12345678');
-        if (signInRes.ok && signInRes.data?.idToken) {
-          await directFirebaseAuthUpdatePassword(signInRes.data.idToken, newPassword);
-          return true;
-        }
+        await fetch('/api/auth/password/change', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: emailClean,
+            targetUid: emailClean,
+            newPassword,
+            callerRole: 'super_admin'
+          })
+        });
+        return true;
       } catch (e) {
-        // Fallback
+        console.warn('[authSecurityService] Password sync warning:', e);
       }
     }
   }

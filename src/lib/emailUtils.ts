@@ -191,16 +191,16 @@ export const EmailTemplates = {
     studentName: string;
     className: string;
   }) => ({
-    subject: `📢 Academic Notice: Student Dropout - ${params.studentName}`,
-    body: `Dear Teacher,\n\nPlease be informed that student "${params.studentName}" from class "${params.className}", which you instruct, has discontinued studies. Please disregard this student in upcoming evaluations and grade sheets.\n\nBest regards,\nSchool Management System`
+    subject: `⚠️ Notificação: Desistência de Estudante - ${params.studentName}`,
+    body: `Prezado(a) Professor(a),\n\nInformamos que o(a) estudante "${params.studentName}" da turma "${params.className}", da qual lecciona, cancelou a matrícula / desistiu dos estudos. Queira por favor desconsiderar este estudante nas avaliações e pautas subsequentes.\n\nCom os melhores cumprimentos,\nSistema de Gestão Educacional`
   }),
 
   // Tenant: Student Dropout - to Parents
   studentDropoutParent: (params: {
     studentName: string;
   }) => ({
-    subject: `⚠️ Official Notice: Studies Discontinuation - ${params.studentName}`,
-    body: `Dear Guardian,\n\nWe confirm the registration in the School Management System that student "${params.studentName}" has discontinued studies at this institution. In accordance with internal procedures, student access to the school portal has been suspended.\n\nIf this information is incorrect or if you wish to appeal or reverse this process, please contact the school administration office immediately.\n\nBest regards,\nAcademic Directorate`
+    subject: `⚠️ Aviso Oficial: Cancelamento de Estudos - ${params.studentName}`,
+    body: `Prezado(a) Encarregado(a) de Educação,\n\nConfirmamos o registo no Sistema de Gestão Educacional de que o(a) estudante "${params.studentName}" cancelou os seus estudos nesta instituição. Em conformidade com os regulamentos internos, o acesso do estudante ao portal foi suspenso.\n\nCaso pretenda reverter este processo ou para esclarecimentos adicionais, contacte imediatamente a secretaria escolar.\n\nCom os melhores cumprimentos,\nDirecção Pedagógica`
   }),
 
   // Tenant: Transfer Out - to Old Class Director
@@ -209,8 +209,8 @@ export const EmailTemplates = {
     className: string;
     destinationSchoolName: string;
   }) => ({
-    subject: `🔄 Student Transfer Departure - School Portal`,
-    body: `Dear Teacher,\n\nWe inform you that student "${params.studentName}" has been transferred from your class (${params.className || 'N/A'}) to the institution "${params.destinationSchoolName}".\n\nBest regards,\nSchool Management System`
+    subject: `🔄 Saída de Estudante por Transferência - Portal Escolar`,
+    body: `Prezado(a) Professor(a),\n\nInformamos que o(a) estudante "${params.studentName}" foi transferido(a) da sua turma (${params.className || 'N/A'}) para a instituição "${params.destinationSchoolName}".\n\nCom os melhores cumprimentos,\nSistema de Gestão Educacional`
   }),
 
   // Tenant: Transfer In - to New Class Director
@@ -219,8 +219,8 @@ export const EmailTemplates = {
     className: string;
     originalSchoolName: string;
   }) => ({
-    subject: `🔄 New Student Admitted (Transfer) - School Portal`,
-    body: `Dear Teacher,\n\nWe inform you that student "${params.studentName}" has been admitted to your class (${params.className || 'N/A'}) via internal transfer from "${params.originalSchoolName}".\n\nBest regards,\nSchool Management System`
+    subject: `🔄 Novo Estudante Admitido por Transferência - Portal Escolar`,
+    body: `Prezado(a) Professor(a),\n\nInformamos que o(a) estudante "${params.studentName}" foi admitido(a) na sua turma (${params.className || 'N/A'}) por transferência a partir da instituição "${params.originalSchoolName}".\n\nCom os melhores cumprimentos,\nSistema de Gestão Educacional`
   }),
 
   // Tenant: Transfer Guide - to Guardian
@@ -228,8 +228,8 @@ export const EmailTemplates = {
     studentName: string;
     destinationSchoolName: string;
   }) => ({
-    subject: `🔄 Academic Transfer Confirmation - School Portal`,
-    body: `Dear Guardian,\n\nWe confirm the internal transfer of student "${params.studentName}" to the institution "${params.destinationSchoolName}".\nAll academic records and grades have been synchronized automatically.\n\nBest regards,\nSchool Secretary`
+    subject: `🔄 Confirmação de Transferência Académica - Portal Escolar`,
+    body: `Prezado(a) Encarregado(a) de Educação,\n\nConfirmamos a transferência interna do(a) estudante "${params.studentName}" para a instituição "${params.destinationSchoolName}".\nTodos os registos pedagógicos e notas foram actualizados e sincronizados automaticamente.\n\nCom os melhores cumprimentos,\nSecretaria Escolar`
   }),
 
   // Tenant: New Invoice Issued
@@ -238,8 +238,8 @@ export const EmailTemplates = {
     amountFormatted: string;
     dueDate: string;
   }) => ({
-    subject: `🧾 New Invoice Issued - School Portal`,
-    body: `Dear Guardian,\n\nWe inform you that a new invoice for "${params.description}" in the amount of ${params.amountFormatted} has been issued, with due date on ${params.dueDate}.\n\nPayment can be made directly at the school secretary office or via the portal.\n\nBest regards,\nFinance Department`
+    subject: `🧾 Nova Factura Emitida - Portal Escolar`,
+    body: `Prezado(a) Encarregado(a) de Educação,\n\nInformamos que foi emitida uma factura para "${params.description}" no valor de ${params.amountFormatted}, com data de vencimento a ${params.dueDate}.\n\nO pagamento poderá ser efectuado na secretaria escolar ou pelos canais autorizados.\n\nCom os melhores cumprimentos,\nDepartamento Financeiro`
   }),
 
   // Tenant / General: User Credentials
@@ -285,7 +285,21 @@ export async function sendGmailViaRestApi(options: {
 
   if (!response.ok) {
     const errText = await response.text();
-    throw new Error(`Gmail API Error: ${errText}`);
+    let errJson: any = null;
+    try {
+      errJson = JSON.parse(errText);
+    } catch {}
+
+    if (response.status === 401 || errJson?.error?.code === 401 || errText.includes('Invalid Credentials')) {
+      try {
+        localStorage.removeItem('superadmin_gmail_oauth_token');
+      } catch {}
+      throw new Error(
+        'Sessão do Gmail expirada ou credenciais inválidas (401). Por favor, reconecte sua conta do Google nas Configurações de SMTP para renovar o acesso.'
+      );
+    }
+
+    throw new Error(`Gmail API Error: ${errJson?.error?.message || errText}`);
   }
 
   return await response.json();

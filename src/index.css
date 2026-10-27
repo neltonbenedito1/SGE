@@ -443,7 +443,20 @@
   }
 }
 
-/* Menu lateral (aside) em todo o sistema */
+/* ==========================================================================
+   MENU LATERAL (ASIDE) 100% NÍTIDO, CRISTALINO, SEM BLUR E TOTALMENTE INTERATIVO
+   ========================================================================== */
+aside,
+aside *,
+#tenant_client_portal aside,
+#tenant_client_portal aside *,
+#super_admin_portal aside,
+#super_admin_portal aside * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  filter: none !important;
+}
+
 aside,
 #tenant_client_portal aside,
 #super_admin_portal aside {
@@ -456,7 +469,18 @@ aside,
   display: flex !important;
   flex-direction: column !important;
   overflow: hidden !important;
-  z-index: 40 !important;
+  z-index: 60 !important;
+  pointer-events: auto !important;
+  opacity: 1 !important;
+  filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+aside *,
+#tenant_client_portal aside *,
+#super_admin_portal aside * {
+  pointer-events: auto;
 }
 
 /* 1. Header do Menu: fixo no topo da barra */
@@ -464,6 +488,9 @@ aside > div:first-child {
   flex-shrink: 0 !important;
   height: 72px !important;
   z-index: 20 !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  filter: none !important;
 }
 
 /* 2. Lista de navegação de módulos: ROLAGEM INDIVIDUAL PRÓPRIA */
@@ -472,6 +499,9 @@ aside > nav {
   min-height: 0 !important;
   overflow-y: auto !important;
   overscroll-behavior: contain !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  filter: none !important;
 }
 
 /* 3. Rodapé do Menu: 100% FIXO NA PARTE INFERIOR DO MENU LATERAL */
@@ -481,6 +511,36 @@ aside > div:last-child {
   position: sticky !important;
   bottom: 0 !important;
   z-index: 20 !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  filter: none !important;
+}
+
+/* Botões e itens de menu da sidebar sempre interativos e nítidos */
+aside nav button,
+aside nav a,
+aside button {
+  pointer-events: auto !important;
+  cursor: pointer !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  filter: none !important;
+  user-select: none !important;
+  touch-action: manipulation !important;
+}
+
+/* Tratamento no Mobile: Oculto quando fechado (-translate-x-full), No Topo Absoluto quando aberto */
+@media (max-width: 767px) {
+  aside.-translate-x-full {
+    pointer-events: none !important;
+    visibility: hidden !important;
+  }
+  aside.translate-x-0 {
+    pointer-events: auto !important;
+    visibility: visible !important;
+    z-index: 100 !important;
+    box-shadow: 0 0 50px rgba(0, 0, 0, 0.9) !important;
+  }
 }
 
 /* Utilitários gerais */
@@ -737,22 +797,27 @@ aside > div:last-child {
      ------------------------------------------------------------------------ */
   aside,
   aside.bg-slate-900 {
-    background-color: rgba(4, 4, 6, 0.88) !important;
-    backdrop-filter: blur(20px) saturate(180%) !important;
-    -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+    background-color: #090d16 !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
     color: #ffffff !important;
+    pointer-events: auto !important;
+    opacity: 1 !important;
+    filter: none !important;
   }
 
   aside > div:first-child {
-    background-color: rgba(6, 6, 9, 0.95) !important;
+    background-color: #060911 !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
   }
 
   aside > div:last-child {
-    background-color: rgba(6, 6, 9, 0.95) !important;
-    backdrop-filter: blur(20px) !important;
-    -webkit-backdrop-filter: blur(20px) !important;
+    background-color: #060911 !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
   }
 
@@ -985,21 +1050,24 @@ aside > div:last-child {
      ------------------------------------------------------------------------ */
   aside,
   aside.bg-slate-900 {
-    background-color: rgba(255, 255, 255, 0.72) !important;
-    backdrop-filter: blur(24px) saturate(190%) !important;
-    -webkit-backdrop-filter: blur(24px) saturate(190%) !important;
-    border-right: 1px solid rgba(0, 0, 0, 0.08) !important;
-    color: #000000 !important;
+    background-color: #ffffff !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border-right: 1px solid #e2e8f0 !important;
+    color: #0f172a !important;
     box-shadow: 4px 0 24px -2px rgba(0, 0, 0, 0.04) !important;
+    pointer-events: auto !important;
+    opacity: 1 !important;
+    filter: none !important;
   }
 
   /* Header do menu lateral no tema claro */
   aside > div:first-child {
-    background-color: rgba(255, 255, 255, 0.88) !important;
-    backdrop-filter: blur(16px) !important;
-    -webkit-backdrop-filter: blur(16px) !important;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.08) !important;
-    color: #000000 !important;
+    background-color: #ffffff !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border-bottom: 1px solid #e2e8f0 !important;
+    color: #0f172a !important;
   }
   aside > div:first-child h2,
   aside > div:first-child span,
@@ -1055,11 +1123,11 @@ aside > div:last-child {
 
   /* Rodapé do menu lateral no tema claro (100% FIXO) */
   aside > div:last-child {
-    background-color: rgba(255, 255, 255, 0.88) !important;
-    backdrop-filter: blur(20px) !important;
-    -webkit-backdrop-filter: blur(20px) !important;
-    border-top: 1px solid rgba(0, 0, 0, 0.08) !important;
-    color: #000000 !important;
+    background-color: #ffffff !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border-top: 1px solid #e2e8f0 !important;
+    color: #0f172a !important;
   }
   aside > div:last-child p,
   aside > div:last-child span {

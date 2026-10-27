@@ -7,7 +7,8 @@ import {
   Trash2, PauseCircle, RefreshCw
 } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { collection, addDoc, updateDoc, doc, getDocs, query, where, deleteDoc } from 'firebase/firestore';
+import { isFirestoreQuotaExhausted } from '../lib/localDb';
+import { collection, addDoc, updateDoc, setDoc, doc, getDocs, query, where, deleteDoc } from 'firebase/firestore';
 import { sendBrowserNotification } from '../lib/browserNotifications';
 import { sendAppNotification, notifyActivityAssigned } from '../services/notificationDispatcher';
 import { 
@@ -628,12 +629,16 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
 
   // --- REAL-TIME AUTOMATIC SCAN ENGINE (SEM BOTÃO MANUAL) ---
   const runAutomaticScanSilently = useCallback(async () => {
-    if (isScanning) return;
+    if (isScanning || isFirestoreQuotaExhausted()) return;
     setIsScanning(true);
 
     try {
-      const existingDedupKeys = new Set(atividades.map(a => a.dedup_key).filter(Boolean));
-      const newItemsToAdd: Omit<ActividadePendente, 'id'>[] = [];
+      const existingDedupKeys = new Set(
+        atividades
+          .map(a => (a as any).auto_key || a.dedup_key)
+          .filter(Boolean)
+      );
+      const newItemsToAdd: (Omit<ActividadePendente, 'id'> & { auto_key?: string })[] = [];
 
       // 1. Scan Pautas with pending grades/situacao
       pautas.forEach(pauta => {
@@ -925,22 +930,34 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
         }
       }
 
-      // Batch save new activities to Firestore
+      // Save new activities to Firestore using deterministic document IDs (Idempotent)
       if (newItemsToAdd.length > 0) {
         for (const item of newItemsToAdd) {
-          const cleanItem = cleanDataForFirestore(item);
-          await addDoc(collection(db, 'atividades'), cleanItem);
-          sendBrowserNotification({
-            title: '📋 Nova Actividade Pendente',
-            body: `${item.titulo} (${item.modulo_origem})`,
-            tag: item.dedup_key || `act_${Date.now()}`
+          const autoKey = item.dedup_key || `auto_${item.modulo_origem}_${item.responsavel_id}`;
+          const safeKey = autoKey.replace(/[^a-zA-Z0-9_-]/g, '_');
+          const docId = `auto_${tenantId}_${safeKey}`;
+          const cleanItem = cleanDataForFirestore({
+            ...item,
+            auto_key: autoKey,
+            dedup_key: autoKey,
           });
+          await setDoc(doc(db, 'atividades', docId), cleanItem, { merge: true });
+          if (!existingDedupKeys.has(autoKey)) {
+            existingDedupKeys.add(autoKey);
+            sendBrowserNotification({
+              title: '📋 Nova Actividade Pendente',
+              body: `${item.titulo} (${item.modulo_origem})`,
+              tag: docId
+            });
+          }
         }
         onRefreshData();
       }
       setLastScanTime(new Date().toLocaleTimeString('pt-MZ'));
     } catch (err: any) {
-      console.error('Erro na varredura automática em tempo real:', err);
+      if (!err?.message?.includes('Quota limit exceeded')) {
+        console.error('Erro na varredura automática em tempo real:', err);
+      }
     } finally {
       setIsScanning(false);
     }
@@ -949,10 +966,10 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
   // Real-time listener effect for automatic scanner
   useEffect(() => {
     runAutomaticScanSilently();
-    // Periodic real-time interval (every 30 seconds)
+    // Periodic real-time interval (every 2 minutes)
     const interval = setInterval(() => {
       runAutomaticScanSilently();
-    }, 30000);
+    }, 120000);
     return () => clearInterval(interval);
   }, [runAutomaticScanSilently]);
 
@@ -989,6 +1006,12 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
     e.preventDefault();
     if (!formTitulo.trim() || !formDetalhes.trim()) {
       if (showNotification) showNotification('Por favor preencha o título e os detalhes da actividade.', 'erro');
+      return;
+    }
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (formPrazo && formPrazo < todayStr) {
+      if (showNotification) showNotification('A data limite / prazo não pode ser uma data passada.', 'erro');
       return;
     }
 
@@ -2320,6 +2343,7 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Data Limite / Prazo (Opcional)</label>
                 <input
                   type="date"
+                  min={new Date().toISOString().split('T')[0]}
                   value={formPrazo}
                   onChange={e => setFormPrazo(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"

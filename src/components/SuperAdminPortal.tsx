@@ -19,10 +19,10 @@ import {
   setDoc,
   onSnapshot
 } from 'firebase/firestore';
-import { db, auth, registerUserInFirebaseAuth, ensureFirebaseAuthSession } from '../lib/firebase';
+import { db, auth, registerUserInFirebaseAuth } from '../lib/firebase';
 import { authSecurityService } from '../services/authSecurityService';
 import { LANGUAGES, translate } from '../lib/translation';
-import { localDb, syncLocalDataToFirestore } from '../lib/localDb';
+import { localDb, syncLocalDataToFirestore, isFirestoreQuotaExhausted } from '../lib/localDb';
 import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { Tenant, Plano, Pagamento, LogAdmin, SmtpConfig, Notificacao } from '../types';
 import { createGmailRawPayload, EmailTemplates } from '../lib/emailUtils';
@@ -70,7 +70,9 @@ import {
   ArrowRight,
   ExternalLink,
   CheckCircle2,
-  Upload
+  Upload,
+  UserCheck,
+  ShieldCheck
 } from 'lucide-react';
 
 import {
@@ -79,6 +81,7 @@ import {
   saveSettingIfAllowed
 } from '../lib/cookies';
 import { CookiePolicyModal } from './CookiePolicyModal';
+import { SederAdministracaoSection } from './SederAdministracaoSection';
 
 function getSavedFormDraft<T>(key: string, defaultValue: T): T {
   const saved = getCookie(key);
@@ -122,13 +125,22 @@ export default function SuperAdminPortal({
   onChangeLanguage
 }: SuperAdminPortalProps) {
   const [isCookiePolicyOpen, setIsCookiePolicyOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'tenants' | 'plans' | 'payments' | 'logs' | 'smtp'>(() => {
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'tenants' | 'plans' | 'payments' | 'logs' | 'smtp' | 'seder_administracao'>(() => {
     const saved = getCookie('last_module');
-    if (saved === 'dashboard' || saved === 'tenants' || saved === 'plans' || saved === 'payments' || saved === 'logs' || saved === 'smtp') {
+    if (saved === 'dashboard' || saved === 'tenants' || saved === 'plans' || saved === 'payments' || saved === 'logs' || saved === 'smtp' || saved === 'seder_administracao') {
       return saved as any;
     }
     return 'dashboard';
   });
+
+  const currentUserEmail = auth.currentUser?.email || (() => {
+    try {
+      const raw = getCookie('sysedu_user');
+      return raw ? JSON.parse(raw)?.email : 'superadmin@sysedu.mz';
+    } catch {
+      return 'superadmin@sysedu.mz';
+    }
+  })() || 'superadmin@sysedu.mz';
 
   useEffect(() => {
     saveLastModule(activeTab);
@@ -542,7 +554,22 @@ export default function SuperAdminPortal({
 
     if (!response.ok) {
       const errText = await response.text();
-      throw new Error(`Gmail API Error: ${errText}`);
+      let errJson: any = null;
+      try {
+        errJson = JSON.parse(errText);
+      } catch {}
+
+      if (response.status === 401 || errJson?.error?.code === 401 || errText.includes('Invalid Credentials')) {
+        try {
+          localStorage.removeItem('superadmin_gmail_oauth_token');
+        } catch {}
+        setGmailToken(null);
+        throw new Error(
+          'Sessão do Gmail expirada ou credenciais inválidas (401). Clique em "Reautenticar / Renovar Acesso" com Google para restabelecer o envio.'
+        );
+      }
+
+      throw new Error(`Gmail API Error: ${errJson?.error?.message || errText}`);
     }
 
     return await response.json();
@@ -632,9 +659,22 @@ export default function SuperAdminPortal({
 
       showSystemNotification(`Conta do Gmail (${user.email}) vinculada com sucesso para e-mail corporativo!`, 'sucesso');
     } catch (error: any) {
-      console.error("Erro no login com Google:", error);
       const errCode = error?.code || '';
       const errMessage = error?.message || String(error);
+
+      // Gracefully handle user cancellation / closed popup without alarm
+      if (
+        errCode === 'auth/popup-closed-by-user' ||
+        errCode === 'auth/cancelled-popup-request' ||
+        errMessage.includes('popup-closed-by-user') ||
+        errMessage.includes('cancelled-popup-request')
+      ) {
+        console.info('[Google Auth] Janela de login com Google fechada pelo utilizador.');
+        showSystemNotification("Autenticação com Google cancelada pelo utilizador.", "info");
+        return;
+      }
+
+      console.error("Erro no login com Google:", error);
 
       if (errCode === 'auth/unauthorized-domain' || errMessage.includes('unauthorized-domain')) {
         setUnauthorizedDomainHost(window.location.hostname);
@@ -869,6 +909,10 @@ export default function SuperAdminPortal({
     let interval: NodeJS.Timeout;
 
     async function runBackgroundSyncAndQueue() {
+      if (isFirestoreQuotaExhausted()) {
+        return;
+      }
+
       // 1. Sync local temporary database records to Firestore
       try {
         const syncRes = await syncLocalDataToFirestore();
@@ -884,8 +928,10 @@ export default function SuperAdminPortal({
           console.log("[Background Sync] Successfully synchronized offline/temporary data to Firestore!");
           loadData(); // reload UI with newly synced production data
         }
-      } catch (err) {
-        console.warn("[Background Sync] Failed to sync temporary database records to Firestore (still offline/unconfigured):", err);
+      } catch (err: any) {
+        if (!err?.message?.includes('Quota limit exceeded')) {
+          console.warn("[Background Sync] Note:", err.message || err);
+        }
       }
 
       // 2. Process pending emails
@@ -912,22 +958,26 @@ export default function SuperAdminPortal({
         console.error("Erro no processamento de e-mails pendentes locais:", err);
       }
 
-      // B. Process Firestore pending emails
-      try {
-        const q = query(collection(db, 'pending_emails'), where('status', '==', 'pendente'));
-        const querySnap = await getDocs(q);
-        if (!querySnap.empty) {
-          console.log(`[Queue] Encontrados ${querySnap.size} e-mails pendentes em Firestore. Processando...`);
-          for (const docSnap of querySnap.docs) {
-            const emailData = docSnap.data();
-            const success = await processPendingEmail(docSnap.id, emailData, false);
-            if (success) {
-              processedAny = true;
+      // B. Process Firestore pending emails (skip if quota is exhausted)
+      if (!isFirestoreQuotaExhausted()) {
+        try {
+          const q = query(collection(db, 'pending_emails'), where('status', '==', 'pendente'));
+          const querySnap = await getDocs(q);
+          if (!querySnap.empty) {
+            console.log(`[Queue] Encontrados ${querySnap.size} e-mails pendentes em Firestore. Processando...`);
+            for (const docSnap of querySnap.docs) {
+              const emailData = docSnap.data();
+              const success = await processPendingEmail(docSnap.id, emailData, false);
+              if (success) {
+                processedAny = true;
+              }
             }
           }
+        } catch (error: any) {
+          if (!error?.message?.includes('Quota limit exceeded')) {
+            console.warn("Relação com Firestore indisponível para e-mails pendentes, processamento em espera:", error);
+          }
         }
-      } catch (error) {
-        console.warn("Relação com Firestore indisponível para e-mails pendentes, processamento em espera:", error);
       }
 
       if (processedAny) {
@@ -938,13 +988,19 @@ export default function SuperAdminPortal({
     // Run check on mount/changes
     runBackgroundSyncAndQueue();
 
-    // Periodic check every 10 seconds
-    interval = setInterval(runBackgroundSyncAndQueue, 10000);
+    // Periodic check every 2 minutes (prevent quota exhaustion)
+    interval = setInterval(() => {
+      if (!isFirestoreQuotaExhausted()) {
+        runBackgroundSyncAndQueue();
+      }
+    }, 120000);
 
     // Event listener for online connection recovery
     const handleOnline = () => {
       console.log("[Queue] Conexão de rede restabelecida. Executando sincronização e processamento da fila...");
-      runBackgroundSyncAndQueue();
+      if (!isFirestoreQuotaExhausted()) {
+        runBackgroundSyncAndQueue();
+      }
     };
     window.addEventListener('online', handleOnline);
 
@@ -955,7 +1011,6 @@ export default function SuperAdminPortal({
   }, [globalSmtp, gmailToken]);
 
   useEffect(() => {
-    ensureFirebaseAuthSession('neltonbenedito1@gmail.com', 'Errado23x').catch(() => {});
     const q = query(collection(db, 'notificacoes'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list: Notificacao[] = [];
@@ -2092,22 +2147,16 @@ export default function SuperAdminPortal({
         </div>
       )}
 
-      {/* Backdrop overlay for hover expansion */}
-      {isSidebarHovered && isSidebarCollapsed && (
-        <div 
-          className="hidden md:block fixed inset-0 bg-slate-950/20 backdrop-blur-xs transition-all duration-300 z-30 pointer-events-none" 
-        />
-      )}
-      
+      {/* Mobile Drawer Backdrop Overlay */}
       {isMobileMenuOpen && (
         <div 
           onClick={() => setIsMobileMenuOpen(false)}
-          className="md:hidden fixed inset-0 bg-slate-950/50 backdrop-blur-xs transition-opacity duration-300 z-45"
+          className="md:hidden fixed inset-0 bg-slate-950/60 transition-opacity duration-300 z-40"
         />
       )}
 
       {/* Mobile Header Bar */}
-      <div className={`flex md:hidden items-center justify-between p-4 bg-slate-900 text-white border-b border-slate-800 shrink-0 sticky top-0 z-40 h-16 ${isAnyModalOpen ? 'pointer-events-none select-none opacity-50' : ''}`}>
+      <div className="flex md:hidden items-center justify-between p-4 bg-slate-900 text-white border-b border-slate-800 shrink-0 sticky top-0 z-40 h-16">
         {/* 1. Menu canto esquerdo */}
         <button 
           onClick={() => setIsMobileMenuOpen(true)}
@@ -2224,11 +2273,10 @@ export default function SuperAdminPortal({
       <aside 
         onMouseEnter={() => setIsSidebarHovered(true)}
         onMouseLeave={() => setIsSidebarHovered(false)}
-        className={`fixed top-0 bottom-0 left-0 bg-slate-900 text-slate-300 border-r border-slate-800 flex flex-col z-40 transition-all duration-300 ease-in-out
+        className={`fixed top-0 bottom-0 left-0 bg-slate-900 text-slate-300 border-r border-slate-800 flex flex-col z-50 pointer-events-auto transition-all duration-300 ease-in-out
           ${isMobile 
-            ? (isMobileMenuOpen ? 'translate-x-0 w-64 shadow-2xl shadow-slate-950/70 z-50' : '-translate-x-full w-64 z-50') 
-            : 'translate-x-0 md:flex z-40 ' + (isExpanded ? 'w-64 shadow-2xl shadow-slate-950/50' : 'w-[72px]')}
-          ${isAnyModalOpen ? 'pointer-events-none select-none opacity-50' : ''}
+            ? (isMobileMenuOpen ? 'translate-x-0 w-64 shadow-2xl shadow-slate-950/70 z-50' : '-translate-x-full w-64 z-50 pointer-events-none') 
+            : 'translate-x-0 md:flex z-50 ' + (isExpanded ? 'w-64 shadow-2xl shadow-slate-950/50' : 'w-[72px]')}
         `}
       >
         {/* Header / Brand */}
@@ -2279,6 +2327,7 @@ export default function SuperAdminPortal({
           {renderGroupHeader('Configurações')}
           {renderMenuItem('smtp', 'Servidores SMTP', <Mail className="w-4.5 h-4.5" />)}
           {renderMenuItem('notificacoes_config', 'Config. Notificações', <Bell className="w-4.5 h-4.5" />)}
+          {renderMenuItem('seder_administracao', 'Super Administradores', <ShieldCheck className="w-4.5 h-4.5 text-indigo-400" />)}
 
           {renderGroupHeader('Auditoria')}
           {renderMenuItem('logs', 'Auditoria Geral', <History className="w-4.5 h-4.5" />)}
@@ -2290,11 +2339,11 @@ export default function SuperAdminPortal({
           {isExpanded ? (
             <div className="flex flex-col gap-1 overflow-hidden animate-in fade-in duration-300">
               <p className="text-slate-500 font-medium">Logado como:</p>
-              <p className="font-bold text-indigo-400 truncate">neltonbenedito1@gmail.com</p>
+              <p className="font-bold text-indigo-400 truncate">{currentUserEmail}</p>
             </div>
           ) : (
-            <div className="w-9 h-9 rounded-full bg-indigo-950 text-indigo-400 border border-indigo-800/40 flex items-center justify-center font-bold text-xs shrink-0" title="neltonbenedito1@gmail.com">
-              N
+            <div className="w-9 h-9 rounded-full bg-indigo-950 text-indigo-400 border border-indigo-800/40 flex items-center justify-center font-bold text-xs shrink-0" title={currentUserEmail}>
+              {currentUserEmail.charAt(0).toUpperCase()}
             </div>
           )}
           
@@ -2340,7 +2389,7 @@ export default function SuperAdminPortal({
       </aside>
 
       {/* MAIN CONTENT AREA */}
-      <div className={`flex-1 p-6 md:p-8 overflow-y-auto w-full space-y-8 ${isAnyModalOpen ? 'pointer-events-none select-none opacity-50' : ''}`}>
+      <div className="flex-1 p-6 md:p-8 overflow-y-auto w-full space-y-8">
         {/* Top Header section */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-5">
           <div>
@@ -2354,6 +2403,7 @@ export default function SuperAdminPortal({
               {activeTab === 'smtp' && 'Servidores SMTP por Escola'}
               {(activeTab as string) === 'notificacoes_config' && 'Regras Globais de Notificação'}
               {(activeTab as string) === 'logs_instituicoes' && 'Logs Criptografados por Unidade'}
+              {(activeTab as string) === 'seder_administracao' && 'Seder Administracao'}
             </h1>
           </div>
           
@@ -3592,13 +3642,32 @@ export default function SuperAdminPortal({
                               setTestStatus('success');
                               showSystemNotification("E-mail de teste enviado com sucesso!", "sucesso");
                             } catch (error: any) {
-                              console.error("Erro no teste de e-mail Gmail:", error);
-                              setTestLogs(prev => [
-                                ...prev,
-                                `[${new Date().toLocaleTimeString('pt-BR')}] ❌ Erro ao enviar e-mail via Gmail API: ${error.message || error}`
-                              ]);
-                              setTestStatus('failed');
-                              showSystemNotification(`Erro no teste do Gmail: ${error.message || error}`, "erro");
+                              const isAuthError =
+                                error?.message?.includes('401') ||
+                                error?.message?.includes('Invalid Credentials') ||
+                                error?.message?.includes('Sessão do Gmail expirada');
+
+                              if (isAuthError) {
+                                console.warn('[Gmail Test] Token expirado ou credenciais inválidas.');
+                                setTestLogs(prev => [
+                                  ...prev,
+                                  `[${new Date().toLocaleTimeString('pt-BR')}] ⚠️ O token de acesso do Gmail expirou ou foi revogado (401).`,
+                                  `[${new Date().toLocaleTimeString('pt-BR')}] 👉 Por favor, clique no botão "Conectar com Google" acima para renovar a autorização.`
+                                ]);
+                                setTestStatus('failed');
+                                showSystemNotification(
+                                  "Sessão do Gmail expirada (401). Clique em 'Conectar com Google' para renovar o acesso.",
+                                  "info"
+                                );
+                              } else {
+                                console.error("Erro no teste de e-mail Gmail:", error);
+                                setTestLogs(prev => [
+                                  ...prev,
+                                  `[${new Date().toLocaleTimeString('pt-BR')}] ❌ Erro ao enviar e-mail via Gmail API: ${error.message || error}`
+                                ]);
+                                setTestStatus('failed');
+                                showSystemNotification(`Erro no teste do Gmail: ${error.message || error}`, "erro");
+                              }
                             }
                             return;
                           }
@@ -3969,6 +4038,16 @@ export default function SuperAdminPortal({
                     );
                   })}
                 </div>
+              </div>
+            )}
+
+            {/* TAB: SEDER ADMINISTRACAO */}
+            {(activeTab as string) === 'seder_administracao' && (
+              <div className="animate-fadeIn">
+                <SederAdministracaoSection
+                  currentSuperAdminEmail={currentUserEmail}
+                  onTransferComplete={onLogout}
+                />
               </div>
             )}
           </>
@@ -5292,7 +5371,7 @@ export default function SuperAdminPortal({
                     <button
                       type="button"
                       onClick={async () => {
-                        if (enteredCode === securityCode || enteredCode === '123456') {
+                        if (enteredCode === securityCode) {
                           // Validation successful!
                           setOtpVerified(true);
                           setIsOtpModalOpen(false);

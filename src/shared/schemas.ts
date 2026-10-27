@@ -4,19 +4,64 @@
  */
 
 import { z } from 'zod';
+import { validatePasswordPolicy } from './passwordPolicy';
 
 // ============================================================================
-// SHARED VALIDATION SCHEMAS (ZOD - STRICT CYBERSECURITY HARDENING)
+// SHARED VALIDATION SCHEMAS (ZOD - STRICT CYBERSECURITY HARDENING & GLOBAL PASSWORD POLICY)
 // ============================================================================
 
 export const PasswordComplexitySchema = z
   .string()
-  .min(8, 'A senha deve ter no mínimo 8 caracteres.')
-  .max(64, 'A senha deve ter no máximo 64 caracteres.')
-  .regex(/[A-Z]/, 'A senha deve conter ao menos uma letra maiúscula.')
-  .regex(/[a-z]/, 'A senha deve conter ao menos uma letra minúscula.')
-  .regex(/[0-9]/, 'A senha deve conter ao menos um número.')
-  .regex(/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/, 'A senha deve conter ao menos um caractere especial.');
+  .min(12, 'A palavra-passe deve ter no mínimo 12 caracteres.')
+  .max(128, 'A palavra-passe deve ter no máximo 128 caracteres.')
+  .superRefine((val, ctx) => {
+    const result = validatePasswordPolicy(val);
+    if (!result.valid) {
+      result.errors.forEach((err) => {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: err,
+        });
+      });
+    }
+  });
+
+export const BootstrapInitializeSchema = z.object({
+  email: z.string().email('E-mail institucional inválido.').max(120).toLowerCase().trim(),
+  password: PasswordComplexitySchema,
+  confirmPassword: z.string().min(1, 'A confirmação de palavra-passe é obrigatória.'),
+  nome: z.string().min(2, 'O nome deve ter no mínimo 2 caracteres.').max(120).trim().optional().default('Super Administrador'),
+  uid: z.string().optional(),
+  clientIp: z.string().optional(),
+  userAgent: z.string().optional(),
+}).passthrough().refine((data) => data.password === data.confirmPassword, {
+  message: 'As palavras-passe não coincidem.',
+  path: ['confirmPassword'],
+}).refine((data) => {
+  const result = validatePasswordPolicy(data.password, data.email);
+  return result.requirements.notEmail;
+}, {
+  message: 'A palavra-passe não pode conter o seu endereço de e-mail.',
+  path: ['password'],
+});
+
+export const TransferOwnershipSchema = z.object({
+  newAdminEmail: z.string().email('E-mail do novo administrador inválido.').max(120).toLowerCase().trim(),
+  newPassword: PasswordComplexitySchema,
+  confirmPassword: z.string().min(1, 'A confirmação de palavra-passe é obrigatória.'),
+  currentAdminPassword: z.string().max(128).optional(),
+  clientIp: z.string().optional(),
+  userAgent: z.string().optional(),
+}).passthrough().refine((data) => data.newPassword === data.confirmPassword, {
+  message: 'As palavras-passe não coincidem.',
+  path: ['confirmPassword'],
+}).refine((data) => {
+  const result = validatePasswordPolicy(data.newPassword, data.newAdminEmail);
+  return result.requirements.notEmail;
+}, {
+  message: 'A palavra-passe não pode conter o endereço de e-mail do novo administrador.',
+  path: ['newPassword'],
+});
 
 export const PasswordChangeSchema = z.object({
   targetUid: z.string().max(128).optional().default(''),

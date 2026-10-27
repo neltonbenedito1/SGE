@@ -162,32 +162,33 @@ export const ValidarPresencaModal: React.FC<ValidarPresencaModalProps> = ({
 
     if (tipo === 'estudante') {
       const turmaId = person?.turma_id || '';
-      if (!turmaId) return { hasAgenda: true, agendaClasses: [] };
+      if (!turmaId) return { hasAgenda: false, agendaClasses: [] };
 
       const matchedClasses = classes.filter(c => {
         if (c.turma_id !== turmaId) return false;
         const classDay = (c.dia_semana || c.data || '').toLowerCase();
-        if (!classDay) return true;
+        if (!classDay) return false;
         return classDay.includes(todayShort) || todayShort.includes(classDay) || classDay.includes(todayName);
       });
 
-      const turmaClasses = classes.filter(c => c.turma_id === turmaId);
       return {
-        hasAgenda: true,
-        agendaClasses: matchedClasses.length > 0 ? matchedClasses : turmaClasses
+        hasAgenda: matchedClasses.length > 0,
+        agendaClasses: matchedClasses
       };
     } else {
       // docente / funcionario
       const teacherId = person?.id || '';
+      if (!teacherId) return { hasAgenda: false, agendaClasses: [] };
+
       const matchedClasses = classes.filter(c => {
         if (c.docente_id !== teacherId) return false;
         const classDay = (c.dia_semana || c.data || '').toLowerCase();
-        if (!classDay) return true;
+        if (!classDay) return false;
         return classDay.includes(todayShort) || todayShort.includes(classDay) || classDay.includes(todayName);
       });
 
       return {
-        hasAgenda: true,
+        hasAgenda: matchedClasses.length > 0,
         agendaClasses: matchedClasses
       };
     }

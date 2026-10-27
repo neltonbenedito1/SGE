@@ -34,7 +34,7 @@ import {
   Sparkles
 } from "lucide-react";
 import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, setDoc, query, where } from "firebase/firestore";
-import { db, ensureFirebaseAuthSession } from "../lib/firebase";
+import { db } from "../lib/firebase";
 import { 
   syncStripePlans, 
   openStripeCustomerPortal, 
@@ -202,8 +202,7 @@ export function SuperAdminFinancePanel({
   };
 
   useEffect(() => {
-    ensureFirebaseAuthSession('neltonbenedito1@gmail.com', 'Errado23x')
-      .finally(() => loadFinanceConfigs());
+    loadFinanceConfigs();
   }, []);
 
   // Secure cipher key simulation (never plain text)

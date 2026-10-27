@@ -5,6 +5,7 @@
 
 import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { isFirestoreQuotaExhausted, markFirestoreQuotaExhausted, isQuotaError } from '../lib/localDb';
 import { LogErro, ErrorSeverity, ErrorStatus, ErrorOrigem } from '../types';
 
 const STORAGE_KEY = 'sysedu_system_error_logs';
@@ -111,15 +112,36 @@ export async function logSystemError(params: {
   const updatedLogs = [newLog, ...currentLogs.filter(l => l.id !== newLog.id)];
   saveLocalErrorLogs(updatedLogs);
 
-  // 2. Persist to Firestore asynchronously
+  // 2. Persist to Firestore asynchronously only if quota is healthy and the error itself is not a quota exhaustion
+  const msgToCheck = (params.mensagem || '') + ' ' + (params.stack_trace || '');
+  if (
+    isFirestoreQuotaExhausted() ||
+    isQuotaError(params) ||
+    msgToCheck.includes('resource-exhausted') ||
+    msgToCheck.includes('RESOURCE_EXHAUSTED') ||
+    msgToCheck.includes('Quota limit exceeded') ||
+    msgToCheck.includes('GrpcConnection') ||
+    msgToCheck.includes('Write stream')
+  ) {
+    // If it was a quota error, mark the circuit breaker
+    if (isQuotaError(params) || msgToCheck.includes('resource-exhausted') || msgToCheck.includes('RESOURCE_EXHAUSTED') || msgToCheck.includes('Quota limit exceeded')) {
+      markFirestoreQuotaExhausted();
+    }
+    // Saved in local storage, do not attempt to write to Firestore
+    return newLog;
+  }
+
   try {
     const docRef = await addDoc(collection(db, 'logs_erros'), {
       ...newLog,
       persisted_at: new Date().toISOString()
     });
     newLog.id = docRef.id;
-  } catch (firestoreErr) {
-    console.warn('[ErrorLogger] Could not persist error log to Firestore (will remain in local storage):', firestoreErr);
+  } catch (firestoreErr: any) {
+    if (isQuotaError(firestoreErr)) {
+      markFirestoreQuotaExhausted();
+    }
+    console.warn('[ErrorLogger] Could not persist error log to Firestore (will remain in local storage):', firestoreErr?.message || firestoreErr);
   }
 
   return newLog;
@@ -284,13 +306,25 @@ export function initGlobalErrorListeners(): void {
   window.addEventListener('error', (event) => {
     const msg = event.message || 'Erro de execução JavaScript';
     
-    // Filter benign / third-party noise
+    // Filter benign / third-party noise and Firestore quota / stream errors
     if (
       msg.includes('ResizeObserver') ||
       msg.includes('Script error.') ||
       msg.includes('chrome-extension') ||
-      msg.includes('safari-extension')
+      msg.includes('safari-extension') ||
+      msg.includes('resource-exhausted') ||
+      msg.includes('RESOURCE_EXHAUSTED') ||
+      msg.includes('Quota limit exceeded') ||
+      msg.includes('GrpcConnection') ||
+      msg.includes('Write stream')
     ) {
+      if (
+        msg.includes('resource-exhausted') ||
+        msg.includes('RESOURCE_EXHAUSTED') ||
+        msg.includes('Quota limit exceeded')
+      ) {
+        markFirestoreQuotaExhausted();
+      }
       return;
     }
 
@@ -316,12 +350,26 @@ export function initGlobalErrorListeners(): void {
       ? reason 
       : reason?.message || JSON.stringify(reason) || 'Unhandled Promise Rejection';
 
-    // Ignore benign cancellation or ResizeObserver
+    // Ignore benign cancellation, ResizeObserver, or Firestore Quota errors
     if (
       msg.includes('ResizeObserver') || 
       msg.includes('AbortError') || 
-      msg.includes('canceled')
+      msg.includes('canceled') ||
+      msg.includes('resource-exhausted') ||
+      msg.includes('RESOURCE_EXHAUSTED') ||
+      msg.includes('Quota limit exceeded') ||
+      msg.includes('GrpcConnection') ||
+      msg.includes('Write stream') ||
+      reason?.code === 'resource-exhausted'
     ) {
+      if (
+        msg.includes('resource-exhausted') ||
+        msg.includes('RESOURCE_EXHAUSTED') ||
+        msg.includes('Quota limit exceeded') ||
+        reason?.code === 'resource-exhausted'
+      ) {
+        markFirestoreQuotaExhausted();
+      }
       return;
     }
 

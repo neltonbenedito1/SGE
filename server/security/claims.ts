@@ -10,6 +10,7 @@ export interface UserClaimsData {
   role: string;
   tenant_id: string;
   must_reset_password?: boolean;
+  super_admin?: boolean;
 }
 
 /**
@@ -20,11 +21,15 @@ export async function setUserCustomClaims(uid: string, claims: UserClaimsData): 
   const admin = getFirebaseAdminInstance();
   const auth = getAuth(admin);
 
-  const cleanClaims = {
+  const cleanClaims: Record<string, any> = {
     role: claims.role || 'estudante',
     tenant_id: claims.tenant_id || 'default',
     must_reset_password: Boolean(claims.must_reset_password),
   };
+
+  if (claims.super_admin !== undefined) {
+    cleanClaims.super_admin = Boolean(claims.super_admin);
+  }
 
   await auth.setCustomUserClaims(uid, cleanClaims);
   console.log(`[CustomClaims] Assigned claims to ${uid}: role=${cleanClaims.role}, tenant=${cleanClaims.tenant_id}`);
@@ -62,7 +67,7 @@ export async function migrateExistingUsersClaims(options: { dryRun?: boolean; li
     const data = doc.data();
     const uid = doc.id;
     const email = data.email || '';
-    const role = data.tipo || data.role || (email === 'neltonbenedito1@gmail.com' ? 'super_admin' : 'estudante');
+    const role = data.tipo || data.role || 'estudante';
     const tenant_id = data.tenant_id || data.tenantId || 'default';
     const must_reset = Boolean(data.mustChangePassword || data.requer_alteracao_senha);
 

@@ -360,6 +360,12 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
     return parseFloat((sum / revs.length).toFixed(1));
   };
 
+  const formatBookFileSize = (sizeMb: number): string => {
+    if (!sizeMb || sizeMb <= 0) return '0 KB';
+    if (sizeMb < 1) return `${Math.round(sizeMb * 1024)} KB`;
+    return `${sizeMb.toFixed(1)} MB`;
+  };
+
   // Reset and open Book Modal
   const handleOpenBookModal = () => {
     setBookForm({
@@ -407,13 +413,12 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
     // 2. Scan binary to validate and correct page count client-side
     const pageReader = new FileReader();
     pageReader.onload = async (event) => {
+      let pagesFound = 0;
       try {
         const arr = new Uint8Array(event.target?.result as ArrayBuffer);
         const decoder = new TextDecoder('ascii');
         // Scan first 1MB of the file (usually contains catalog/pages dictionaries)
         const chunk = decoder.decode(arr.slice(0, 1000000));
-        
-        let pagesFound = 0;
         
         // Match /Count [0-9]+
         const countMatches = chunk.match(/\/Count\s+(\d+)/g);
@@ -436,7 +441,7 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
           }
         }
 
-        const finalPages = pagesFound > 0 ? pagesFound : Math.floor(Math.random() * 120) + 40;
+        const finalPages = pagesFound > 0 ? pagesFound : 1;
         setDetectedPdfPages(finalPages);
 
         // 3. Extract text sample from uncompressed sections of PDF
@@ -464,7 +469,7 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
 
       } catch (err) {
         console.error("Error parsing PDF binary client-side:", err);
-        const fallbackPages = Math.floor(Math.random() * 120) + 40;
+        const fallbackPages = pagesFound > 0 ? pagesFound : 1;
         setDetectedPdfPages(fallbackPages);
         generateSynopsis(file.name, "");
       }
@@ -818,10 +823,12 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
           <div>
             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Média Avaliações</p>
             <p className="text-lg font-bold text-slate-800">
-              {livros.length > 0 
-                ? (livros.reduce((acc, l) => acc + getAverageRating(l.id), 0) / livros.length || 4.5).toFixed(1)
-                : '0.0'
-              } ★
+              {(() => {
+                const booksWithRatings = livros.filter(l => avaliacoes.some(r => r.livro_id === l.id));
+                if (booksWithRatings.length === 0) return '—';
+                const totalAvg = booksWithRatings.reduce((acc, l) => acc + getAverageRating(l.id), 0) / booksWithRatings.length;
+                return `${totalAvg.toFixed(1)} ★`;
+              })()}
             </p>
           </div>
         </div>
@@ -980,7 +987,7 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                             <p className="text-xs font-bold text-indigo-950 truncate">{l.titulo}</p>
                             <div className="flex items-center gap-0.5 text-xs text-amber-500 font-bold shrink-0">
                               <span>★</span>
-                              <span>{rating > 0 ? rating : 'Novo'}</span>
+                              <span>{rating > 0 ? rating : '—'}</span>
                             </div>
                           </div>
                           <p className="text-[11px] text-slate-500">{l.autor}</p>
@@ -1126,7 +1133,7 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                           <div>
                             <div className="flex items-center gap-2">
                               <span className="bg-indigo-600 text-white text-[10px] font-bold font-mono px-2 py-0.5 rounded-md">Edição {ed.numero_edicao}</span>
-                              <span className="text-[11px] text-slate-400 font-mono">({ed.tamanho_ficheiro.toFixed(1)} MB)</span>
+                              <span className="text-[11px] text-slate-400 font-mono">({formatBookFileSize(ed.tamanho_ficheiro)})</span>
                             </div>
                             <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">{ed.notas_da_edicao || 'Sem observações adicionais.'}</p>
                           </div>
@@ -1212,20 +1219,22 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
 
         {/* INTERACTIVE INTERNAL PDF READER */}
         {activeEditionToRead && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.98 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="w-full"
-          >
-            <InternalPdfViewer
-              pdfUrl={activeEditionToRead.edicao.pdf_url}
-              bookTitle={activeEditionToRead.livro.titulo}
-              editionNumber={activeEditionToRead.edicao.numero_edicao}
-              initialPage={readerPageNum}
-              onPageChange={(pageNum, totalPages) => handlePageChange(pageNum, totalPages)}
-              onClose={() => setActiveEditionToRead(null)}
-            />
-          </motion.div>
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="w-full max-w-5xl h-[92vh] flex flex-col bg-white dark:bg-slate-900 rounded-2xl shadow-2xl overflow-hidden border border-slate-700/50"
+            >
+              <InternalPdfViewer
+                pdfUrl={activeEditionToRead.edicao.pdf_url}
+                bookTitle={activeEditionToRead.livro.titulo}
+                editionNumber={activeEditionToRead.edicao.numero_edicao}
+                initialPage={readerPageNum}
+                onPageChange={(pageNum, totalPages) => handlePageChange(pageNum, totalPages)}
+                onClose={() => setActiveEditionToRead(null)}
+              />
+            </motion.div>
+          </div>
         )}
 
         {/* TAB 3: READING HISTORY */}
@@ -1468,12 +1477,12 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                 </div>
 
                 {pdfPageCountMismatch && detectedPdfPages !== null && (
-                  <div className="col-span-2 bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900 shadow-xs">
+                  <div className="col-span-2 bg-amber-50 dark:bg-amber-950/70 border border-amber-200 dark:border-amber-700/60 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900 dark:text-amber-200 shadow-xs">
                     <div className="flex items-start gap-2">
-                      <AlertTriangle className="w-4.5 h-4.5 text-amber-600 shrink-0 mt-0.5 animate-bounce" />
+                      <AlertTriangle className="w-4.5 h-4.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5 animate-bounce" />
                       <div>
-                        <span className="font-bold block text-amber-950">Divergência de Páginas Detectada!</span> 
-                        O PDF carregado contém <strong className="text-amber-750 font-bold">{detectedPdfPages} páginas</strong>, mas o formulário indica <strong className="text-amber-750 font-bold">{bookForm.numero_paginas} páginas</strong>.
+                        <span className="font-bold block text-amber-950 dark:text-amber-100">Divergência de Páginas Detectada!</span> 
+                        O PDF carregado contém <strong className="text-amber-900 dark:text-amber-200 font-bold">{detectedPdfPages} páginas</strong>, mas o formulário indica <strong className="text-amber-900 dark:text-amber-200 font-bold">{bookForm.numero_paginas} páginas</strong>.
                       </div>
                     </div>
                     <button

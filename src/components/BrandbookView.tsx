@@ -74,6 +74,7 @@ interface BrandbookViewProps {
   onChangeLanguage?: (lang: string) => void;
   activeTheme?: string;
   onToggleTheme?: () => void;
+  isBootstrapMode?: boolean;
 }
 
 export default function BrandbookView({
@@ -82,7 +83,8 @@ export default function BrandbookView({
   systemLang = 'pt',
   onChangeLanguage,
   activeTheme = 'theme-dark',
-  onToggleTheme
+  onToggleTheme,
+  isBootstrapMode = false,
 }: BrandbookViewProps) {
   const [activeCategory, setActiveCategory] = useState<'all' | 'vision' | 'academic' | 'tech' | 'branding'>('all');
   const [slideMode, setSlideMode] = useState<boolean>(false);
@@ -458,6 +460,26 @@ export default function BrandbookView({
       id="branding-root-main" 
       className={`min-h-screen ${isDark ? 'bg-transparent text-[var(--text-primary)]' : 'bg-slate-50 text-slate-900'} font-sans pb-16 selection:bg-white selection:text-black transition-colors duration-300`}
     >
+      {/* 0. BOOTSTRAP BANNER (Quando superadmin foi removido e sistema aguarda definição) */}
+      {isBootstrapMode && (
+        <div className="w-full bg-gradient-to-r from-amber-600 via-indigo-600 to-amber-600 text-white text-xs py-2 px-4 shadow-md flex items-center justify-between gap-3 animate-pulse">
+          <div className="flex items-center gap-2 mx-auto sm:mx-0">
+            <span className="bg-amber-300 text-slate-950 text-[10px] uppercase font-black px-2 py-0.5 rounded-full shadow-sm">
+              Ação Requerida
+            </span>
+            <span className="font-semibold text-white">
+              Superadministrador anterior removido. O sistema está pronto para definição de um novo Superadministrador.
+            </span>
+          </div>
+          <button
+            onClick={onOpenLogin}
+            className="hidden sm:flex items-center gap-1.5 bg-white text-slate-950 hover:bg-amber-100 px-3 py-1 rounded-full text-xs font-bold shadow-lg transition-all cursor-pointer shrink-0"
+          >
+            <span>Definir Novo Superadmin</span> &rarr;
+          </button>
+        </div>
+      )}
+
       {/* 1. TOP UTILITY BAR (Barra Superior - Left: Language Pill; Right: Login/Sign-Up & Theme Toggle) */}
       <div 
         id="top-utility-bar" 
@@ -475,13 +497,15 @@ export default function BrandbookView({
               type="button"
               onClick={onOpenLogin}
               className={`flex items-center gap-2 px-4 py-1.5 rounded-full ${
-                isDark
+                isBootstrapMode
+                  ? 'bg-gradient-to-r from-amber-500 to-indigo-600 hover:from-amber-400 hover:to-indigo-500 text-white shadow-[0_0_20px_rgba(245,158,11,0.5)] border-amber-400 font-bold animate-bounce'
+                  : isDark
                   ? 'bg-white hover:bg-slate-100 text-black shadow-[0_0_20px_rgba(255,255,255,0.18)] border-transparent'
                   : 'bg-blue-600 hover:bg-blue-700 border-blue-600 text-white shadow-xs shadow-blue-500/20'
               } border text-xs sm:text-sm font-semibold transition-all cursor-pointer active:scale-95`}
             >
-              <Zap className={`w-3.5 h-3.5 ${isDark ? 'text-black fill-black' : 'text-amber-400 fill-amber-400'}`} />
-              <span>Login / Sign-Up</span>
+              <Zap className={`w-3.5 h-3.5 ${isBootstrapMode ? 'text-white fill-white' : isDark ? 'text-black fill-black' : 'text-amber-400 fill-amber-400'}`} />
+              <span>{isBootstrapMode ? 'Definir Novo Superadmin' : 'Login / Sign-Up'}</span>
             </button>
 
             {/* Light / Dark Theme Toggle Pill */}
