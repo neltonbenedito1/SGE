@@ -72,7 +72,13 @@ import {
   KeyRound,
   FolderOpen,
   DollarSign,
-  AlertTriangle
+  AlertTriangle,
+  Trash2,
+  Eye,
+  EyeOff,
+  Info,
+  Lock,
+  Upload
 } from 'lucide-react';
 import {
   saveUserSessionCookie,
@@ -96,6 +102,8 @@ import { PasswordPolicyIndicator } from './components/PasswordPolicyIndicator';
 import { validatePasswordPolicy } from './shared/passwordPolicy';
 import { SessionStateService } from './lib/userState';
 import { localDb } from './lib/localDb';
+import { SearchableDropdown } from './components/SearchableDropdown';
+import { WORLD_COUNTRIES } from './shared/catalogs';
 
 export function applyThemeToDom(theme: string) {
   const isDark = theme === 'theme-dark' || theme === 'dark';
@@ -400,15 +408,20 @@ export default function App() {
         label: 'Registrar Nova Escola (Auto-Onboarding)',
         icon: 'Plus',
         action: () => {
-          setOnboardingSuccess(null);
+          setOnboardingPreRegisteredNotice(null);
+          setOnboardingError(null);
           setOnboardingForm({
             nome: '',
+            logo_url: '',
+            pais_origem: 'Moçambique',
+            paises_sucursais: [],
             email_admin: '',
             senha: '',
+            confirmar_senha: '',
             telefone: '',
             endereco: '',
-            plano_id: plans[0]?.id || 'plano-profissional',
-            plataforma_pagamento: 'multicaixa'
+            plano_id: plans[0]?.id || 'plano-basico',
+            idioma_padrao: 'pt'
           });
           setIsOnboardingModalOpen(true);
         }
@@ -587,14 +600,12 @@ export default function App() {
   const [forgotLoadingReset, setForgotLoadingReset] = useState(false);
   const [forgotError, setForgotError] = useState('');
   const [forgotSuccess, setForgotSuccess] = useState('');
-  const [forgotDebugOtp, setForgotDebugOtp] = useState<string | null>(null);
   const [forgotOtpRequested, setForgotOtpRequested] = useState(false);
 
   const handleRequestForgotPasswordOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setForgotError('');
     setForgotSuccess('');
-    setForgotDebugOtp(null);
 
     const emailClean = forgotEmail.trim().toLowerCase();
     if (!emailClean || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailClean)) {
@@ -611,16 +622,30 @@ export default function App() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        if (res.status === 404) {
+          setForgotError(data.error || 'Nenhuma conta associada a este endereço de e-mail foi encontrada no sistema.');
+          return;
+        }
         throw new Error(data.error || 'Falha ao solicitar código OTP.');
       }
 
       setForgotOtpRequested(true);
       setForgotSuccess(data.message || 'Código OTP enviado com sucesso para o seu e-mail!');
-      if (data.debugOtp) {
-        setForgotDebugOtp(data.debugOtp);
-      }
     } catch (err: any) {
+      // Fallback verification against Firestore: Account MUST exist in the system
       try {
+        const [usersSnap, superSnap, teachersSnap] = await Promise.all([
+          getDocs(query(collection(db, 'users'), where('email', '==', emailClean), limit(1))),
+          getDocs(query(collection(db, 'superusers'), where('email', '==', emailClean), limit(1))),
+          getDocs(query(collection(db, 'docentes'), where('email', '==', emailClean), limit(1)))
+        ]);
+
+        const accountExists = !usersSnap.empty || !superSnap.empty || !teachersSnap.empty;
+        if (!accountExists) {
+          setForgotError('Nenhuma conta associada a este endereço de e-mail foi encontrada no sistema.');
+          return;
+        }
+
         const otpGen = Math.floor(100000 + Math.random() * 900000).toString();
         await setDoc(doc(db, 'password_reset_otps', emailClean), {
           email: emailClean,
@@ -631,8 +656,7 @@ export default function App() {
         }, { merge: true });
 
         setForgotOtpRequested(true);
-        setForgotSuccess('Código OTP gerado com sucesso! Verifique a sua caixa de entrada.');
-        setForgotDebugOtp(otpGen);
+        setForgotSuccess('Código OTP gerado com sucesso! Verifique a sua caixa de entrada de e-mail.');
       } catch (fallbackErr: any) {
         setForgotError(err.message || 'Erro ao solicitar código OTP.');
       }
@@ -711,20 +735,21 @@ export default function App() {
   const [isOnboardingModalOpen, setIsOnboardingModalOpen] = useState(false);
   const [onboardingForm, setOnboardingForm] = useState({
     nome: '',
+    logo_url: '',
+    pais_origem: 'Moçambique',
+    paises_sucursais: [] as string[],
     email_admin: '',
-    senha: '',
     telefone: '',
     endereco: '',
     plano_id: 'plano-basico',
-    plataforma_pagamento: 'Stripe'
+    idioma_padrao: 'pt',
+    senha: '',
+    confirmar_senha: ''
   });
-  const [onboardingSuccess, setOnboardingSuccess] = useState<Tenant | null>(null);
-  const [checkoutActive, setCheckoutActive] = useState(false);
-  const [checkoutTenant, setCheckoutTenant] = useState<any | null>(null);
-  const [checkoutUser, setCheckoutUser] = useState<any | null>(null);
-  const [paymentLoading, setPaymentLoading] = useState(false);
-  const [paymentStep, setPaymentStep] = useState('');
-  const [paymentSuccess, setPaymentSuccess] = useState(false);
+  const [onboardingShowPassword, setOnboardingShowPassword] = useState(false);
+  const [onboardingShowConfirmPassword, setOnboardingShowConfirmPassword] = useState(false);
+  const [onboardingPreRegisteredNotice, setOnboardingPreRegisteredNotice] = useState<string | null>(null);
+  const [onboardingError, setOnboardingError] = useState<string | null>(null);
 
   // Unified authentication handler
   async function handleLogin(e: React.FormEvent) {
@@ -1217,201 +1242,53 @@ const clientSideCache: Record<string, any> = {
     };
   }, []);
 
-  // Handle Onboarding Flow with Firebase Authentication & Payment Gateway integration
+  // Handle Institution Registration from Login (Validation only, no DB mutation yet)
   async function handleOnboarding(e: React.FormEvent) {
     e.preventDefault();
-    try {
-      const email_admin = onboardingForm.email_admin.trim().toLowerCase();
-      const senha = onboardingForm.senha;
+    setOnboardingError(null);
 
-      if (senha.length < 6) {
-        showNotification("A senha de acesso deve ter no mínimo 6 caracteres.", "erro");
-        return;
-      }
+    const nome = onboardingForm.nome.trim();
+    const email = onboardingForm.email_admin.trim().toLowerCase();
+    const telefone = onboardingForm.telefone.trim();
+    const endereco = onboardingForm.endereco.trim();
+    const senha = onboardingForm.senha;
+    const confirmarSenha = onboardingForm.confirmar_senha;
 
-      // 1. Register administrator in Firebase Authentication
-      let userAuthId = '';
-      try {
-        const userCredential = await createUserWithEmailAndPassword(auth, email_admin, senha);
-        userAuthId = userCredential.user.uid;
-      } catch (authError: any) {
-        if (authError?.code === 'auth/email-already-in-use' || authError?.message?.includes('email-already-in-use')) {
-          // Check if an existing tenant or user is using this email in Firestore
-          const existingTenantsQuery = await getDocs(query(collection(db, 'tenants'), where('email_admin', '==', email_admin)));
-          const existingUsersQuery = await getDocs(query(collection(db, 'users'), where('email', '==', email_admin)));
-          
-          if (!existingTenantsQuery.empty || !existingUsersQuery.empty) {
-            showNotification("Este endereço de e-mail já está associado a uma conta ou instituição cadastrada no sistema. Por favor, aceda à página de login para entrar com as suas credenciais ou utilize outro endereço de e-mail.", "erro");
-            return;
-          }
-          
-          console.info("E-mail já registado no Firebase Auth. A prosseguir com o cadastro da instituição no Firestore...");
-          userAuthId = "usr-auth-" + Math.random().toString(36).substring(2, 10);
-        } else {
-          console.error("Erro de autenticação no Firebase Auth:", authError);
-          showNotification(`Erro de autenticação: ${authError.message || 'Falha ao registrar no Firebase Auth'}`, "erro");
-          return;
-        }
-      }
-
-      const generatedId = "tenant-" + Math.random().toString(36).substr(2, 9);
-      
-      // Simple slugifier
-      const slug = onboardingForm.nome
-         .toLowerCase()
-         .replace(/[^a-z0-9]+/g, '-')
-         .replace(/(^-|-$)+/g, '');
-
-      // Create Tenant with 'pendente_pagamento' status (MUST be validated with real payment)
-      const newTenant = {
-        id: generatedId,
-        nome: onboardingForm.nome,
-        slug,
-        plano_id: onboardingForm.plano_id,
-        status: 'pendente_pagamento', // awaiting payment confirmation
-        data_vencimento: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        data_renovacao: new Date().toISOString().split('T')[0],
-        created_at: new Date().toISOString(),
-        email_admin: email_admin,
-        telefone: onboardingForm.telefone,
-        endereco: onboardingForm.endereco,
-        plataforma_pagamento: onboardingForm.plataforma_pagamento
-      };
-
-      await setDoc(doc(db, 'tenants', generatedId), newTenant);
-
-      // Create Admin inside 'users' collection mapped by Firebase Auth UID
-      const userAdmin = {
-        id: userAuthId,
-        tenant_id: generatedId,
-        email: email_admin,
-        nome: `Administrador de ${onboardingForm.nome}`,
-        tipo: 'admin' as const,
-        permissoes: ["R", "W", "D"],
-        ativo: false, // will be activated upon payment confirmation
-        created_at: new Date().toISOString()
-      };
-      await setDoc(doc(db, 'users', userAdmin.id), userAdmin);
-
-      // Institutional Config
-      const defaultConfig = {
-        id: "cfg-" + generatedId,
-        tenant_id: generatedId,
-        nome_instituicao: onboardingForm.nome,
-        endereco: onboardingForm.endereco,
-        contacto: onboardingForm.telefone,
-        ano_letivo_atual: "2026",
-        escala_avaliacao: "0-20",
-        notificacoes_email: true
-      };
-      await setDoc(doc(db, 'configuracoes', defaultConfig.id), defaultConfig);
-
-      // Add default province
-      const defaultProvince = {
-        tenant_id: generatedId,
-        nome: "Distrito Sede",
-        codigo: "DSD"
-      };
-      await addDoc(collection(db, 'provincias'), defaultProvince);
-
-      // Trigger log
-      await addDoc(collection(db, 'log_admins'), {
-        admin_id: "superadmin-1",
-        admin_nome: "Onboarding Automático",
-        acao: "Pré-Cadastro",
-        entidade: "Tenant",
-        entidade_id: generatedId,
-        timestamp: new Date().toISOString(),
-        detalhes: `Nova instituição "${onboardingForm.nome}" pré-registrada com plano "${onboardingForm.plano_id}". Aguardando pagamento real via ${onboardingForm.plataforma_pagamento}.`
-      });
-
-      // Switch to checkout screen
-      setCheckoutTenant(newTenant);
-      setCheckoutUser(userAdmin);
-      setCheckoutActive(true);
-      setPaymentSuccess(false);
-      setPaymentStep('');
-    } catch (err) {
-      console.error("Error onboarding institution:", err);
-      showNotification("Ocorreu um erro ao configurar sua escola. Por favor, tente novamente.", "erro");
+    if (!nome) {
+      setOnboardingError('Por favor, informe o nome da instituição.');
+      return;
     }
-  }
-
-  // Handle Real Payment Confirmation Simulation
-  async function handleConfirmPayment() {
-    if (!checkoutTenant || !checkoutUser) return;
-    setPaymentLoading(true);
-    setPaymentStep(`Conectando com segurança ao gateway da plataforma ${checkoutTenant.plataforma_pagamento}...`);
-
-    try {
-      // Step 1
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      setPaymentStep('Processando transação financeira e validando liquidação real...');
-      
-      // Step 2
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      setPaymentStep('Sucesso! Recebido sinal verde do gateway. Ativando instâncias e credenciais...');
-      
-      // Step 3
-      await new Promise(resolve => setTimeout(resolve, 800));
-
-      // Determine amount from plan
-      const planoId = checkoutTenant.plano_id;
-      const precoPlan = planoId === 'plano-basico' ? 299 : planoId === 'plano-pro' ? 499 : 899;
-
-      // 1. Update Tenant status to 'ativo'
-      await updateDoc(doc(db, 'tenants', checkoutTenant.id), {
-        status: 'ativo'
-      });
-
-      // 2. Update User status to active
-      await setDoc(doc(db, 'users', checkoutUser.id), {
-        ativo: true
-      }, { merge: true });
-
-      // 3. Register standard billing receipt document
-      const randomPaymentId = "pag-" + Math.random().toString(36).substr(2, 9);
-      const newPayment = {
-        id: randomPaymentId,
-        tenant_id: checkoutTenant.id,
-        tenant_nome: checkoutTenant.nome,
-        valor: precoPlan,
-        data_vencimento: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        data_pagamento: new Date().toISOString().split('T')[0],
-        status: 'Pago',
-        metodo: checkoutTenant.plataforma_pagamento
-      };
-      await setDoc(doc(db, 'pagamentos', randomPaymentId), newPayment);
-
-      // 4. Record Audit Log
-      await addDoc(collection(db, 'log_admins'), {
-        admin_id: "superadmin-1",
-        admin_nome: "Gateway " + checkoutTenant.plataforma_pagamento,
-        acao: "Confirmação Pagamento",
-        entidade: "Pagamento",
-        entidade_id: randomPaymentId,
-        timestamp: new Date().toISOString(),
-        detalhes: `Assinatura de R$ ${precoPlan},00 recebida com sucesso via ${checkoutTenant.plataforma_pagamento}. Escola "${checkoutTenant.nome}" ativada.`
-      });
-
-      // Reload tenants
-      const tenantsSnap = await getDocs(collection(db, 'tenants'));
-      const tenantsList: Tenant[] = [];
-      tenantsSnap.forEach((d) => {
-        const t = d.data() as Tenant;
-        if (!t.deleted_at && t.status !== 'cancelado') {
-          tenantsList.push({ ...t, id: d.id });
-        }
-      });
-      setTenants(tenantsList);
-
-      setPaymentSuccess(true);
-    } catch (err) {
-      console.error("Erro ao processar pagamento:", err);
-      showNotification("Ocorreu um erro ao comunicar com a plataforma de pagamentos. Tente novamente.", "erro");
-    } finally {
-      setPaymentLoading(false);
+    if (!onboardingForm.pais_origem) {
+      setOnboardingError('Por favor, selecione o país de origem da instituição.');
+      return;
     }
+    if (!email || !email.includes('@') || !email.includes('.')) {
+      setOnboardingError('Por favor, informe um endereço de e-mail administrativo válido.');
+      return;
+    }
+    if (!telefone) {
+      setOnboardingError('Por favor, informe o telefone de contato da instituição.');
+      return;
+    }
+    if (!endereco) {
+      setOnboardingError('Por favor, informe o endereço físico da sede.');
+      return;
+    }
+    if (senha.length < 6) {
+      setOnboardingError('A senha de acesso deve ter no mínimo 6 caracteres.');
+      return;
+    }
+    if (senha !== confirmarSenha) {
+      setOnboardingError('A confirmação de senha não coincide com a senha informada.');
+      return;
+    }
+
+    // OBS: O botão não deve executar nenhuma ação no banco de dados ainda.
+    // Futuramente será conectado à plataforma de seleção de plano e checkout.
+    setOnboardingPreRegisteredNotice(
+      `Dados da instituição "${nome}" validados com sucesso! A pré-inscrição foi recebida e será conectada em breve à plataforma de seleção de plano e liquidação de pagamento. Nenhuma alteração foi realizada no sistema neste momento.`
+    );
+    showNotification('Dados institucionais validados com sucesso! Aguarde a integração de pagamento.', 'sucesso');
   }
 
   function handleThemeChange(theme: string) {
@@ -1617,15 +1494,20 @@ const clientSideCache: Record<string, any> = {
               
               <button 
                 onClick={() => {
-                  setOnboardingSuccess(null);
+                  setOnboardingPreRegisteredNotice(null);
+                  setOnboardingError(null);
                   setOnboardingForm({
                     nome: '',
+                    logo_url: '',
+                    pais_origem: 'Moçambique',
+                    paises_sucursais: [],
                     email_admin: '',
                     senha: '',
+                    confirmar_senha: '',
                     telefone: '',
                     endereco: '',
-                    plano_id: plans[0]?.id || 'plano-profissional',
-                    plataforma_pagamento: 'multicaixa'
+                    plano_id: plans[0]?.id || 'plano-basico',
+                    idioma_padrao: 'pt'
                   });
                   setIsOnboardingModalOpen(true);
                 }}
@@ -1768,7 +1650,6 @@ const clientSideCache: Record<string, any> = {
                           setForgotOtp('');
                           setForgotNewPassword('');
                           setForgotConfirmPassword('');
-                          setForgotDebugOtp(null);
                           setForgotOtpRequested(false);
                         }}
                         className="text-[11px] font-bold text-indigo-400 hover:text-indigo-300 hover:underline cursor-pointer transition-colors flex items-center gap-1"
@@ -1812,24 +1693,29 @@ const clientSideCache: Record<string, any> = {
 
             {/* Bottom Invitation Prompt */}
             <div className={`flex flex-col sm:flex-row items-center justify-between text-xs ${activeTheme === 'theme-dark' ? 'text-slate-400 bg-slate-950/60 border-slate-800' : 'text-slate-600 bg-slate-50 border-slate-200'} p-3.5 rounded-xl border gap-2`}>
-              <span>Quer testar a criação instantânea de uma nova escola?</span>
+              <span>Deseja cadastrar uma nova instituição de ensino?</span>
               <button
                 onClick={() => {
-                  setOnboardingSuccess(null);
+                  setOnboardingPreRegisteredNotice(null);
+                  setOnboardingError(null);
                   setOnboardingForm({
                     nome: '',
+                    logo_url: '',
+                    pais_origem: 'Moçambique',
+                    paises_sucursais: [],
                     email_admin: '',
                     senha: '',
+                    confirmar_senha: '',
                     telefone: '',
                     endereco: '',
-                    plano_id: plans[0]?.id || 'plano-profissional',
-                    plataforma_pagamento: 'multicaixa'
+                    plano_id: plans[0]?.id || 'plano-basico',
+                    idioma_padrao: 'pt'
                   });
                   setIsOnboardingModalOpen(true);
                 }}
                 className="text-blue-500 hover:text-blue-600 font-bold underline transition-colors cursor-pointer"
               >
-                Registrar Escola Agora
+                Registar Instituição
               </button>
             </div>
 
@@ -1863,7 +1749,6 @@ const clientSideCache: Record<string, any> = {
                   setIsForgotPasswordOpen(false);
                   setForgotError('');
                   setForgotSuccess('');
-                  setForgotDebugOtp(null);
                 }}
                 className="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
                 title="Fechar"
@@ -1882,14 +1767,7 @@ const clientSideCache: Record<string, any> = {
             {forgotSuccess && (
               <div className="p-3 bg-emerald-950/40 border border-emerald-800 text-emerald-300 rounded-xl text-xs font-semibold leading-relaxed flex items-start gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                <div>
-                  <p>{forgotSuccess}</p>
-                  {forgotDebugOtp && (
-                    <div className="mt-1.5 p-2 bg-slate-950/70 border border-slate-700 rounded-lg text-amber-300 font-mono text-xs">
-                      Código OTP de teste: <span className="font-bold text-sm tracking-wider">{forgotDebugOtp}</span>
-                    </div>
-                  )}
-                </div>
+                <p>{forgotSuccess}</p>
               </div>
             )}
 
@@ -2044,309 +1922,444 @@ const clientSideCache: Record<string, any> = {
         />
       )}
 
-      {/* ONBOARDING MODAL (POPUP) */}
+      {/* ONBOARDING MODAL (POPUP) — FORMULÁRIO DE REGISTO DE INSTITUIÇÃO */}
       {isOnboardingModalOpen && (
-        <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="bg-slate-900 text-slate-100 rounded-3xl border border-slate-800 shadow-2xl max-w-lg w-full overflow-hidden animate-in zoom-in duration-200">
+        <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 text-slate-100 rounded-3xl border border-slate-800 shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in duration-200">
             {/* Modal Header */}
-            <div className="p-6 border-b border-slate-800 flex items-center justify-between bg-slate-950">
+            <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950 shrink-0">
               <div className="space-y-1">
                 <span className="bg-indigo-500/20 text-indigo-400 text-[10px] font-bold py-0.5 px-2.5 rounded-full uppercase tracking-wider font-mono">
-                  {checkoutActive ? "Etapa 2/2: Pagamento e Ativação" : "SaaS Auto-Onboarding — Etapa 1/2"}
+                  SaaS Multi-Institucional • Registo de Instituição
                 </span>
-                <h3 className="text-lg font-bold text-white font-sans mt-1">
-                  {checkoutActive ? "Finalizar Assinatura Mensal" : "Registre Sua Escola Agora"}
+                <h3 className="text-lg font-bold text-white font-sans mt-0.5 flex items-center gap-2">
+                  <Building2 className="w-5 h-5 text-indigo-400" />
+                  Registar Nova Instituição de Ensino
                 </h3>
+                <p className="text-xs text-slate-400">
+                  Preencha as informações institucionais, localização geográfica e credenciais de acesso.
+                </p>
               </div>
               <button 
+                type="button"
                 onClick={() => {
                   setIsOnboardingModalOpen(false);
-                  setCheckoutActive(false);
+                  setOnboardingPreRegisteredNotice(null);
+                  setOnboardingError(null);
                 }}
-                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                className="text-slate-400 hover:text-white p-1.5 rounded-xl hover:bg-slate-800 transition-colors cursor-pointer"
+                title="Fechar"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             {/* Modal Body */}
-            <div className="p-6">
-              {checkoutActive ? (
-                <div className="space-y-4">
-                  {paymentLoading ? (
-                    <div className="p-8 text-center space-y-4">
-                      <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
-                      <h4 className="text-sm font-bold text-white">Processando Liquidação Real...</h4>
-                      <p className="text-xs text-slate-400 animate-pulse font-mono">{paymentStep}</p>
-                    </div>
-                  ) : paymentSuccess ? (
-                    <div className="p-4 rounded-xl bg-slate-850 border border-emerald-500/30 text-center space-y-4 animate-in fade-in duration-200">
-                      <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto" />
-                      <h4 className="text-lg font-bold text-white">Escola Provisionada e Ativada!</h4>
-                      <p className="text-xs text-slate-300">
-                        O pagamento da assinatura de <strong className="text-indigo-400">R$ {checkoutTenant.plano_id === 'plano-basico' ? 299 : checkoutTenant.plano_id === 'plano-pro' ? 499 : 899},00</strong> foi processado e validado com sucesso via <strong className="text-indigo-400">{checkoutTenant.plataforma_pagamento}</strong>.
-                      </p>
-                      <p className="text-xs text-slate-400">
-                        Sua instituição já está com status <strong className="text-emerald-400">Ativo</strong> e as credenciais criadas estão autorizadas a acessar o sistema.
-                      </p>
-                      
-                      <div className="flex gap-2.5 pt-2">
-                        <button 
-                          onClick={() => {
-                            // Authenticate user directly
-                            saveUserSessionCookie({
-                              id: checkoutUser.id,
-                              nome: checkoutUser.nome,
-                              email: checkoutUser.email,
-                              tipo: 'admin',
-                              tenant_id: checkoutTenant.id
-                            });
-                            saveLastAction(`Login automático após onboarding: ${checkoutUser.email}`);
-                            saveLastModule("dashboard");
-                            setSelectedTenantId(checkoutTenant.id);
-                            setSelectedRole('admin');
-                            setIsOnboardingModalOpen(false);
-                            setCheckoutActive(false);
-                            setCurrentView('tenant');
-                          }}
-                          className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 px-3 rounded-xl text-xs transition-colors cursor-pointer shadow-lg shadow-indigo-600/20"
-                        >
-                          Acessar Meu Novo Portal Escolar
-                        </button>
-                        <button 
-                          onClick={() => {
-                            setIsOnboardingModalOpen(false);
-                            setCheckoutActive(false);
-                          }}
-                          className="bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold py-2.5 px-4 rounded-xl text-xs transition-colors cursor-pointer"
-                        >
-                          Fechar
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-4 animate-in fade-in duration-200">
-                      <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-2 text-xs">
-                        <div className="flex justify-between">
-                          <span className="text-slate-400">Instituição:</span>
-                          <span className="font-bold text-white">{checkoutTenant.nome}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-400">Plano Selecionado:</span>
-                          <span className="font-bold text-white uppercase">{checkoutTenant.plano_id.replace('plano-', '')}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-400">Plataforma de Pagamento:</span>
-                          <span className="font-bold text-indigo-400">{checkoutTenant.plataforma_pagamento}</span>
-                        </div>
-                        <div className="border-t border-slate-850 pt-2 flex justify-between text-sm">
-                          <span className="font-bold text-slate-300">Total Devido:</span>
-                          <span className="font-extrabold text-white">R$ {checkoutTenant.plano_id === 'plano-basico' ? '299,00' : checkoutTenant.plano_id === 'plano-pro' ? '499,00' : '899,00'}</span>
-                        </div>
-                      </div>
+            <div className="p-6 overflow-y-auto flex-1 space-y-5">
+              {onboardingPreRegisteredNotice ? (
+                /* CONFIRMAÇÃO DE PRÉ-REGISTO (SEM ALTERAÇÃO NA BASE DE DADOS) */
+                <div className="p-6 rounded-2xl bg-slate-850 border border-emerald-500/30 text-center space-y-4 animate-in fade-in duration-200">
+                  <div className="w-14 h-14 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
+                    <CheckCircle2 className="w-8 h-8" />
+                  </div>
+                  <div>
+                    <h4 className="text-lg font-bold text-white">Dados Institucionais Validados com Sucesso!</h4>
+                    <p className="text-xs text-slate-300 mt-1 max-w-lg mx-auto leading-relaxed">
+                      {onboardingPreRegisteredNotice}
+                    </p>
+                  </div>
 
-                      {checkoutTenant.plataforma_pagamento === 'Pix' ? (
-                        <div className="bg-slate-950/60 p-4 rounded-2xl border border-slate-800 space-y-4 text-center">
-                          <div className="bg-white p-3 rounded-xl w-36 h-36 mx-auto flex items-center justify-center border border-slate-200 shadow-inner">
-                            <img 
-                              src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=00020101021126580014br.gov.bcb.pix0136696492b1-5d0c-465c-a833-bdfb1270cde15204000053039865405299.005802BR5915Nelton%20SGE6009MAPUTO62070503SGE" 
-                              alt="Pix QR Code" 
-                              className="w-full h-full object-contain"
-                              referrerPolicy="no-referrer"
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <p className="text-[11px] font-bold text-slate-300 uppercase tracking-wide">Código Pix Copia e Cola:</p>
-                            <input 
-                              type="text" 
-                              readOnly 
-                              value="00020101021126580014br.gov.bcb.pix0136696492b1-5d0c-465c-a833-bdfb1270cde15204000053039865405299.005802BR5915Nelton%20SGE6009MAPUTO62070503SGE"
-                              className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-[10px] text-slate-300 font-mono text-center select-all"
-                            />
-                            <button 
-                              type="button"
-                              onClick={() => {
-                                navigator.clipboard.writeText("00020101021126580014br.gov.bcb.pix0136696492b1-5d0c-465c-a833-bdfb1270cde15204000053039865405299.005802BR5915Nelton%20SGE6009MAPUTO62070503SGE");
-                                showNotification("Código Pix copiado para a área de transferência!", "sucesso");
-                              }}
-                              className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
-                            >
-                              Copiar Código Pix
-                            </button>
-                          </div>
-                          <p className="text-[10px] text-slate-400 leading-relaxed max-w-xs mx-auto">
-                            Abra o aplicativo de pagamentos do seu banco, escolha "Pagar via Pix Copia e Cola" ou escaneie o código acima para efetuar a liquidação imediata da mensalidade.
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="bg-slate-950/60 p-4 rounded-2xl border border-slate-800 space-y-3">
-                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Dados do Cartão de Crédito ({checkoutTenant.plataforma_pagamento}):</p>
-                          
-                          <div className="space-y-2 text-xs text-left">
-                            <div>
-                              <label className="block text-[9px] text-slate-500 uppercase tracking-wider mb-1">Nome no Cartão</label>
-                              <input 
-                                type="text" 
-                                required 
-                                placeholder="NOME DO TITULAR"
-                                className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white uppercase placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-[9px] text-slate-500 uppercase tracking-wider mb-1">Número do Cartão de Crédito</label>
-                              <input 
-                                type="text" 
-                                required 
-                                maxLength={19}
-                                placeholder="4111 2222 3333 4444"
-                                className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
-                              />
-                            </div>
-                            <div className="grid grid-cols-2 gap-3">
-                              <div>
-                                <label className="block text-[9px] text-slate-500 uppercase tracking-wider mb-1">Expiração</label>
-                                <input 
-                                  type="text" 
-                                  required 
-                                  maxLength={5}
-                                  placeholder="MM/AA"
-                                  className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-[9px] text-slate-500 uppercase tracking-wider mb-1">CVC / CVV</label>
-                                <input 
-                                  type="password" 
-                                  required 
-                                  maxLength={4}
-                                  placeholder="123"
-                                  className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="flex gap-2.5 pt-2">
-                        <button 
-                          type="button"
-                          onClick={() => {
-                            setCheckoutActive(false);
-                          }}
-                          className="w-1/3 bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
-                        >
-                          Voltar
-                        </button>
-                        <button 
-                          type="button"
-                          onClick={handleConfirmPayment}
-                          className="w-2/3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-600/10 cursor-pointer"
-                        >
-                          Confirmar Pagamento Real
-                        </button>
-                      </div>
+                  {/* Resumo da Instituição */}
+                  <div className="bg-slate-950/80 p-4 rounded-xl border border-slate-800 text-xs text-left space-y-2">
+                    <div className="flex justify-between border-b border-slate-850 pb-1.5">
+                      <span className="text-slate-400">Instituição:</span>
+                      <span className="font-bold text-white">{onboardingForm.nome}</span>
                     </div>
-                  )}
+                    <div className="flex justify-between border-b border-slate-850 pb-1.5">
+                      <span className="text-slate-400">País de Origem:</span>
+                      <span className="font-bold text-indigo-400">{onboardingForm.pais_origem}</span>
+                    </div>
+                    {onboardingForm.paises_sucursais && onboardingForm.paises_sucursais.filter(Boolean).length > 0 && (
+                      <div className="flex justify-between border-b border-slate-850 pb-1.5">
+                        <span className="text-slate-400">Países Sucursais:</span>
+                        <span className="font-bold text-slate-200">{onboardingForm.paises_sucursais.filter(Boolean).join(', ')}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between border-b border-slate-850 pb-1.5">
+                      <span className="text-slate-400">Email Administrativo:</span>
+                      <span className="font-bold text-white">{onboardingForm.email_admin}</span>
+                    </div>
+                    <div className="flex justify-between border-b border-slate-850 pb-1.5">
+                      <span className="text-slate-400">Telefone:</span>
+                      <span className="font-bold text-white">{onboardingForm.telefone}</span>
+                    </div>
+                    <div className="flex justify-between border-b border-slate-850 pb-1.5">
+                      <span className="text-slate-400">Endereço da Sede:</span>
+                      <span className="font-bold text-white">{onboardingForm.endereco}</span>
+                    </div>
+                    <div className="flex justify-between pt-0.5">
+                      <span className="text-slate-400">Plano Pretendido:</span>
+                      <span className="font-bold text-emerald-400 uppercase">
+                        {plans.find(p => p.id === onboardingForm.plano_id)?.nome || onboardingForm.plano_id}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Aviso de Futura Integração */}
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-start gap-2.5 text-left">
+                    <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                      <strong>Observação:</strong> Conforme solicitado, nenhuma gravação ou cobrança foi efetuada. Esta tela de registo será futuramente conectada a uma plataforma de seleção de plano e checkout financeiro.
+                    </p>
+                  </div>
+
+                  <div className="flex gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setOnboardingPreRegisteredNotice(null)}
+                      className="w-1/2 bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
+                    >
+                      Editar Dados
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsOnboardingModalOpen(false);
+                        setOnboardingPreRegisteredNotice(null);
+                      }}
+                      className="w-1/2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer shadow-lg shadow-indigo-600/20"
+                    >
+                      Voltar ao Início de Sessão
+                    </button>
+                  </div>
                 </div>
               ) : (
+                /* FORMULÁRIO DE REGISTO SEMELHANTE AO SUPERADMIN */
                 <form onSubmit={handleOnboarding} className="space-y-4">
+                  {onboardingError && (
+                    <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center gap-2 text-xs text-rose-300 animate-in fade-in">
+                      <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                      <span>{onboardingError}</span>
+                    </div>
+                  )}
+
+                  {/* LOGOTIPO DA INSTITUIÇÃO */}
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Nome da Instituição Escolar</label>
+                    <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                      Logotipo da Instituição (Opcional)
+                    </label>
+                    <div className="flex items-center gap-3">
+                      {onboardingForm.logo_url ? (
+                        <img 
+                          src={onboardingForm.logo_url} 
+                          alt="Pré-visualização do logotipo" 
+                          className="w-12 h-12 rounded-xl object-contain bg-slate-950 border border-slate-800 p-1"
+                        />
+                      ) : (
+                        <div className="w-12 h-12 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-500">
+                          <Building2 className="w-6 h-6" />
+                        </div>
+                      )}
+                      <div className="flex-1 space-y-1">
+                        <input
+                          type="text"
+                          value={onboardingForm.logo_url}
+                          onChange={(e) => setOnboardingForm(prev => ({ ...prev, logo_url: e.target.value }))}
+                          placeholder="URL da imagem (ex: https://...)"
+                          className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                        <div className="flex items-center gap-2">
+                          <label className="text-[10px] text-indigo-400 hover:text-indigo-300 cursor-pointer font-bold flex items-center gap-1">
+                            <Upload className="w-3 h-3" /> Carregar arquivo local
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  const reader = new FileReader();
+                                  reader.onloadend = () => {
+                                    setOnboardingForm(prev => ({ ...prev, logo_url: reader.result as string }));
+                                  };
+                                  reader.readAsDataURL(file);
+                                }
+                              }}
+                            />
+                          </label>
+                          {onboardingForm.logo_url && (
+                            <button
+                              type="button"
+                              onClick={() => setOnboardingForm(prev => ({ ...prev, logo_url: '' }))}
+                              className="text-[10px] text-rose-400 hover:text-rose-300 underline cursor-pointer"
+                            >
+                              Remover
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* NOME DA INSTITUIÇÃO */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">
+                      Nome da Instituição Escolar *
+                    </label>
                     <input 
                       type="text"
                       required
                       value={onboardingForm.nome}
-                      onChange={(e) => setOnboardingForm({ ...onboardingForm, nome: e.target.value })}
-                      placeholder="Ex: Instituto Tecnológico da Beira"
-                      className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                      onChange={(e) => setOnboardingForm(prev => ({ ...prev, nome: e.target.value }))}
+                      placeholder="Ex: Complexo Escolar Esperança de Maputo"
+                      className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     />
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* PAÍS DE ORIGEM & SUCURSAIS COM SEARCHABLE DROPDOWN */}
+                  <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800 space-y-3">
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Email de Acesso (Login)</label>
+                      <label className="block text-xs font-bold text-slate-200 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                        <Globe className="w-3.5 h-3.5 text-indigo-400" />
+                        País de Origem da Instituição *
+                      </label>
+                      <SearchableDropdown
+                        options={WORLD_COUNTRIES.map(c => ({ value: c.name, label: c.name }))}
+                        value={onboardingForm.pais_origem || 'Moçambique'}
+                        onChange={(val) => setOnboardingForm(prev => ({ ...prev, pais_origem: val }))}
+                        placeholder="Selecione o país de origem..."
+                        searchPlaceholder="Pesquisar país..."
+                      />
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        As províncias e distritos deste país serão cadastrados e sincronizados automaticamente na instituição.
+                      </p>
+                    </div>
+
+                    {/* Países com Escolas / Sucursais com botão + e botão - */}
+                    <div className="pt-2 border-t border-slate-800">
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="block text-xs font-bold text-slate-200 uppercase tracking-wider">
+                          Países com Sucursais ou Escolas
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const current = onboardingForm.paises_sucursais || [];
+                            setOnboardingForm(prev => ({ ...prev, paises_sucursais: [...current, ''] }));
+                          }}
+                          className="bg-indigo-950/60 hover:bg-indigo-900/80 text-indigo-400 border border-indigo-800 text-[11px] font-bold py-1 px-2.5 rounded-lg flex items-center gap-1 cursor-pointer transition-colors"
+                          title="Adicionar outro país"
+                        >
+                          <Plus className="w-3.5 h-3.5" /> Adicionar País
+                        </button>
+                      </div>
+
+                      {(onboardingForm.paises_sucursais || []).length === 0 ? (
+                        <p className="text-[11px] text-slate-400 italic">
+                          Nenhum outro país configurado. Clique em "+ Adicionar País" se a instituição possuir filiais ou escolas em outros territórios.
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {(onboardingForm.paises_sucursais || []).map((pais, idx) => (
+                            <div key={idx} className="flex items-center gap-2">
+                              <div className="flex-1">
+                                <SearchableDropdown
+                                  options={WORLD_COUNTRIES.map(c => ({ value: c.name, label: c.name }))}
+                                  value={pais}
+                                  onChange={(val) => {
+                                    const updated = [...(onboardingForm.paises_sucursais || [])];
+                                    updated[idx] = val;
+                                    setOnboardingForm(prev => ({ ...prev, paises_sucursais: updated }));
+                                  }}
+                                  placeholder="Selecione o país da sucursal..."
+                                  searchPlaceholder="Pesquisar país..."
+                                />
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const updated = (onboardingForm.paises_sucursais || []).filter((_, i) => i !== idx);
+                                  setOnboardingForm(prev => ({ ...prev, paises_sucursais: updated }));
+                                }}
+                                className="p-2 bg-rose-950/40 hover:bg-rose-900/60 text-rose-400 border border-rose-800 rounded-lg cursor-pointer transition-colors"
+                                title="Remover este país"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* CONTATOS: EMAIL E TELEFONE */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">
+                        Email Administrativo (Login) *
+                      </label>
                       <input 
                         type="email"
                         required
                         value={onboardingForm.email_admin}
-                        onChange={(e) => setOnboardingForm({ ...onboardingForm, email_admin: e.target.value })}
-                        placeholder="Ex: gestor@escola.edu"
-                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                        onChange={(e) => setOnboardingForm(prev => ({ ...prev, email_admin: e.target.value }))}
+                        placeholder="Ex: gestao@escola.edu"
+                        className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Senha de Acesso (Mín. 6 Caracteres)</label>
-                      <input 
-                        type="password"
-                        required
-                        value={onboardingForm.senha}
-                        onChange={(e) => setOnboardingForm({ ...onboardingForm, senha: e.target.value })}
-                        placeholder="••••••••"
-                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Telefone de Contato</label>
+                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">
+                        Telefone de Contato *
+                      </label>
                       <input 
                         type="text"
                         required
                         value={onboardingForm.telefone}
-                        onChange={(e) => setOnboardingForm({ ...onboardingForm, telefone: e.target.value })}
-                        placeholder="Ex: +258 84..."
-                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Endereço de Sede</label>
-                      <input 
-                        type="text"
-                        required
-                        value={onboardingForm.endereco}
-                        onChange={(e) => setOnboardingForm({ ...onboardingForm, endereco: e.target.value })}
-                        placeholder="Cidade, Província"
-                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                        onChange={(e) => setOnboardingForm(prev => ({ ...prev, telefone: e.target.value }))}
+                        placeholder="Ex: +258 84 123 4567"
+                        className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       />
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* ENDEREÇO FÍSICO */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">
+                      Endereço Físico da Sede *
+                    </label>
+                    <input 
+                      type="text"
+                      required
+                      value={onboardingForm.endereco}
+                      onChange={(e) => setOnboardingForm(prev => ({ ...prev, endereco: e.target.value }))}
+                      placeholder="Ex: Av. 24 de Julho, Nº 1450, Maputo"
+                      className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  {/* PLANO E IDIOMA */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Escolher Plano de Subscrição</label>
+                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">
+                        Plano de Subscrição Pretendido *
+                      </label>
                       <select 
                         value={onboardingForm.plano_id}
-                        onChange={(e) => setOnboardingForm({ ...onboardingForm, plano_id: e.target.value })}
-                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-200 transition-all cursor-pointer"
+                        onChange={(e) => setOnboardingForm(prev => ({ ...prev, plano_id: e.target.value }))}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
                       >
                         {plans.map(p => (
-                          <option key={p.id} value={p.id} className="bg-slate-900">{p.nome} — R$ {p.preco}/mês</option>
+                          <option key={p.id} value={p.id} className="bg-slate-900">
+                            {p.nome} — R$ {p.preco}/mês
+                          </option>
                         ))}
                       </select>
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Plataforma de Pagamento</label>
+                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">
+                        Idioma Padrão do Sistema
+                      </label>
                       <select 
-                        value={onboardingForm.plataforma_pagamento}
-                        onChange={(e) => setOnboardingForm({ ...onboardingForm, plataforma_pagamento: e.target.value })}
-                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-200 transition-all cursor-pointer"
+                        value={onboardingForm.idioma_padrao}
+                        onChange={(e) => setOnboardingForm(prev => ({ ...prev, idioma_padrao: e.target.value }))}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
                       >
-                        <option value="Stripe" className="bg-slate-900">Stripe Gateway</option>
-                        <option value="PayPal" className="bg-slate-900">PayPal Express</option>
-                        <option value="Iugu" className="bg-slate-900">Iugu Payments</option>
-                        <option value="Pix" className="bg-slate-900">Pix Automático</option>
+                        <option value="pt" className="bg-slate-900">Português (Padrão)</option>
+                        <option value="en" className="bg-slate-900">English (Inglês)</option>
+                        <option value="es" className="bg-slate-900">Español (Espanhol)</option>
+                        <option value="fr" className="bg-slate-900">Français (Francês)</option>
                       </select>
                     </div>
                   </div>
 
-                  <div className="pt-2">
+                  {/* SENHA E CONFIRMAÇÃO DE SENHA */}
+                  <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800 space-y-3">
+                    <label className="block text-xs font-bold text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <Lock className="w-3.5 h-3.5" />
+                      Definição da Palavra-Passe de Acesso *
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                          Senha (Mín. 6 caracteres) *
+                        </label>
+                        <div className="relative">
+                          <input 
+                            type={onboardingShowPassword ? "text" : "password"}
+                            required
+                            value={onboardingForm.senha}
+                            onChange={(e) => setOnboardingForm(prev => ({ ...prev, senha: e.target.value }))}
+                            placeholder="••••••••••••"
+                            className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 pr-9 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setOnboardingShowPassword(!onboardingShowPassword)}
+                            className="absolute right-2.5 top-2.5 text-slate-400 hover:text-white"
+                          >
+                            {onboardingShowPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                          Confirmar Senha *
+                        </label>
+                        <div className="relative">
+                          <input 
+                            type={onboardingShowConfirmPassword ? "text" : "password"}
+                            required
+                            value={onboardingForm.confirmar_senha}
+                            onChange={(e) => setOnboardingForm(prev => ({ ...prev, confirmar_senha: e.target.value }))}
+                            placeholder="••••••••••••"
+                            className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 pr-9 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setOnboardingShowConfirmPassword(!onboardingShowConfirmPassword)}
+                            className="absolute right-2.5 top-2.5 text-slate-400 hover:text-white"
+                          >
+                            {onboardingShowConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {onboardingForm.senha && (
+                      <PasswordPolicyIndicator 
+                        password={onboardingForm.senha} 
+                        userEmail={onboardingForm.email_admin} 
+                      />
+                    )}
+                  </div>
+
+                  {/* AVISO INFORMATIVO DE TRANSIÇÃO FUTURA */}
+                  <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl flex items-start gap-2.5 text-left">
+                    <Info className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+                    <p className="text-[11px] text-indigo-200/90 leading-relaxed">
+                      <strong>Aviso do Sistema:</strong> O botão "Registar Instituição" abaixo valida os dados de cadastro sem alterar a base de dados. Futuramente, este botão redirecionará o utilizador para a plataforma de escolha de plano de pagamento e liquidação.
+                    </p>
+                  </div>
+
+                  {/* BOTÕES DE AÇÃO */}
+                  <div className="flex gap-3 pt-2">
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        setIsOnboardingModalOpen(false);
+                        setOnboardingError(null);
+                      }}
+                      className="w-1/3 bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
                     <button 
                       type="submit"
-                      className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 rounded-xl text-xs transition-all flex items-center justify-center gap-1 shadow-md cursor-pointer"
+                      className="w-2/3 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white font-bold py-2.5 rounded-xl text-xs transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20 cursor-pointer"
                     >
-                      Criar Conta e Prosseguir para o Pagamento <ArrowRight className="w-4 h-4" />
+                      <Building2 className="w-4 h-4" />
+                      Registar Instituição
                     </button>
                   </div>
                 </form>

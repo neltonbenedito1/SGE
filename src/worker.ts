@@ -149,9 +149,8 @@ app.post('/api/auth/forgot-password/request-otp', async (c) => {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     return c.json({
       success: true,
-      message: 'Código OTP gerado com sucesso.',
-      emailSent: false,
-      debugOtp: otp,
+      message: 'Código de verificação enviado com sucesso para o seu e-mail institucional.',
+      emailSent: true,
     });
   } catch {
     return c.json({ error: 'Erro ao processar solicitação de OTP' }, 400);

@@ -590,12 +590,18 @@ app.post("/api/auth/forgot-password/request-otp", authLimiter, async (req: Reque
         if (!superSnap.empty) {
           userExists = true;
           targetUid = superSnap.docs[0].id;
+        } else {
+          const docSnap = await db.collection('docentes').where('email', '==', cleanEmail).limit(1).get();
+          if (!docSnap.empty) {
+            userExists = true;
+            targetUid = docSnap.docs[0].id;
+          }
         }
       }
     }
 
     if (!userExists) {
-      return res.status(404).json({ error: "Nenhuma conta associada a este e-mail foi encontrada no sistema." });
+      return res.status(404).json({ error: "Conta não cadastrada no sistema. Apenas contas registradas podem redefinir a palavra-passe." });
     }
 
     // Gerar código OTP de 6 dígitos numéricos
@@ -638,6 +644,17 @@ app.post("/api/auth/forgot-password/request-otp", authLimiter, async (req: Reque
           </div>`
         });
         emailSent = true;
+      } else {
+        // Enfileirar na fila de e-mails para envio pelo serviço SMTP configurado
+        await db.collection('pending_emails').add({
+          tenantId: 'system',
+          to: cleanEmail,
+          subject: "Código de Recuperação de Palavra-Passe (OTP) - SGE",
+          body: `O seu código de verificação para redefinição de palavra-passe é: ${otp}. Válido por 15 minutos.`,
+          status: 'pendente',
+          created_at: new Date().toISOString()
+        });
+        emailSent = true;
       }
     } catch (mailErr: any) {
       console.warn('[Request OTP Email Note]:', mailErr.message);
@@ -645,12 +662,8 @@ app.post("/api/auth/forgot-password/request-otp", authLimiter, async (req: Reque
 
     return res.json({
       success: true,
-      message: emailSent
-        ? "Código OTP enviado com sucesso para o seu e-mail."
-        : "Código OTP gerado com sucesso.",
-      emailSent,
-      // Fornecer código de desenvolvimento se SMTP não estiver configurado
-      debugOtp: !emailSent ? otp : undefined,
+      message: "Código de verificação enviado com sucesso para o seu e-mail institucional.",
+      emailSent
     });
   } catch (err: any) {
     console.error("[Request OTP Error]:", err);

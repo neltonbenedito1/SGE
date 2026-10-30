@@ -28,6 +28,10 @@ export interface Tenant {
   slots_adicionais?: Record<string, number>;
   idioma_padrao?: string;
   ai_translation_enabled?: boolean;
+  logo_url?: string;
+  pais_origem?: string;
+  paises_sucursais?: string[];
+  paises_atuacao?: string[];
 }
 
 export interface Plano {
@@ -128,10 +132,15 @@ export interface Escola {
   longitude?: string | number;
   deleted_at?: string | null;
   logo_url?: string;
+  tipo_instituicao?: 'Escola' | 'Faculdade' | 'Instituto';
   controlar_assiduidade?: boolean;
+  regime_manha?: boolean;
+  regime_tarde?: boolean;
+  regime_noite?: boolean;
   tolerancia_manha?: string;
   tolerancia_tarde?: string;
   tolerancia_noite?: string;
+  niveis_ensino?: ('primario' | 'secundario' | 'superior' | 'profissional')[];
   nuit?: string;
   diretor_nome?: string;
   contacto?: string;
@@ -196,6 +205,22 @@ export interface Estudante {
   genero: 'Masculino' | 'Feminino';
   turma_id: string;
   pai_id: string;
+  nivelEnsino?: 'primario' | 'secundario' | 'superior' | 'profissional';
+  ano_lectivo?: string;
+  dados_nivel?: Record<string, any>;
+  naturalidade_provincia?: string;
+  naturalidade_distrito?: string;
+  nacionalidade?: string;
+  tipo_documento?: string;
+  numero_documento?: string;
+  validade_documento?: string;
+  residencia_provincia?: string;
+  residencia_distrito?: string;
+  residencia_bairro?: string;
+  contacto_emergencia_nome?: string;
+  contacto_emergencia_telefone?: string;
+  telemovel?: string;
+  email?: string;
   data_admissao?: string;
   foto_url?: string;
   ativo?: boolean;

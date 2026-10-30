@@ -160,6 +160,9 @@ import { PlanoAulasModule } from './PlanoAulasModule';
 import { GlobalPermissionsModule, DEFAULT_CATEGORIES } from './GlobalPermissionsModule';
 import { NotificationSettingsModule } from './NotificationSettingsModule';
 import { UserPermissionsChecklist } from './UserPermissionsChecklist';
+import { ProvinciasModule } from './tenant/ProvinciasModule';
+import { StudentRegistrationForm } from './StudentRegistrationForm';
+import { getAutomaticProvincesForCountries } from '../shared/catalogs';
 import { LANGUAGES, translate } from '../lib/translation';
 import LanguageSwitcher from './LanguageSwitcher';
 import { SysEduLogo } from './SysEduLogo';
@@ -564,6 +567,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [plan, setPlan] = useState<Plano | null>(null);
   const [rawSchools, setSchools] = useState<Escola[]>([]);
   const [rawProvinces, setProvinces] = useState<Provincia[]>([]);
+  const [isSyncingProvinces, setIsSyncingProvinces] = useState(false);
   const [rawTeachers, setTeachers] = useState<Docente[]>([]);
   const [rawStudents, setStudents] = useState<Estudante[]>([]);
   const [rawTurmas, setTurmas] = useState<Turma[]>([]);
@@ -1724,6 +1728,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               setEditingItem(target);
               setEscolaForm({
                 nome: target.nome || '',
+                tipo_instituicao: target.tipo_instituicao || 'Escola',
+                regime_manha: target.regime_manha ?? true,
+                regime_tarde: target.regime_tarde ?? true,
+                regime_noite: target.regime_noite ?? false,
                 provincia_id: target.provincia_id || '',
                 endereco: target.endereco || '',
                 telefone: target.telefone || '',
@@ -2654,7 +2662,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           disabled: !isCreationAllowed,
           onClick: () => {
             setEditingItem(null);
-            setEscolaForm({ nome: '', provincia_id: provinces[0]?.id || '', endereco: '', telefone: '', email: '', diretor_id: '', diretor_pedagogico_id: '', data_fundacao: '', ativo: true, latitude: '', longitude: '', logo_url: '', controlar_assiduidade: false, tolerancia_manha: '07:15', tolerancia_tarde: '12:15', tolerancia_noite: '18:15' });
+            setEscolaForm({ nome: '', tipo_instituicao: 'Escola', regime_manha: true, regime_tarde: true, regime_noite: false, provincia_id: provinces[0]?.id || '', endereco: '', telefone: '', email: '', diretor_id: '', diretor_pedagogico_id: '', data_fundacao: '', ativo: true, latitude: '', longitude: '', logo_url: '', controlar_assiduidade: false, tolerancia_manha: '07:15', tolerancia_tarde: '12:15', tolerancia_noite: '18:15' });
             setModalType('escola');
             setIsModalOpen(true);
           }
@@ -3165,7 +3173,28 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
   // Dynamic Forms State
   const [provinciaForm, setProvinciaForm] = useState(() => getSavedFormDraft('draft_provincia', { nome: '', codigo: '' }));
-  const [escolaForm, setEscolaForm] = useState(() => getSavedFormDraft('draft_escola', { nome: '', provincia_id: '', endereco: '', telefone: '', email: '', diretor_id: '', diretor_pedagogico_id: '', data_fundacao: '', ativo: true, latitude: '', longitude: '', logo_url: '', controlar_assiduidade: false, tolerancia_manha: '07:15', tolerancia_tarde: '12:15', tolerancia_noite: '18:15' }));
+  const [escolaForm, setEscolaForm] = useState(() => getSavedFormDraft('draft_escola', { 
+    nome: '', 
+    provincia_id: '', 
+    endereco: '', 
+    telefone: '', 
+    email: '', 
+    diretor_id: '', 
+    diretor_pedagogico_id: '', 
+    data_fundacao: '', 
+    ativo: true, 
+    latitude: '', 
+    longitude: '', 
+    logo_url: '', 
+    tipo_instituicao: 'Escola' as 'Escola' | 'Faculdade' | 'Instituto',
+    controlar_assiduidade: false, 
+    regime_manha: true,
+    regime_tarde: true,
+    regime_noite: true,
+    tolerancia_manha: '07:15', 
+    tolerancia_tarde: '12:15', 
+    tolerancia_noite: '18:15' 
+  }));
   const [teacherForm, setTeacherForm] = useState<{
     nome: string;
     email: string;
@@ -3174,22 +3203,32 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     escola_id: string;
     data_admissao?: string;
   }>(() => getSavedFormDraft('draft_teacher', { nome: '', email: '', especialidade: '', numero_registro: '', escola_id: '', data_admissao: new Date().toISOString().split('T')[0] }));
-  const [studentForm, setStudentForm] = useState<{
-    nome: string;
-    email: string;
-    escola_id: string;
-    turma_id: string;
-    numero_matricula: string;
-    data_nascimento: string;
-    data_admissao?: string;
-    genero: 'Masculino' | 'Feminino';
-    pai_id: string;
-    faturado: boolean;
-    periodo_facturacao: 'Mensal' | 'Semestral' | 'Anual';
-    foto_url: string;
-    usuario_sistema: boolean;
-    senha_temporaria: string;
-  }>(() => getSavedFormDraft('draft_student', { nome: '', email: '', escola_id: '', turma_id: '', numero_matricula: '', data_nascimento: '', data_admissao: new Date().toISOString().split('T')[0], genero: 'Masculino' as 'Masculino' | 'Feminino', pai_id: '', faturado: false, periodo_facturacao: 'Mensal' as 'Mensal' | 'Semestral' | 'Anual', foto_url: '', usuario_sistema: false, senha_temporaria: '' }));
+  const [studentForm, setStudentForm] = useState<Record<string, any>>(() => getSavedFormDraft('draft_student', { 
+    nome: '', 
+    email: '', 
+    escola_id: '', 
+    turma_id: '', 
+    numero_matricula: '', 
+    data_nascimento: '', 
+    data_admissao: new Date().toISOString().split('T')[0], 
+    genero: 'Masculino' as 'Masculino' | 'Feminino', 
+    pai_id: '', 
+    faturado: false, 
+    periodo_facturacao: 'Mensal' as 'Mensal' | 'Semestral' | 'Anual', 
+    foto_url: '', 
+    usuario_sistema: false, 
+    senha_temporaria: '',
+    nivelEnsino: 'secundario',
+    nacionalidade: 'Moçambicana',
+    naturalidade_provincia: 'Maputo Cidade',
+    naturalidade_distrito: '',
+    residencia_provincia: 'Maputo Cidade',
+    residencia_distrito: '',
+    residencia_bairro: '',
+    contacto_emergencia_nome: '',
+    contacto_emergencia_telefone: '',
+    ano_lectivo: '2026'
+  }));
   const [turmaForm, setTurmaForm] = useState(() => getSavedFormDraft('draft_turma', { nome: '', escola_id: '', ano_letivo: '2026', nivel: 'Primário', docente_id: '', capacidade_max: 30, classe_escolar_id: '' }));
   const [classeForm, setClasseForm] = useState<any>(() => getSavedFormDraft('draft_classe', { nome: '', turma_id: '', docente_id: '', horario: '', sala: '', data: new Date().toISOString().split('T')[0], dia_semana: getDiaSemanaFromDate(new Date().toISOString().split('T')[0]), codigo: '', escola_id: '', classe_escolar_id: '', professores_responsaveis: [] }));
   const [pautaForm, setPautaForm] = useState<any>(() => getSavedFormDraft('draft_pauta', { escola_id: '', estudante_id: '', classe_id: '', trimestre: '1º Trimestre', nota_prova: '', nota_trabalho: '', nota_participacao: '', nota_exame: '', nota_reavaliacao: '', observacao: '', num_avaliacoes: 3, avaliacao_1: '', avaliacao_2: '', avaliacao_3: '', status_estudante: 'Pendente', status: 'rascunho' }));
@@ -5288,6 +5327,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
     if (normalizedKey === 'dashboard') return true;
 
+    const effectiveRole = (loggedInUser?.tipo || currentUserRole || '').toString().toLowerCase().trim();
+    if (effectiveRole === 'admin' || currentUserRole === 'admin' || effectiveRole === 'administrador' || effectiveRole === 'superadmin') return true;
+    if (normalizedKey === 'analytics' && (effectiveRole === 'director' || effectiveRole === 'diretor' || effectiveRole === 'suporte')) return true;
+
     // Check if the subscription plan allows this module key.
     const planKeyMap: Record<string, string> = {
       provincias: 'provincias',
@@ -5314,15 +5357,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       analytics: 'analytics'
     };
 
-    const planKey = planKeyMap[normalizedKey];
-    if (plan && planKey && plan.modulos_permitidos) {
-      if (!plan.modulos_permitidos.includes(planKey)) {
-        return false;
+    // Analytics is a core module that should not be blocked by omission in legacy plan arrays
+    if (normalizedKey !== 'analytics') {
+      const planKey = planKeyMap[normalizedKey];
+      if (plan && planKey && plan.modulos_permitidos) {
+        if (!plan.modulos_permitidos.includes(planKey)) {
+          return false;
+        }
       }
     }
-
-    const effectiveRole = (loggedInUser?.tipo || currentUserRole || '').toString().toLowerCase().trim();
-    if (effectiveRole === 'admin' || currentUserRole === 'admin' || effectiveRole === 'administrador' || effectiveRole === 'superadmin') return true;
 
     // 1. SPECIFIC USER PERMISSIONS: Checked first so customizations in Users module immediately take effect
     const userModConfig = loggedInUser?.modulo_acessos?.[normalizedKey] || loggedInUser?.modulo_acessos?.[moduleKey];
@@ -5396,6 +5439,34 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     if (featureKey === 'visualizar') return true;
     return false;
   }
+
+  const handleSyncAutomaticProvinces = async () => {
+    setIsSyncingProvinces(true);
+    try {
+      const allCountries = [tenant?.pais_origem || 'Moçambique', ...(tenant?.paises_sucursais || [])];
+      const autoList = getAutomaticProvincesForCountries(allCountries);
+      const batch = writeBatch(db);
+      for (const p of autoList) {
+        const pId = `prov_${currentTenantId}_${p.codigo.toLowerCase()}`;
+        batch.set(doc(db, 'provincias', pId), {
+          id: pId,
+          tenant_id: currentTenantId,
+          nome: p.nome,
+          codigo: p.codigo,
+          pais: p.pais,
+          distritos: p.distritos,
+          created_at: new Date().toISOString()
+        }, { merge: true });
+      }
+      await batch.commit();
+      showSystemNotification(`Divisões de ${allCountries.join(', ')} sincronizadas com sucesso!`, 'sucesso');
+      await loadTenantContext();
+    } catch (err: any) {
+      showSystemNotification(`Erro ao sincronizar divisões: ${err.message}`, 'erro');
+    } finally {
+      setIsSyncingProvinces(false);
+    }
+  };
 
   async function handleTeacherBatchAction(action: string) {
     if (action === 'excluir') {
@@ -6607,6 +6678,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             foto_url: studentForm.foto_url || '',
             usuario_sistema: !!studentForm.usuario_sistema,
             senha_temporaria: studentForm.usuario_sistema ? (studentForm.senha_temporaria || '') : '',
+            nivelEnsino: studentForm.nivelEnsino || 'primario',
+            ano_lectivo: studentForm.ano_lectivo || '2026',
+            dados_nivel: studentForm.dados_nivel || {},
+            ...(studentForm as any).documento_identificacao ? { documento_identificacao: (studentForm as any).documento_identificacao } : {},
+            ...(studentForm as any).morada ? { morada: (studentForm as any).morada } : {},
+            ...(studentForm as any).alergias_condicoes ? { alergias_condicoes: (studentForm as any).alergias_condicoes } : {},
+            ...(studentForm as any).contacto_emergencia ? { contacto_emergencia: (studentForm as any).contacto_emergencia } : {},
+            ...(studentForm as any).telefone_emergencia ? { telefone_emergencia: (studentForm as any).telefone_emergencia } : {},
+            ...(studentForm as any).documentos_entregues ? { documentos_entregues: (studentForm as any).documentos_entregues } : {}
           }, { merge: true });
           if (editingItem.user_id) {
             await setDoc(doc(db, 'users', editingItem.user_id), {
@@ -6665,6 +6745,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             foto_url: studentForm.foto_url || "https://images.unsplash.com/photo-1597589827317-4c6d6e0a90bd?auto=format&fit=crop&q=80&w=120",
             usuario_sistema: !!studentForm.usuario_sistema,
             senha_temporaria: studentPwd,
+            nivelEnsino: studentForm.nivelEnsino || 'primario',
+            ano_lectivo: studentForm.ano_lectivo || '2026',
+            dados_nivel: studentForm.dados_nivel || {},
+            ...(studentForm as any).documento_identificacao ? { documento_identificacao: (studentForm as any).documento_identificacao } : {},
+            ...(studentForm as any).morada ? { morada: (studentForm as any).morada } : {},
+            ...(studentForm as any).alergias_condicoes ? { alergias_condicoes: (studentForm as any).alergias_condicoes } : {},
+            ...(studentForm as any).contacto_emergencia ? { contacto_emergencia: (studentForm as any).contacto_emergencia } : {},
+            ...(studentForm as any).telefone_emergencia ? { telefone_emergencia: (studentForm as any).telefone_emergencia } : {},
+            ...(studentForm as any).documentos_entregues ? { documentos_entregues: (studentForm as any).documentos_entregues } : {}
           } as any;
           await setDoc(doc(db, 'estudantes', estGenId), newEstudante);
           await registerUserInFirebaseAuth(studentEmail, studentPwd);
@@ -9508,55 +9597,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
             {/* TAB: DISTRITOS / PROVINCIAS */}
             {activeTab === 'provincias' && (
-              !hasPermission('provincias') ? renderRestrictedAccess('Distritos / Províncias') : (
-                <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-6">
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-bold text-slate-800">Províncias Educacionais</h3>
-                      {renderModuleRefreshButton('Províncias')}
-                    </div>
-                    {hasPermission('provincias', 'criar') && (
-                      <button 
-                        onClick={() => {
-                          setEditingItem(null);
-                          setProvinciaForm({ nome: '', codigo: '' });
-                          setModalType('provincia');
-                          setIsModalOpen(true);
-                        }}
-                        className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1"
-                      >
-                        <Plus className="w-4 h-4" /> Cadastrar Divisão
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {provinces.map(p => (
-                      <div key={p.id} className="p-4 rounded-xl border border-slate-150 flex items-center justify-between">
-                        <div>
-                          <p className="font-bold text-slate-800">{p.nome}</p>
-                          <p className="text-xs text-slate-400">Código de Referência: {p.codigo}</p>
-                        </div>
-                        <div className="flex gap-1">
-                          {hasPermission('provincias', 'editar') && (
-                            <button 
-                              onClick={() => {
-                                setEditingItem(p);
-                                setProvinciaForm({ nome: p.nome, codigo: p.codigo });
-                                setModalType('provincia');
-                                setIsModalOpen(true);
-                              }}
-                              className="p-1.5 hover:bg-slate-100 text-slate-600 rounded"
-                            >
-                              <Edit className="w-4 h-4" />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )
+              <ProvinciasModule
+                provinces={provinces as any}
+                paisOrigem={tenant?.pais_origem || 'Moçambique'}
+                paisesSucursais={tenant?.paises_sucursais || []}
+                hasPermission={hasPermission}
+                renderRestrictedAccess={renderRestrictedAccess}
+                renderModuleRefreshButton={renderModuleRefreshButton}
+                onSyncAutomaticProvinces={handleSyncAutomaticProvinces}
+                isSyncing={isSyncingProvinces}
+              />
             )}
 
             {/* TAB: SALAS DE AULA */}
@@ -9772,7 +9822,28 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           <button 
                             onClick={() => {
                               setEditingItem(null);
-                              setEscolaForm({ nome: '', provincia_id: provinces[0]?.id || '', endereco: '', telefone: '', email: '', diretor_id: '', diretor_pedagogico_id: '', data_fundacao: '', ativo: true, latitude: '', longitude: '', logo_url: '', controlar_assiduidade: false, tolerancia_manha: '07:15', tolerancia_tarde: '12:15', tolerancia_noite: '18:15' });
+                              setEscolaForm({
+                                nome: '',
+                                tipo_instituicao: 'Escola',
+                                regime_manha: true,
+                                regime_tarde: true,
+                                regime_noite: false,
+                                provincia_id: provinces[0]?.id || '',
+                                endereco: '',
+                                telefone: '',
+                                email: '',
+                                diretor_id: '',
+                                diretor_pedagogico_id: '',
+                                data_fundacao: '',
+                                ativo: true,
+                                latitude: '',
+                                longitude: '',
+                                logo_url: '',
+                                controlar_assiduidade: false,
+                                tolerancia_manha: '07:15',
+                                tolerancia_tarde: '12:15',
+                                tolerancia_noite: '18:15'
+                              });
                               setModalType('escola');
                               setIsModalOpen(true);
                             }}
@@ -9979,6 +10050,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                         setEditingItem(s);
                                         setEscolaForm({
                                           nome: s.nome || '',
+                                          tipo_instituicao: s.tipo_instituicao || 'Escola',
+                                          regime_manha: s.regime_manha ?? true,
+                                          regime_tarde: s.regime_tarde ?? true,
+                                          regime_noite: s.regime_noite ?? false,
                                           provincia_id: s.provincia_id || '',
                                           endereco: s.endereco || '',
                                           telefone: s.telefone || '',
@@ -10083,6 +10158,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                   setEditingItem(s);
                                   setEscolaForm({
                                     nome: s.nome || '',
+                                    tipo_instituicao: s.tipo_instituicao || 'Escola',
+                                    regime_manha: s.regime_manha ?? true,
+                                    regime_tarde: s.regime_tarde ?? true,
+                                    regime_noite: s.regime_noite ?? false,
                                     provincia_id: s.provincia_id || '',
                                     endereco: s.endereco || '',
                                     telefone: s.telefone || '',
@@ -17968,16 +18047,70 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               {/* ESCOLA FORM */}
               {modalType === 'escola' && (
                 <>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">Nome da Escola</label>
-                    <input 
-                      type="text"
-                      required
-                      value={escolaForm.nome}
-                      onChange={(e) => setEscolaForm({ ...escolaForm, nome: e.target.value })}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
-                    />
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Nome da Instituição / Escola *</label>
+                      <input 
+                        type="text"
+                        required
+                        value={escolaForm.nome}
+                        onChange={(e) => setEscolaForm({ ...escolaForm, nome: e.target.value })}
+                        placeholder="Ex: Escola Primária Central ou Faculdade de Tecnologia"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Tipo de Instituição *</label>
+                      <select
+                        value={escolaForm.tipo_instituicao || 'Escola'}
+                        onChange={(e) => setEscolaForm({ ...escolaForm, tipo_instituicao: e.target.value as any })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold text-slate-750 cursor-pointer"
+                      >
+                        <option value="Escola">Escola</option>
+                        <option value="Faculdade">Faculdade</option>
+                        <option value="Instituto">Instituto</option>
+                      </select>
+                    </div>
                   </div>
+
+                  {/* REGIMES DE FUNCIONAMENTO */}
+                  <div className="bg-slate-50 dark:bg-slate-900/50 border border-slate-150 dark:border-slate-800 rounded-xl p-3.5 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-200">Regimes de Funcionamento (Turnos Habilitados)</label>
+                      <span className="text-[10px] text-slate-400 font-mono">Assiduidade por turno</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500">Marque os turnos operacionais desta instituição:</p>
+                    <div className="grid grid-cols-3 gap-3 pt-1">
+                      <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer select-none bg-white dark:bg-slate-850 p-2 rounded-lg border border-slate-200 dark:border-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={escolaForm.regime_manha !== false}
+                          onChange={(e) => setEscolaForm({ ...escolaForm, regime_manha: e.target.checked })}
+                          className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                        />
+                        <span>🌅 Manhã</span>
+                      </label>
+                      <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer select-none bg-white dark:bg-slate-850 p-2 rounded-lg border border-slate-200 dark:border-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={escolaForm.regime_tarde !== false}
+                          onChange={(e) => setEscolaForm({ ...escolaForm, regime_tarde: e.target.checked })}
+                          className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                        />
+                        <span>☀️ Tarde</span>
+                      </label>
+                      <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer select-none bg-white dark:bg-slate-850 p-2 rounded-lg border border-slate-200 dark:border-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={!!escolaForm.regime_noite}
+                          onChange={(e) => setEscolaForm({ ...escolaForm, regime_noite: e.target.checked })}
+                          className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                        />
+                        <span>🌙 Noite</span>
+                      </label>
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-xs font-bold text-slate-500 mb-1">Província / Distrito</label>
@@ -18177,43 +18310,49 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           ⏱️ Tolerância e Horários Limites de Assiduidade
                         </div>
                         <p className="text-[10px] text-indigo-800 dark:text-indigo-400 leading-relaxed">
-                          Defina o horário limite de validação para cada período. Estudantes que tentarem validar a presença após o horário limite serão marcados como faltosos automaticamente.
+                          Defina o horário limite de validação para cada regime habilitado. Estudantes que tentarem validar a presença após o horário limite serão marcados como faltosos automaticamente.
                         </p>
                         
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
-                          <div>
-                            <label className="block text-[10px] font-bold text-indigo-950 dark:text-indigo-200 mb-1">Limite Manhã</label>
-                            <input 
-                              type="time"
-                              required={escolaForm.controlar_assiduidade}
-                              value={escolaForm.tolerancia_manha || '07:15'}
-                              onChange={(e) => setEscolaForm({ ...escolaForm, tolerancia_manha: e.target.value })}
-                              className="w-full bg-white dark:bg-slate-900 border border-indigo-200/60 dark:border-slate-800 rounded-lg p-2 text-xs font-medium text-slate-700 dark:text-slate-200"
-                            />
-                            <span className="text-[9px] text-slate-400 mt-1 block">Período: 07:00 - 11:05</span>
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-indigo-950 dark:text-indigo-200 mb-1">Limite Tarde</label>
-                            <input 
-                              type="time"
-                              required={escolaForm.controlar_assiduidade}
-                              value={escolaForm.tolerancia_tarde || '12:15'}
-                              onChange={(e) => setEscolaForm({ ...escolaForm, tolerancia_tarde: e.target.value })}
-                              className="w-full bg-white dark:bg-slate-900 border border-indigo-200/60 dark:border-slate-800 rounded-lg p-2 text-xs font-medium text-slate-700 dark:text-slate-200"
-                            />
-                            <span className="text-[9px] text-slate-400 mt-1 block">Período: 12:05 - 17:00</span>
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-indigo-950 dark:text-indigo-200 mb-1">Limite Noite</label>
-                            <input 
-                              type="time"
-                              required={escolaForm.controlar_assiduidade}
-                              value={escolaForm.tolerancia_noite || '18:15'}
-                              onChange={(e) => setEscolaForm({ ...escolaForm, tolerancia_noite: e.target.value })}
-                              className="w-full bg-white dark:bg-slate-900 border border-indigo-200/60 dark:border-slate-800 rounded-lg p-2 text-xs font-medium text-slate-700 dark:text-slate-200"
-                            />
-                            <span className="text-[9px] text-slate-400 mt-1 block">Período: 18:05 - 22:45</span>
-                          </div>
+                          {escolaForm.regime_manha !== false && (
+                            <div>
+                              <label className="block text-[10px] font-bold text-indigo-950 dark:text-indigo-200 mb-1">Limite Manhã</label>
+                              <input 
+                                type="time"
+                                required={escolaForm.controlar_assiduidade}
+                                value={escolaForm.tolerancia_manha || '07:15'}
+                                onChange={(e) => setEscolaForm({ ...escolaForm, tolerancia_manha: e.target.value })}
+                                className="w-full bg-white dark:bg-slate-900 border border-indigo-200/60 dark:border-slate-800 rounded-lg p-2 text-xs font-medium text-slate-700 dark:text-slate-200"
+                              />
+                              <span className="text-[9px] text-slate-400 mt-1 block">Período: 07:00 - 11:05</span>
+                            </div>
+                          )}
+                          {escolaForm.regime_tarde !== false && (
+                            <div>
+                              <label className="block text-[10px] font-bold text-indigo-950 dark:text-indigo-200 mb-1">Limite Tarde</label>
+                              <input 
+                                type="time"
+                                required={escolaForm.controlar_assiduidade}
+                                value={escolaForm.tolerancia_tarde || '12:15'}
+                                onChange={(e) => setEscolaForm({ ...escolaForm, tolerancia_tarde: e.target.value })}
+                                className="w-full bg-white dark:bg-slate-900 border border-indigo-200/60 dark:border-slate-800 rounded-lg p-2 text-xs font-medium text-slate-700 dark:text-slate-200"
+                              />
+                              <span className="text-[9px] text-slate-400 mt-1 block">Período: 12:05 - 17:00</span>
+                            </div>
+                          )}
+                          {escolaForm.regime_noite && (
+                            <div>
+                              <label className="block text-[10px] font-bold text-indigo-950 dark:text-indigo-200 mb-1">Limite Noite</label>
+                              <input 
+                                type="time"
+                                required={escolaForm.controlar_assiduidade}
+                                value={escolaForm.tolerancia_noite || '18:15'}
+                                onChange={(e) => setEscolaForm({ ...escolaForm, tolerancia_noite: e.target.value })}
+                                className="w-full bg-white dark:bg-slate-900 border border-indigo-200/60 dark:border-slate-800 rounded-lg p-2 text-xs font-medium text-slate-700 dark:text-slate-200"
+                              />
+                              <span className="text-[9px] text-slate-400 mt-1 block">Período: 18:05 - 22:45</span>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
@@ -18357,274 +18496,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
               {/* STUDENT FORM */}
               {modalType === 'student' && (
-                <>
-                  {/* FOTO DO ESTUDANTE UPLOAD */}
-                  <div className="flex flex-col items-center justify-center border-b border-slate-100 dark:border-slate-800 pb-4 mb-4">
-                    <label className="block text-xs font-bold text-slate-500 mb-2">Fotografia do Estudante</label>
-                    <div className="flex flex-col items-center gap-3">
-                      {studentForm.foto_url ? (
-                        <div className="relative group">
-                          <img 
-                            src={studentForm.foto_url} 
-                            alt="Estudante" 
-                            className="w-24 h-24 object-cover rounded-full border-2 border-indigo-100 shadow-sm"
-                            referrerPolicy="no-referrer"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setStudentForm({ ...studentForm, foto_url: '' })}
-                            className="absolute -top-1 -right-1 bg-rose-500 hover:bg-rose-600 text-white rounded-full p-1.5 shadow-md transition-all cursor-pointer"
-                            title="Remover Fotografia"
-                          >
-                            <span className="text-xs leading-none block font-bold">✕</span>
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="w-24 h-24 bg-slate-50 dark:bg-slate-900 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-full flex flex-col items-center justify-center text-slate-400">
-                          <UserIcon className="w-8 h-8 text-slate-300" />
-                          <span className="text-[9px] mt-1 font-bold uppercase text-slate-400">Sem Foto</span>
-                        </div>
-                      )}
-                      
-                      <div>
-                        <input 
-                          type="file"
-                          accept="image/*"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) {
-                              if (file.size > 2 * 1024 * 1024) {
-                                showSystemNotification("Erro: A fotografia deve ter no máximo 2MB", "erro");
-                                return;
-                              }
-                              const reader = new FileReader();
-                              reader.onload = (event) => {
-                                const base64 = event.target?.result as string;
-                                setStudentForm(prev => ({ ...prev, foto_url: base64 }));
-                              };
-                              reader.readAsDataURL(file);
-                            }
-                          }}
-                          className="hidden"
-                          id="student-photo-file-input"
-                        />
-                        <label 
-                          htmlFor="student-photo-file-input"
-                          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1"
-                        >
-                          <Upload className="w-3 h-3 text-slate-400" /> Upload de Foto
-                        </label>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="col-span-2">
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Nome Completo do Estudante</label>
-                      <input 
-                        type="text"
-                        required
-                        disabled={!!editingItem}
-                        value={studentForm.nome || ''}
-                        onChange={(e) => setStudentForm({ ...studentForm, nome: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
-                      />
-                    </div>
-                  </div>
-                  {!editingItem && (
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Email de Acesso (Opcional)</label>
-                      <input 
-                        type="email"
-                        value={studentForm.email || ''}
-                        onChange={(e) => setStudentForm({ ...studentForm, email: e.target.value })}
-                        placeholder="Gerado automaticamente se deixado em branco"
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
-                      />
-                    </div>
-                  )}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Número de Matrícula</label>
-                      <input 
-                        type="text"
-                        required
-                        value={studentForm.numero_matricula || ''}
-                        onChange={(e) => setStudentForm({ ...studentForm, numero_matricula: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Gênero</label>
-                      <select 
-                        value={studentForm.genero || 'Masculino'}
-                        onChange={(e) => setStudentForm({ ...studentForm, genero: e.target.value as any })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
-                      >
-                        <option value="Masculino">Masculino</option>
-                        <option value="Feminino">Feminino</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Data Nascimento</label>
-                      <input 
-                        type="date"
-                        required
-                        value={studentForm.data_nascimento || ''}
-                        onChange={(e) => setStudentForm({ ...studentForm, data_nascimento: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm text-slate-700"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Data de Admissão</label>
-                      <input 
-                        type="date"
-                        required
-                        value={studentForm.data_admissao || new Date().toISOString().split('T')[0]}
-                        onChange={(e) => setStudentForm({ ...studentForm, data_admissao: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm text-slate-700"
-                      />
-                    </div>
-                    <div>
-                      <SearchableDropdown
-                        label="Responsável pelo Estudante"
-                        placeholder="Selecione o responsável..."
-                        searchPlaceholder="Pesquisar por nome, email ou perfil..."
-                        value={studentForm.pai_id || ''}
-                        options={tenantUsers
-                          .filter((u: any) => {
-                            if (studentForm.escola_id && u.escola_id) {
-                              return u.escola_id === studentForm.escola_id;
-                            }
-                            return true;
-                          })
-                          .map((u: any) => ({
-                            value: u.id,
-                            label: `${u.nome || u.email} (${u.tipo || 'Utilizador'}${u.email ? ` - ${u.email}` : ''})`
-                          }))
-                        }
-                        onChange={(selectedVal) => {
-                          setStudentForm(prev => ({
-                            ...prev,
-                            pai_id: selectedVal
-                          }));
-                        }}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Escola</label>
-                      <select 
-                        value={studentForm.escola_id || ''}
-                        disabled={!!editingItem}
-                        onChange={(e) => {
-                          const schId = e.target.value;
-                          const schoolTurmas = turmas.filter(t => t.escola_id === schId);
-                          setStudentForm({ 
-                            ...studentForm, 
-                            escola_id: schId,
-                            turma_id: schoolTurmas[0]?.id || ''
-                          });
-                        }}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 disabled:opacity-70 disabled:cursor-not-allowed font-bold"
-                        required
-                      >
-                        <option value="">-- Selecionar Escola --</option>
-                        {schools.map(s => (
-                          <option key={s.id} value={s.id}>{s.nome}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Turma Destino</label>
-                      <select 
-                        value={studentForm.turma_id || ''}
-                        disabled={!!editingItem || !studentForm.escola_id}
-                        onChange={(e) => setStudentForm({ ...studentForm, turma_id: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 disabled:opacity-70 disabled:cursor-not-allowed font-bold"
-                        required
-                      >
-                        <option value="">-- Selecionar Turma --</option>
-                        {turmas
-                          .filter(t => t.escola_id === studentForm.escola_id)
-                          .map(t => (
-                            <option key={t.id} value={t.id}>{t.nome}</option>
-                          ))}
-                      </select>
-                    </div>
-                  </div>
-                  {!!editingItem && (
-                    <p className="text-[10px] text-amber-600 font-medium">
-                      ⚠️ A escola e a turma não podem ser alteradas diretamente no cadastro. Use a funcionalidade de <strong>Transferência de Aluno</strong>.
-                    </p>
-                  )}
-
-                  <div className="border-t border-slate-100 dark:border-slate-800 pt-4 grid grid-cols-2 gap-4 items-center">
-                    <div className="flex items-center gap-2">
-                      <input 
-                        type="checkbox"
-                        id="student_faturado_checkbox"
-                        checked={!!studentForm.faturado}
-                        onChange={(e) => setStudentForm({ ...studentForm, faturado: e.target.checked })}
-                        className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer"
-                      />
-                      <label htmlFor="student_faturado_checkbox" className="text-xs font-bold text-slate-600 cursor-pointer select-none">
-                        Aluno Facturado
-                      </label>
-                    </div>
-
-                    {studentForm.faturado && (
-                      <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">Período de Facturação</label>
-                        <select 
-                          value={studentForm.periodo_facturacao || 'Mensal'}
-                          onChange={(e) => setStudentForm({ ...studentForm, periodo_facturacao: e.target.value as any })}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold text-slate-700"
-                        >
-                          <option value="Mensal">Mensal</option>
-                          <option value="Semestral">Semestral</option>
-                          <option value="Anual">Anual</option>
-                        </select>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* USUÁRIO DO SISTEMA (SENHA TEMPORÁRIA) */}
-                  <div className="border-t border-slate-100 dark:border-slate-800 pt-4 mt-2 space-y-4">
-                    <div className="flex items-center gap-2">
-                      <input 
-                        type="checkbox"
-                        id="student_usuario_sistema_checkbox"
-                        checked={!!studentForm.usuario_sistema}
-                        onChange={(e) => setStudentForm({ ...studentForm, usuario_sistema: e.target.checked })}
-                        className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer"
-                      />
-                      <label htmlFor="student_usuario_sistema_checkbox" className="text-xs font-bold text-slate-600 dark:text-slate-300 cursor-pointer select-none">
-                        Usuário do Sistema (Permitir login do Aluno)
-                      </label>
-                    </div>
-
-                    {studentForm.usuario_sistema && (
-                      <div className="bg-slate-50 dark:bg-slate-900 border border-slate-150 dark:border-slate-800 p-4 rounded-xl space-y-3 animate-in fade-in duration-200">
-                        <div>
-                          <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Senha Temporária</label>
-                          <input 
-                            type="text"
-                            required={studentForm.usuario_sistema}
-                            placeholder="Defina uma senha de primeiro acesso"
-                            value={studentForm.senha_temporaria || ''}
-                            onChange={(e) => setStudentForm({ ...studentForm, senha_temporaria: e.target.value })}
-                            className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-2 text-sm text-slate-800 dark:text-slate-100"
-                          />
-                          <p className="text-[10px] text-slate-400 mt-1">O estudante usará esta senha para seu primeiro acesso ao portal.</p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </>
+                <StudentRegistrationForm
+                  formData={studentForm}
+                  setFormData={setStudentForm}
+                  isEditing={!!editingItem}
+                  schools={schools}
+                  turmas={turmas}
+                  tenantUsers={tenantUsers}
+                  allowedLevels={['primario', 'secundario', 'superior', 'profissional']}
+                  onPhotoUploaded={(b64) => setStudentForm(prev => ({ ...prev, foto_url: b64 }))}
+                  onPhotoRemoved={() => setStudentForm(prev => ({ ...prev, foto_url: '' }))}
+                />
               )}
 
               {/* TURMA FORM */}

@@ -82,6 +82,8 @@ import {
 } from '../lib/cookies';
 import { CookiePolicyModal } from './CookiePolicyModal';
 import { SederAdministracaoSection } from './SederAdministracaoSection';
+import { SearchableDropdown } from './SearchableDropdown';
+import { WORLD_COUNTRIES, getAutomaticProvincesForCountries } from '../shared/catalogs';
 
 function getSavedFormDraft<T>(key: string, defaultValue: T): T {
   const saved = getCookie(key);
@@ -103,6 +105,8 @@ interface SuperAdminPortalProps {
 
 interface TenantFormState {
   nome: string;
+  pais_origem?: string;
+  paises_sucursais?: string[];
   email_admin: string;
   telefone: string;
   endereco: string;
@@ -368,6 +372,8 @@ export default function SuperAdminPortal({
 
   const [tenantForm, setTenantForm] = useState<TenantFormState>(() => getSavedFormDraft('draft_tenant_form', {
     nome: '',
+    pais_origem: 'Moçambique',
+    paises_sucursais: [],
     email_admin: '',
     telefone: '',
     endereco: '',
@@ -1233,10 +1239,17 @@ export default function SuperAdminPortal({
 
     setIsSaving(true);
     try {
+      const originCountry = tenantForm.pais_origem?.trim() || 'Moçambique';
+      const branchCountries = (tenantForm.paises_sucursais || []).map(c => c.trim()).filter(Boolean);
+      const allCountries = Array.from(new Set([originCountry, ...branchCountries]));
+
       if (editingTenant) {
         // Update Tenant
         const updatedData = {
           nome: tenantForm.nome,
+          pais_origem: originCountry,
+          paises_sucursais: branchCountries,
+          paises_atuacao: allCountries,
           email_admin: tenantForm.email_admin,
           telefone: tenantForm.telefone,
           endereco: tenantForm.endereco,
@@ -1251,6 +1264,27 @@ export default function SuperAdminPortal({
         try {
           const tenantRef = doc(db, 'tenants', editingTenant.id);
           await updateDoc(tenantRef, updatedData);
+
+          // Auto-seed provinces for updated countries
+          try {
+            const autoProvs = getAutomaticProvincesForCountries(allCountries);
+            for (const p of autoProvs) {
+              const provId = `prov-${p.codigo.toLowerCase()}-${editingTenant.id}`;
+              await setDoc(doc(db, 'provincias', provId), {
+                id: provId,
+                tenant_id: editingTenant.id,
+                nome: p.nome,
+                codigo: p.codigo,
+                pais: p.pais,
+                distritos: p.distritos,
+                is_automatica: true,
+                created_at: new Date().toISOString()
+              }, { merge: true });
+            }
+          } catch (syncErr) {
+            console.warn("Could not sync automatic provinces on edit:", syncErr);
+          }
+
           await auditLog("Editar Conta", "Tenant", editingTenant.id, `Atualizou cadastro e plano para ${tenantForm.nome}`);
           showSystemNotification(`Instituição "${tenantForm.nome}" atualizada com sucesso!`, 'cadastro');
         } catch (dbErr) {
@@ -1286,6 +1320,9 @@ export default function SuperAdminPortal({
         const newTenant: Tenant = {
           id: generatedId,
           nome: tenantForm.nome,
+          pais_origem: originCountry,
+          paises_sucursais: branchCountries,
+          paises_atuacao: allCountries,
           slug,
           plano_id: tenantForm.plano_id || 'plano-basico',
           status: tenantForm.status,
@@ -1351,6 +1388,27 @@ export default function SuperAdminPortal({
           await setDoc(doc(db, 'users', tenantAdminUser.id), tenantAdminUser);
           await registerUserInFirebaseAuth(adminEmailClean, tempPassword);
           await setDoc(doc(db, 'configuracoes', tenantConfig.id), tenantConfig);
+
+          // Auto-seed automatic provinces based on countries of origin and branches
+          try {
+            const autoProvs = getAutomaticProvincesForCountries(allCountries);
+            for (const p of autoProvs) {
+              const provId = `prov-${p.codigo.toLowerCase()}-${generatedId}`;
+              await setDoc(doc(db, 'provincias', provId), {
+                id: provId,
+                tenant_id: generatedId,
+                nome: p.nome,
+                codigo: p.codigo,
+                pais: p.pais,
+                distritos: p.distritos,
+                is_automatica: true,
+                created_at: new Date().toISOString()
+              });
+            }
+          } catch (syncErr) {
+            console.warn("Could not seed automatic provinces for new tenant:", syncErr);
+          }
+
           await auditLog("Criar Conta", "Tenant", generatedId, `Gerado novo tenant ${tenantForm.nome} com slug ${slug}. Senha temporária configurada.`);
           
           const emailRef = await addDoc(collection(db, 'pending_emails'), emailDoc);
@@ -2823,6 +2881,8 @@ export default function SuperAdminPortal({
                         setEditingTenant(null);
                         setTenantForm({
                           nome: '',
+                          pais_origem: 'Moçambique',
+                          paises_sucursais: [],
                           email_admin: '',
                           telefone: '',
                           endereco: '',
@@ -2955,6 +3015,8 @@ export default function SuperAdminPortal({
                                     setEditingTenant(t);
                                     setTenantForm({
                                       nome: t.nome,
+                                      pais_origem: t.pais_origem || 'Moçambique',
+                                      paises_sucursais: t.paises_sucursais || [],
                                       email_admin: t.email_admin,
                                       telefone: t.telefone,
                                       endereco: t.endereco,
@@ -2963,7 +3025,8 @@ export default function SuperAdminPortal({
                                       data_vencimento: t.data_vencimento,
                                       senha_temporaria: '',
                                       idioma_padrao: t.idioma_padrao || 'pt',
-                                      ai_translation_enabled: t.ai_translation_enabled !== false
+                                      ai_translation_enabled: t.ai_translation_enabled !== false,
+                                      logo_url: t.logo_url || ''
                                     });
                                     setIsTenantModalOpen(true);
                                   }}
@@ -3061,6 +3124,8 @@ export default function SuperAdminPortal({
                               setEditingTenant(t);
                               setTenantForm({
                                 nome: t.nome,
+                                pais_origem: t.pais_origem || 'Moçambique',
+                                paises_sucursais: t.paises_sucursais || [],
                                 email_admin: t.email_admin,
                                 telefone: t.telefone,
                                 endereco: t.endereco,
@@ -3069,7 +3134,8 @@ export default function SuperAdminPortal({
                                 data_vencimento: t.data_vencimento,
                                 senha_temporaria: '',
                                 idioma_padrao: t.idioma_padrao || 'pt',
-                                ai_translation_enabled: t.ai_translation_enabled !== false
+                                ai_translation_enabled: t.ai_translation_enabled !== false,
+                                logo_url: t.logo_url || ''
                               });
                               setIsTenantModalOpen(true);
                             }}
@@ -4561,6 +4627,83 @@ export default function SuperAdminPortal({
                       className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 text-xs text-slate-700 dark:text-slate-200 font-mono"
                     />
                   </div>
+                </div>
+              </div>
+
+              {/* PAÍS DE ORIGEM & SUCURSAIS */}
+              <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-xl border border-slate-200 dark:border-slate-700 space-y-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-200 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                    <Globe className="w-3.5 h-3.5 text-indigo-500" />
+                    País de Origem da Instituição *
+                  </label>
+                  <SearchableDropdown
+                    options={WORLD_COUNTRIES.map(c => ({ value: c.name, label: c.name }))}
+                    value={tenantForm.pais_origem || 'Moçambique'}
+                    onChange={(val) => setTenantForm(prev => ({ ...prev, pais_origem: val }))}
+                    placeholder="Selecione o país de origem..."
+                    searchPlaceholder="Pesquisar país..."
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    As províncias e distritos deste país serão cadastrados e sincronizados automaticamente no sistema.
+                  </p>
+                </div>
+
+                {/* Países com Escolas / Sucursais */}
+                <div className="pt-2 border-t border-slate-200/80 dark:border-slate-700/80">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-200 uppercase tracking-wider">
+                      Países com Sucursais ou Escolas
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const current = tenantForm.paises_sucursais || [];
+                        setTenantForm(prev => ({ ...prev, paises_sucursais: [...current, ''] }));
+                      }}
+                      className="bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 text-[11px] font-bold py-1 px-2.5 rounded-lg flex items-center gap-1 cursor-pointer transition-colors"
+                      title="Adicionar outro país"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Adicionar País
+                    </button>
+                  </div>
+
+                  {(tenantForm.paises_sucursais || []).length === 0 ? (
+                    <p className="text-[11px] text-slate-400 italic">
+                      Nenhum outro país configurado. Clique no botão "+" ao lado caso a instituição possua polos ou escolas em outros países.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {(tenantForm.paises_sucursais || []).map((pais, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <div className="flex-1">
+                            <SearchableDropdown
+                              options={WORLD_COUNTRIES.map(c => ({ value: c.name, label: c.name }))}
+                              value={pais}
+                              onChange={(val) => {
+                                const updated = [...(tenantForm.paises_sucursais || [])];
+                                updated[idx] = val;
+                                setTenantForm(prev => ({ ...prev, paises_sucursais: updated }));
+                              }}
+                              placeholder="Selecione o país da sucursal..."
+                              searchPlaceholder="Pesquisar país..."
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = (tenantForm.paises_sucursais || []).filter((_, i) => i !== idx);
+                              setTenantForm(prev => ({ ...prev, paises_sucursais: updated }));
+                            }}
+                            className="p-2 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800 rounded-lg cursor-pointer transition-colors"
+                            title="Remover país"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 
