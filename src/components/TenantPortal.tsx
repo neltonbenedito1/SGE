@@ -47,8 +47,15 @@ import {
   ProcessoDocente,
   AgendamentoExame,
   TipoAgendamentoExame,
-  PlanoAula
+  PlanoAula,
+  Curso,
+  Cadeira,
+  InscricaoCadeira,
+  TipoInstituicao
 } from '../types';
+import { CursosModule } from './tenant/CursosModule';
+import { ProcessoAlunoFicha } from './tenant/ProcessoAlunoFicha';
+import { useInstitutionFeatures, getInstitutionConfig } from '../config/institutionTypes';
 import { 
   sendAppNotification, 
   notifyScheduleCreatedOrUpdated, 
@@ -66,6 +73,7 @@ import { escapeHtml } from '../lib/sanitize';
 import DocenteFormModal from './DocenteFormModal';
 import ProcessoIndividualModule from './ProcessoIndividualModule';
 import { generateCompliantPassword } from '../shared/passwordPolicy';
+import { validateClassSchoolAssociation, getTerminology, getTerm } from '../lib/terminology';
 import { 
   BookOpen, 
   Users, 
@@ -508,51 +516,6 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     }
   };
 
-  const VIEW_KEY_TITLES: Record<string, string> = {
-    dashboard: 'Painel Geral',
-    escolas: 'Gestão de Unidades Escolares',
-    docentes: 'Corpo Docente e Professores',
-    turmas: 'Gestão de Turmas',
-    disciplinas: 'Disciplinas e Carga Horária',
-    estudantes: 'Estudantes e Matrículas',
-    salas: 'Salas de Aula e Espaços',
-    pautas: 'Pautas de Notas e Avaliações',
-    pauta_geral: 'Pauta Geral Consolidada',
-    horarios: 'Horários e Grade Curricular',
-    calendario: 'Calendário e Eventos Escolares',
-    presencas: 'Controle e Validação de Presenças',
-    atividades: 'Actividades e Tarefas Pendentes',
-    biblioteca: 'Biblioteca Digital Transversal',
-    financeiro: 'Gestão Financeira e Pagamentos',
-    relatorios: 'Relatórios e Indicadores Pedagógicos',
-    configuracoes: 'Configurações da Instituição',
-    auditoria: 'Auditoria e Logs do Sistema',
-    backup: 'Segurança e Cópia de Segurança',
-  };
-
-  const getHumanizedModalTitle = (type: string, isEditing: boolean): string => {
-    const map: Record<string, { create: string; edit: string }> = {
-      student: { create: 'Novo Estudante', edit: 'Editar Estudante' },
-      teacher: { create: 'Novo Docente', edit: 'Editar Docente' },
-      turma: { create: 'Nova Turma', edit: 'Editar Turma' },
-      sala: { create: 'Nova Sala de Aula', edit: 'Editar Sala de Aula' },
-      classe: { create: 'Nova Disciplina', edit: 'Editar Disciplina' },
-      classe_escolar: { create: 'Nova Classe Escolar', edit: 'Editar Classe Escolar' },
-      pauta: { create: 'Novo Lançamento de Pauta', edit: 'Editar Pauta de Notas' },
-      user: { create: 'Novo Utilizador', edit: 'Editar Utilizador' },
-      escola: { create: 'Nova Unidade Escolar', edit: 'Editar Unidade Escolar' },
-      provincia: { create: 'Nova Província', edit: 'Editar Província' },
-      horario: { create: 'Novo Horário / Aula', edit: 'Editar Horário / Aula' },
-      feriado: { create: 'Novo Feriado', edit: 'Editar Feriado' },
-      ferias: { create: 'Novo Período de Férias', edit: 'Editar Período de Férias' },
-      agendar_exame: { create: 'Agendar Exame', edit: 'Editar Exame' },
-      processo: { create: 'Novo Dossier / Processo', edit: 'Editar Dossier / Processo' }
-    };
-    const item = map[type.toLowerCase()];
-    if (item) return isEditing ? item.edit : item.create;
-    return isEditing ? `Editar Registo (${type})` : `Novo Registo (${type})`;
-  };
-
   const clampGrade = (val: string | number): number | '' => {
     if (val === '' || val === undefined || val === null) return '';
     const n = Number(val);
@@ -582,6 +545,73 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [rawAtividades, setAtividades] = useState<ActividadePendente[]>([]);
   const [rawExames, setExames] = useState<AgendamentoExame[]>([]);
   const [rawPlanoAulas, setRawPlanoAulas] = useState<PlanoAula[]>([]);
+  const [rawCursos, setCursos] = useState<Curso[]>([]);
+  const [rawCadeiras, setCadeiras] = useState<Cadeira[]>([]);
+  const [rawInscricoes, setInscricoes] = useState<InscricaoCadeira[]>([]);
+  const [selectedProcessoStudent, setSelectedProcessoStudent] = useState<Estudante | null>(null);
+  const [activeClassesSubTab, setActiveClassesSubTab] = useState<'classes' | 'cursos'>('classes');
+  const institutionFeatures = useInstitutionFeatures(tenant?.tipoInstituicao);
+  const institutionConfig = getInstitutionConfig(tenant?.tipoInstituicao);
+  const tipoInst = (tenant?.tipoInstituicao || 'escola').toLowerCase();
+  const isUniversidade = tipoInst === 'universidade';
+  const isInstituto = tipoInst === 'instituto';
+
+  const VIEW_KEY_TITLES: Record<string, string> = {
+    dashboard: 'Painel Geral',
+    escolas: isUniversidade ? 'Instituições Universitárias' : isInstituto ? 'Polos / Institutos' : 'Gestão de Unidades Escolares',
+    docentes: 'Corpo Docente e Professores',
+    turmas: 'Gestão de Turmas',
+    disciplinas: isUniversidade ? 'Cadeiras e Carga Horária' : isInstituto ? 'Módulos e Carga Horária' : 'Disciplinas e Carga Horária',
+    estudantes: 'Estudantes e Matrículas',
+    salas: 'Salas de Aula e Espaços',
+    classes_escolares: isUniversidade ? 'Cursos e Graus Curriculares' : isInstituto ? 'Qualificações Técnicas' : 'Classes e Cursos Curriculares',
+    cursos: isUniversidade ? 'Gestão de Cursos e Cadeiras' : isInstituto ? 'Gestão de Qualificações e Módulos' : 'Gestão de Cursos e Cadeiras',
+    processos: 'Processos Individuais e Dossiers',
+    pautas: 'Pautas de Notas e Avaliações',
+    pauta_geral: 'Pauta Geral Consolidada',
+    horarios: 'Horários e Grade Curricular',
+    calendario: 'Calendário e Eventos Escolares',
+    presencas: 'Controle e Validação de Presenças',
+    atividades: 'Actividades e Tarefas Pendentes',
+    biblioteca: 'Biblioteca Digital Transversal',
+    financeiro: 'Gestão Financeira e Pagamentos',
+    relatorios: 'Relatórios e Indicadores Pedagógicos',
+    configuracoes: 'Configurações da Instituição',
+    auditoria: 'Auditoria e Logs do Sistema',
+    backup: 'Segurança e Cópia de Segurança',
+  };
+
+  const getHumanizedModalTitle = (type: string, isEditing: boolean): string => {
+    const map: Record<string, { create: string; edit: string }> = {
+      student: { create: 'Novo Estudante', edit: 'Editar Estudante' },
+      teacher: { create: 'Novo Docente', edit: 'Editar Docente' },
+      turma: { create: 'Nova Turma', edit: 'Editar Turma' },
+      sala: { create: 'Nova Sala de Aula', edit: 'Editar Sala de Aula' },
+      classe: { 
+        create: isUniversidade ? 'Nova Cadeira' : isInstituto ? 'Novo Módulo' : 'Nova Disciplina', 
+        edit: isUniversidade ? 'Editar Cadeira' : isInstituto ? 'Editar Módulo' : 'Editar Disciplina' 
+      },
+      classe_escolar: { 
+        create: isUniversidade ? 'Novo Curso Universitário' : isInstituto ? 'Nova Qualificação' : 'Nova Classe Escolar', 
+        edit: isUniversidade ? 'Editar Curso Universitário' : isInstituto ? 'Editar Qualificação' : 'Editar Classe Escolar' 
+      },
+      pauta: { create: 'Novo Lançamento de Pauta', edit: 'Editar Pauta de Notas' },
+      user: { create: 'Novo Utilizador', edit: 'Editar Utilizador' },
+      escola: { 
+        create: isUniversidade ? 'Nova Instituição / Faculdade' : isInstituto ? 'Novo Polo / Instituto' : 'Nova Unidade Escolar', 
+        edit: isUniversidade ? 'Editar Instituição / Faculdade' : isInstituto ? 'Editar Polo / Instituto' : 'Editar Unidade Escolar' 
+      },
+      provincia: { create: 'Nova Província', edit: 'Editar Província' },
+      horario: { create: 'Novo Horário / Aula', edit: 'Editar Horário / Aula' },
+      feriado: { create: 'Novo Feriado', edit: 'Editar Feriado' },
+      ferias: { create: 'Novo Período de Férias', edit: 'Editar Período de Férias' },
+      agendar_exame: { create: 'Agendar Exame', edit: 'Editar Exame' },
+      processo: { create: 'Novo Dossier / Processo', edit: 'Editar Dossier / Processo' }
+    };
+    const item = map[type.toLowerCase()];
+    if (item) return isEditing ? item.edit : item.create;
+    return isEditing ? `Editar Registo (${type})` : `Novo Registo (${type})`;
+  };
   const [isDocenteModalOpen, setIsDocenteModalOpen] = useState(false);
   const [editingDocente, setEditingDocente] = useState<Docente | null>(null);
   const [tenantUsers, setTenantUsers] = useState<User[]>([]);
@@ -608,7 +638,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           if (success) count++;
         }
       }
-      showSystemNotification(`✅ Sincronização concluída! ${count} conta(s) cadastradas e ativas no Firebase Auth.`, "sucesso");
+      showSystemNotification(`Sincronização concluída! ${count} conta(s) cadastradas e ativas no Firebase Auth.`, "sucesso");
     } catch (err: any) {
       showSystemNotification(`Erro na sincronização Firebase Auth: ${err?.message || err}`, "erro");
     } finally {
@@ -629,19 +659,19 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     const popup = document.createElement('div');
     popup.id = 'system-toast-container-active';
     let bgClass = 'bg-slate-900 text-white border-slate-700';
-    let icon = '🔔';
+    let icon = '';
     if (type === 'sucesso') {
       bgClass = 'bg-emerald-950 text-emerald-100 border-emerald-500';
-      icon = '✅';
+      icon = '';
     } else if (type === 'erro') {
       bgClass = 'bg-rose-950 text-rose-100 border-rose-500';
-      icon = '❌';
+      icon = '';
     } else if (type === 'config') {
       bgClass = 'bg-indigo-950 text-indigo-100 border-indigo-500';
-      icon = '⚙️';
+      icon = '';
     } else if (type === 'cadastro') {
       bgClass = 'bg-cyan-950 text-cyan-100 border-cyan-500';
-      icon = '📝';
+      icon = '';
     }
 
     popup.className = `fixed bottom-5 right-5 ${bgClass} font-sans font-bold text-xs px-5 py-4 rounded-2xl shadow-2xl border z-[1000000] flex items-center gap-3 animate-in slide-in-from-bottom-5 duration-300 max-w-sm`;
@@ -1810,6 +1840,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             onClick: () => {
               setSelectedProcessStudent(target);
               setIsProcessPanelOpen(true);
+            }
+          },
+          {
+            label: 'Ficha Académica Completa (9 Abas)',
+            icon: <GraduationCap className="w-3.5 h-3.5 text-purple-600" />,
+            onClick: () => {
+              setSelectedProcessoStudent(target);
             }
           },
           {
@@ -3229,7 +3266,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     contacto_emergencia_telefone: '',
     ano_lectivo: '2026'
   }));
-  const [turmaForm, setTurmaForm] = useState(() => getSavedFormDraft('draft_turma', { nome: '', escola_id: '', ano_letivo: '2026', nivel: 'Primário', docente_id: '', capacidade_max: 30, classe_escolar_id: '' }));
+  const [turmaForm, setTurmaForm] = useState<any>(() => getSavedFormDraft('draft_turma', { nome: '', escola_id: '', ano_letivo: '2026', nivel: 'Primário', docente_id: '', capacidade_max: 30, classe_escolar_id: '', curso_id: '', curso_nome: '' }));
   const [classeForm, setClasseForm] = useState<any>(() => getSavedFormDraft('draft_classe', { nome: '', turma_id: '', docente_id: '', horario: '', sala: '', data: new Date().toISOString().split('T')[0], dia_semana: getDiaSemanaFromDate(new Date().toISOString().split('T')[0]), codigo: '', escola_id: '', classe_escolar_id: '', professores_responsaveis: [] }));
   const [pautaForm, setPautaForm] = useState<any>(() => getSavedFormDraft('draft_pauta', { escola_id: '', estudante_id: '', classe_id: '', trimestre: '1º Trimestre', nota_prova: '', nota_trabalho: '', nota_participacao: '', nota_exame: '', nota_reavaliacao: '', observacao: '', num_avaliacoes: 3, avaliacao_1: '', avaliacao_2: '', avaliacao_3: '', status_estudante: 'Pendente', status: 'rascunho' }));
   const [selectedPautaSchoolId, setSelectedPautaSchoolId] = useState('');
@@ -3620,7 +3657,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
-            titulo: '⚠️ Alerta: Dados de Aluno Incompletos',
+            titulo: 'Alerta: Dados de Aluno Incompletos',
             mensagem: `O estudante ${studentName} (${s.numero_matricula}) possui dados obrigatórios em falta: ${fieldsStr}. Favor regularizar.`,
             tipo: 'alerta',
             lido: false,
@@ -3636,7 +3673,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 await addDoc(collection(db, 'notificacoes'), {
                   destinatario_id: docUser.user_id,
                   destinatario_role: 'docente',
-                  titulo: '⚠️ Alerta de Turma: Dados Incompletos',
+                  titulo: 'Alerta de Turma: Dados Incompletos',
                   mensagem: `O estudante ${studentName} (${s.numero_matricula}) da sua turma (${tur.nome}) tem dados obrigatórios em falta: ${fieldsStr}.`,
                   tipo: 'alerta',
                   lido: false,
@@ -3919,7 +3956,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         await addDoc(collection(db, 'notificacoes'), {
           destinatario_id: currentTenantId,
           destinatario_role: 'admin',
-          titulo: '📂 Importação de Escolas Concluída',
+          titulo: 'Importação de Escolas Concluída',
           mensagem: msg,
           tipo: pendingRows.length > 0 ? 'alerta' : 'sucesso',
           lido: false,
@@ -4004,7 +4041,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         await addDoc(collection(db, 'notificacoes'), {
           destinatario_id: currentTenantId,
           destinatario_role: 'admin',
-          titulo: '📂 Importação de Docentes Concluída',
+          titulo: 'Importação de Docentes Concluída',
           mensagem: `Foram cadastrados ${validRows.length} novos professores e contas de utilizador via importação em lote.`,
           tipo: 'sucesso',
           lido: false,
@@ -4082,7 +4119,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         await addDoc(collection(db, 'notificacoes'), {
           destinatario_id: currentTenantId,
           destinatario_role: 'admin',
-          titulo: '📂 Importação de Turmas Concluída',
+          titulo: 'Importação de Turmas Concluída',
           mensagem: `Foram criadas com sucesso ${validRows.length} novas turmas.`,
           tipo: 'sucesso',
           lido: false,
@@ -4171,18 +4208,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           }
 
           if (targetClasseEscolar && escola_id) {
-            const isAssociated = rawClasses.some(cls => 
-              cls.escola_id === escola_id && cls.classe_escolar_id === targetClasseEscolar.id
-            );
-            if (!isAssociated) {
+            const assocResult = validateClassSchoolAssociation({
+              classeEscolarId: targetClasseEscolar.id,
+              escolaId: escola_id,
+              classesEscolares: rawClassesEscolares,
+              disciplinas: rawClasses,
+              isUniversidade
+            });
+            if (!assocResult.isValid) {
               const escObj = schools.find(s => s.id === escola_id);
-              errors.push(`Linha ${rNum}: A classe "${targetClasseEscolar.nome}" não está associada à escola "${escObj?.nome || escolaNome || 'Escola Selecionada'}". A importação do estudante "${nome}" foi bloqueada.`);
-            }
-          } else if (escola_id) {
-            const schoolHasClasses = rawClasses.some(cls => cls.escola_id === escola_id);
-            if (!schoolHasClasses) {
-              const escObj = schools.find(s => s.id === escola_id);
-              errors.push(`Linha ${rNum}: A escola "${escObj?.nome || escolaNome || 'Escola Selecionada'}" não possui nenhuma classe/disciplina associada no sistema. A importação do estudante "${nome}" foi bloqueada.`);
+              errors.push(`Linha ${rNum}: ${assocResult.errorMessage || `A classe "${targetClasseEscolar.nome}" não está associada à escola "${escObj?.nome || escolaNome || 'Escola Selecionada'}".`}`);
             }
           }
 
@@ -4220,7 +4255,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             await addDoc(collection(db, 'notificacoes'), {
               destinatario_id: currentTenantId,
               destinatario_role: 'admin',
-              titulo: '❌ Bloqueio de Importação: Inconsistência de Classe',
+              titulo: 'Bloqueio de Importação: Inconsistência de Classe',
               mensagem: `A importação de estudantes foi bloqueada por conter classes não associadas às respectivas escolas. Erros: ${errors.slice(0, 3).join('; ')}${errors.length > 3 ? '...' : ''}`,
               tipo: 'alerta',
               lido: false,
@@ -4277,7 +4312,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         await addDoc(collection(db, 'notificacoes'), {
           destinatario_id: currentTenantId,
           destinatario_role: 'admin',
-          titulo: '📂 Importação de Estudantes Concluída',
+          titulo: 'Importação de Estudantes Concluída',
           mensagem: `Foram matriculados ${validRows.length} novos estudantes. Alocações automáticas e análises de pendências de dados foram aplicadas.`,
           tipo: 'sucesso',
           lido: false,
@@ -4386,7 +4421,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         await addDoc(collection(db, 'notificacoes'), {
           destinatario_id: currentTenantId,
           destinatario_role: 'admin',
-          titulo: '📂 Importação de Disciplinas Concluída',
+          titulo: 'Importação de Disciplinas Concluída',
           mensagem: `Foram alocadas ${validRows.length} novas aulas de disciplinas na grade curricular escolar.`,
           tipo: 'sucesso',
           lido: false,
@@ -4484,7 +4519,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         await addDoc(collection(db, 'notificacoes'), {
           destinatario_id: currentTenantId,
           destinatario_role: 'admin',
-          titulo: '📂 Lançamento de Notas Importado',
+          titulo: 'Lançamento de Notas Importado',
           mensagem: `Pauta com ${validRows.length} notas de alunos foi processada e importada com sucesso.`,
           tipo: 'sucesso',
           lido: false,
@@ -4563,6 +4598,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         ativSnap,
         prcDocSnap,
         examesSnap,
+        cursosSnap,
+        cadeirasSnap,
+        inscricoesSnap,
       ] = await Promise.all([
         safeQuery(getDocs(query(collection(db, 'provincias'), ...qParams))),
         safeQuery(getDocs(query(collection(db, 'escolas'), ...qParams))),
@@ -4588,6 +4626,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         safeQuery(getDocs(query(collection(db, 'atividades'), ...qParams))),
         safeQuery(getDocs(query(collection(db, 'processos_docentes'), ...qParams))),
         safeQuery(getDocs(query(collection(db, 'exames_agendamentos'), ...qParams))),
+        safeQuery(getDocs(query(collection(db, 'cursos'), ...qParams))),
+        safeQuery(getDocs(query(collection(db, 'cadeiras'), ...qParams))),
+        safeQuery(getDocs(query(collection(db, 'inscricoes_cadeiras'), ...qParams))),
       ]);
 
       const provList: Provincia[] = [];
@@ -4679,6 +4720,24 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       const escClsList: ClasseEscolar[] = [];
       escClsSnap.forEach(d => escClsList.push({ ...d.data() as ClasseEscolar, id: d.id }));
       setClassesEscolares(escClsList);
+
+      const cursosList: Curso[] = [];
+      if (cursosSnap) {
+        cursosSnap.forEach(d => cursosList.push({ ...d.data() as Curso, id: d.id }));
+      }
+      setCursos(cursosList);
+
+      const cadeirasList: Cadeira[] = [];
+      if (cadeirasSnap) {
+        cadeirasSnap.forEach(d => cadeirasList.push({ ...d.data() as Cadeira, id: d.id }));
+      }
+      setCadeiras(cadeirasList);
+
+      const inscricoesList: InscricaoCadeira[] = [];
+      if (inscricoesSnap) {
+        inscricoesSnap.forEach(d => inscricoesList.push({ ...d.data() as InscricaoCadeira, id: d.id }));
+      }
+      setInscricoes(inscricoesList);
 
       if (portalCache.allPlans) {
         setAllPlans(portalCache.allPlans);
@@ -4862,6 +4921,83 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     }
   };
 
+  // Handlers for Cursos & Cadeiras (Regras Gerais - Ensino Superior e Técnico)
+  const handleSaveCurso = async (cursoData: Partial<Curso>) => {
+    try {
+      if (cursoData.id) {
+        const ref = doc(db, 'cursos', cursoData.id);
+        await updateDoc(ref, {
+          ...cursoData,
+          tenant_id: currentTenantId,
+          updated_at: new Date().toISOString()
+        });
+        showSystemNotification("Curso curricular atualizado com sucesso!", "sucesso");
+      } else {
+        const { id, ...dataToSave } = cursoData;
+        await addDoc(collection(db, 'cursos'), {
+          ...dataToSave,
+          tenant_id: currentTenantId,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        });
+        showSystemNotification("Novo curso cadastrado com sucesso!", "sucesso");
+      }
+      await loadTenantContext();
+    } catch (error: any) {
+      console.error("Erro ao salvar curso:", error);
+      showSystemNotification(`Erro ao salvar curso: ${error?.message || error}`, "erro");
+    }
+  };
+
+  const handleDeleteCurso = async (cursoId: string) => {
+    try {
+      await deleteDoc(doc(db, 'cursos', cursoId));
+      showSystemNotification("Curso removido com sucesso!", "sucesso");
+      await loadTenantContext();
+    } catch (error: any) {
+      console.error("Erro ao remover curso:", error);
+      showSystemNotification(`Erro ao remover curso: ${error?.message || error}`, "erro");
+    }
+  };
+
+  const handleSaveCadeira = async (cadeiraData: Partial<Cadeira>) => {
+    try {
+      if (cadeiraData.id) {
+        const ref = doc(db, 'cadeiras', cadeiraData.id);
+        await updateDoc(ref, {
+          ...cadeiraData,
+          tenant_id: currentTenantId,
+          updated_at: new Date().toISOString()
+        });
+        showSystemNotification("Disciplina/Cadeira atualizada com sucesso!", "sucesso");
+      } else {
+        const { id, ...dataToSave } = cadeiraData;
+        await addDoc(collection(db, 'cadeiras'), {
+          ...dataToSave,
+          tenant_id: currentTenantId,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        });
+        showSystemNotification("Disciplina/Cadeira cadastrada com sucesso!", "sucesso");
+      }
+      await loadTenantContext();
+    } catch (error: any) {
+      console.error("Erro ao salvar cadeira:", error);
+      showSystemNotification(`Erro ao salvar disciplina/cadeira: ${error?.message || error}`, "erro");
+    }
+  };
+
+  const handleDeleteCadeira = async (cadeiraId: string) => {
+    try {
+      await deleteDoc(doc(db, 'cadeiras', cadeiraId));
+      showSystemNotification("Disciplina/Cadeira removida com sucesso!", "sucesso");
+      await loadTenantContext();
+    } catch (error: any) {
+      console.error("Erro ao remover cadeira:", error);
+      showSystemNotification(`Erro ao remover disciplina/cadeira: ${error?.message || error}`, "erro");
+    }
+  };
+
   // Handler for Docente Dossier updates
   const handleUpdateDocenteDossier = async (docenteId: string, fields: Partial<Docente>) => {
     try {
@@ -4950,7 +5086,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         // Create notification for Super Admin
         await addDoc(collection(db, 'notificacoes'), {
           destinatario_id: 'super_admin',
-          titulo: '⚠️ Alerta: Falha de Envio SMTP (Fila Pendente)',
+          titulo: 'Alerta: Falha de Envio SMTP (Fila Pendente)',
           mensagem: `A instituição "${tenant?.nome || 'Tenant'}" tentou enviar um e-mail para ${to} ("${subject}"), mas nenhum servidor SMTP ativo foi encontrado. O e-mail foi retido na fila pendente.`,
           tipo: 'alerta',
           lido: false,
@@ -4960,7 +5096,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         // Also add local in-app notification for the tenant admin
         await addDoc(collection(db, 'notificacoes'), {
           destinatario_id: currentTenantId,
-          titulo: '⚠️ Notificação de E-mail Pendente (Sem SMTP)',
+          titulo: 'Notificação de E-mail Pendente (Sem SMTP)',
           mensagem: `O e-mail para ${to} com o assunto "${subject}" foi adicionado à fila pendente pois não há um servidor SMTP ativo configurado.`,
           tipo: 'alerta',
           lido: false,
@@ -4997,7 +5133,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       if (!student.nome_mae) missingFields.push('Nome do Mãe');
       if (!student.morada) missingFields.push('Morada');
 
-      const title = '⚠️ Dossier com Dados em Falta';
+      const title = ' Dossier com Dados em Falta';
       const msg = `O dossier do estudante ${studentName} (Matrícula: ${student.numero_matricula}) está incompleto. Faltam os dados: ${missingFields.join(', ')}. Por favor, atualize o cadastro urgente.`;
       
       // Add notification for the Class Director
@@ -5057,7 +5193,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           // Notify tenant admin too
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
-            titulo: '✅ Fila de E-mails Enviada',
+            titulo: 'Fila de E-mails Enviada',
             mensagem: `O e-mail pendente para ${email.to} foi transmitido com sucesso.`,
             tipo: 'sucesso',
             lido: false,
@@ -5130,6 +5266,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         >
           <FolderOpen className="w-3.5 h-3.5 text-indigo-400" />
           <span className="hidden xl:inline text-[11px]">Processo</span>
+        </button>
+
+        <button
+          onClick={() => {
+            setSelectedProcessoStudent(s);
+          }}
+          className="p-1.5 bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 hover:bg-purple-100 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+          title="Ficha Académica Completa (Processo do Aluno - 9 Abas)"
+        >
+          <GraduationCap className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+          <span className="hidden xl:inline text-[11px]">Ficha Completa</span>
         </button>
 
         {s.cracha_gerado ? (
@@ -5231,7 +5378,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 
                 const popup = document.createElement('div');
                 popup.className = 'fixed bottom-5 right-5 bg-emerald-600 text-white font-bold text-xs px-4 py-3 rounded-xl shadow-2xl border border-emerald-500 z-50 flex items-center gap-2 animate-bounce';
-                popup.innerHTML = `✅ Aluno reativado com sucesso!`;
+                popup.innerHTML = ` Aluno reativado com sucesso!`;
                 document.body.appendChild(popup);
                 setTimeout(() => popup.remove(), 6000);
 
@@ -5564,7 +5711,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               await addDoc(collection(db, 'notificacoes'), {
                 destinatario_id: 'admin',
                 tenant_id: currentTenantId,
-                titulo: '🗑️ Escola Excluída em Massa',
+                titulo: 'Escola Excluída em Massa',
                 mensagem: `A escola "${name}" foi excluída em massa. Alunos e docentes vinculados foram desassociados.`,
                 tipo: 'alerta',
                 lido: false,
@@ -6295,9 +6442,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       const popup = document.createElement('div');
       popup.className = 'fixed bottom-5 right-5 bg-indigo-600 text-white font-bold text-xs px-5 py-4 rounded-xl shadow-2xl border border-indigo-500 z-[1000000] flex flex-col gap-1 max-w-sm animate-bounce';
       popup.innerHTML = `
-        <div class="font-bold flex items-center gap-1.5 text-sm">📅 Agenda Copiada (${periodName})</div>
+        <div class="font-bold flex items-center gap-1.5 text-sm"> Agenda Copiada (${periodName})</div>
         <div class="text-[10px] opacity-90">${copiedCount} aulas geradas para a turma ${turmaName}.</div>
-        ${skippedCount > 0 ? `<div class="text-[9px] text-amber-300">⚠️ ${skippedCount} conflitos de sala evitados.</div>` : ''}
+        ${skippedCount > 0 ? `<div class="text-[9px] text-amber-300"> ${skippedCount} conflitos de sala evitados.</div>` : ''}
       `;
       document.body.appendChild(popup);
       setTimeout(() => popup.remove(), 7000);
@@ -6364,7 +6511,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       }
 
       if (count > 0) {
-        showSystemNotification(`✅ ${count} feriado(s) de ${countryName} cadastrado(s) no calendário!`, "sucesso");
+        showSystemNotification(`${count} feriado(s) de ${countryName} cadastrado(s) no calendário!`, "sucesso");
       } else {
         showSystemNotification(`Feriados de ${countryName} já estão sincronizados no calendário.`, "info");
       }
@@ -6399,7 +6546,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
-            titulo: '🌍 Província Atualizada',
+            titulo: 'Província Atualizada',
             mensagem: `A província "${provinciaForm.nome}" foi atualizada no sistema.`,
             tipo: 'info',
             lido: false,
@@ -6410,7 +6557,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
-            titulo: '🌍 Nova Província Adicionada',
+            titulo: 'Nova Província Adicionada',
             mensagem: `A província "${provinciaForm.nome}" foi cadastrada com sucesso no sistema.`,
             tipo: 'sucesso',
             lido: false,
@@ -6444,7 +6591,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
-            titulo: '🏫 Escola Atualizada',
+            titulo: 'Escola Atualizada',
             mensagem: `Os dados da escola "${escolaForm.nome}" foram alterados.`,
             tipo: 'info',
             lido: false,
@@ -6456,7 +6603,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
-            titulo: '🏫 Nova Escola Adicionada',
+            titulo: 'Nova Escola Adicionada',
             mensagem: `A escola "${escolaForm.nome}" foi cadastrada com sucesso.`,
             tipo: 'sucesso',
             lido: false,
@@ -6475,7 +6622,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             await addDoc(collection(db, 'notificacoes'), {
               destinatario_id: newDirectorId,
               tenant_id: currentTenantId,
-              titulo: '🎓 Nomeação: Diretor de Escola',
+              titulo: 'Nomeação: Diretor de Escola',
               mensagem: `Parabéns! Foi nomeado(a) como Diretor(a) da escola "${escolaForm.nome}". O seu nível de acesso foi atualizado para Directores e Gestores Escolares.`,
               tipo: 'sucesso',
               lido: false,
@@ -6497,7 +6644,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
             // 4. Push browser notification
             sendBrowserNotification({
-              title: '🎓 Nomeação de Cargo: Diretor',
+              title: 'Nomeação de Cargo: Diretor',
               body: `Foi nomeado(a) como Diretor(a) da escola "${escolaForm.nome}".`
             });
 
@@ -6567,7 +6714,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
-            titulo: '⚙️ Cadastro de Docente Atualizado',
+            titulo: 'Cadastro de Docente Atualizado',
             mensagem: `O cadastro do docente "${teacherForm.nome || 'Docente'}" foi atualizado com sucesso.`,
             tipo: 'info',
             lido: false,
@@ -6614,7 +6761,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
-            titulo: '🧑‍🏫 Novo Docente Cadastrado',
+            titulo: '‍ Novo Docente Cadastrado',
             mensagem: `O docente "${teacherForm.nome}" foi cadastrado no sistema (Especialidade: ${teacherForm.especialidade}).`,
             tipo: 'sucesso',
             lido: false,
@@ -6646,21 +6793,44 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           return;
         }
 
-        // Validate if selected class is taught at the school
+        // Validate if selected class is associated with the school using unified validator (Regra 2.2)
         const selectedTurma = turmas.find(t => t.id === studentForm.turma_id);
-        if (selectedTurma) {
-          const selectedClasseEscolarId = selectedTurma.classe_escolar_id;
-          if (selectedClasseEscolarId) {
-            const isClassTaught = classesEscolares.some(
-              cls => cls.id === selectedClasseEscolarId && cls.escola_id === studentForm.escola_id
+        if (selectedTurma && studentForm.escola_id) {
+          const assocResult = validateClassSchoolAssociation({
+            classeEscolarId: selectedTurma.classe_escolar_id,
+            escolaId: studentForm.escola_id,
+            classesEscolares,
+            disciplinas: rawClasses,
+            isUniversidade
+          });
+          if (!assocResult.isValid) {
+            showSystemNotification(
+              assocResult.errorMessage || "Erro: A classe correspondente a esta turma não está associada à escola selecionada.",
+              "erro"
             );
-            if (!isClassTaught) {
-              showSystemNotification(
-                "Erro: O estudante não pode ser matriculado/editado para esta escola porque a classe correspondente a esta turma não é lecionada nesta escola.",
-                "erro"
-              );
-              return;
-            }
+            setIsSaving(false);
+            return;
+          }
+        }
+
+        // Real-time atomic check on turma & regime capacity (Regra 2.3)
+        if (selectedTurma) {
+          const turmaCap = Number((selectedTurma as any).capacidade) || 30;
+          const reg = studentForm.regime || 'Diurno';
+          const activeInTurma = students.filter(s => 
+            s.id !== editingItem?.id && 
+            s.ativo !== false && 
+            s.turma_id === studentForm.turma_id && 
+            (!s.regime || s.regime === reg)
+          ).length;
+
+          if (activeInTurma >= turmaCap) {
+            showSystemNotification(
+              `Erro: Lotação esgotada para a turma "${selectedTurma.nome}" no regime ${reg} (${activeInTurma}/${turmaCap} vagas ocupadas). Selecione outro regime ou outra turma com vagas livres.`,
+              "erro"
+            );
+            setIsSaving(false);
+            return;
           }
         }
 
@@ -6668,6 +6838,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           await setDoc(doc(db, 'estudantes', editingItem.id), {
             escola_id: studentForm.escola_id || '',
             turma_id: studentForm.turma_id || '',
+            regime: studentForm.regime || 'Diurno',
             numero_matricula: studentForm.numero_matricula || '',
             data_nascimento: studentForm.data_nascimento || '',
             data_admissao: studentForm.data_admissao || new Date().toISOString().split('T')[0],
@@ -6697,7 +6868,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
-            titulo: '✏️ Cadastro de Estudante Atualizado',
+            titulo: 'Cadastro de Estudante Atualizado',
             mensagem: `Os dados de matrícula do estudante com ID "${editingItem.id}" foram atualizados com sucesso.`,
             tipo: 'info',
             lido: false,
@@ -6736,6 +6907,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             data_admissao: studentForm.data_admissao || new Date().toISOString().split('T')[0],
             genero: studentForm.genero,
             turma_id: studentForm.turma_id,
+            regime: studentForm.regime || 'Diurno',
             pai_id: studentForm.pai_id,
             faturado: !!studentForm.faturado,
             periodo_facturacao: studentForm.faturado ? (studentForm.periodo_facturacao || 'Mensal') : null,
@@ -6747,6 +6919,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             senha_temporaria: studentPwd,
             nivelEnsino: studentForm.nivelEnsino || 'primario',
             ano_lectivo: studentForm.ano_lectivo || '2026',
+            curso_id: studentForm.curso_id || '',
+            ano_curricular: 1,
             dados_nivel: studentForm.dados_nivel || {},
             ...(studentForm as any).documento_identificacao ? { documento_identificacao: (studentForm as any).documento_identificacao } : {},
             ...(studentForm as any).morada ? { morada: (studentForm as any).morada } : {},
@@ -6758,10 +6932,39 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           await setDoc(doc(db, 'estudantes', estGenId), newEstudante);
           await registerUserInFirebaseAuth(studentEmail, studentPwd);
 
+          // Auto-inscrição obrigatória nas disciplinas do 1º período (Regra 8.3)
+          if (studentForm.curso_id) {
+            const courseCadeiras = rawCadeiras.filter(c => c.cursoId === studentForm.curso_id);
+            const firstPeriodName = courseCadeiras[0]?.periodo_lectivo || '1º Semestre';
+            const firstPeriodCadeiras = courseCadeiras.filter(c => 
+              c.periodo_lectivo === firstPeriodName && c.tipo_disciplina === 'obrigatoria'
+            );
+
+            for (const cad of firstPeriodCadeiras) {
+              const inscId = "insc-" + Math.random().toString(36).substr(2, 9);
+              await setDoc(doc(db, 'inscricoes_cadeiras', inscId), {
+                id: inscId,
+                tenant_id: currentTenantId,
+                estudante_id: estGenId,
+                institutionId: studentForm.escola_id,
+                cursoId: studentForm.curso_id,
+                cadeira_id: cad.id,
+                cadeira_nome: cad.nome,
+                cadeira_codigo: cad.codigo,
+                ano_lectivo: studentForm.ano_lectivo || '2026',
+                periodo_lectivo: cad.periodo_lectivo,
+                ano_curricular: cad.ano_curricular || 1,
+                estado: 'Em curso',
+                creditos_concluidos: 0,
+                data_inscricao: new Date().toISOString()
+              });
+            }
+          }
+
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
-            titulo: '🎓 Novo Estudante Matriculado',
+            titulo: 'Novo Estudante Matriculado',
             mensagem: `O estudante "${studentForm.nome}" foi matriculado com sucesso (Nº Matrícula: ${studentForm.numero_matricula}).`,
             tipo: 'sucesso',
             lido: false,
@@ -6771,7 +6974,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: userGenId,
             destinatario_role: 'estudante',
-            titulo: '🎉 Bem-vindo ao Portal do Estudante!',
+            titulo: 'Bem-vindo ao Portal do Estudante!',
             mensagem: `Olá ${studentForm.nome}! O seu acesso ao Portal do Estudante está pronto. Nº Matrícula: ${studentForm.numero_matricula}.`,
             tipo: 'sucesso',
             lido: false,
@@ -6811,17 +7014,24 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           }
         }
 
-        // Requirement 3: Append class name as suffix to turma name
+        // Append class or year name as suffix to turma name
         const selectedCE = classesEscolares.find(ce => ce.id === turmaForm.classe_escolar_id);
+        const selectedCurso = rawCursos.find(c => c.id === turmaForm.curso_id);
         let finalTurmaName = turmaForm.nome.trim();
-        if (selectedCE) {
+        const yearSuffix = selectedCE ? selectedCE.nome : (turmaForm.classe_escolar_id?.includes('Ano') ? turmaForm.classe_escolar_id : '');
+        if (yearSuffix && !finalTurmaName.includes(yearSuffix)) {
           const cleanBaseName = finalTurmaName.split(' - ')[0].trim();
-          finalTurmaName = `${cleanBaseName} - ${selectedCE.nome}`;
+          finalTurmaName = `${cleanBaseName} - ${yearSuffix}`;
         }
+
+        const assignedNivel = isUniversidade ? 'Superior' : isInstituto ? 'Profissional' : (turmaForm.nivel || 'Secundário');
 
         const updatedTurmaForm = {
           ...turmaForm,
-          nome: finalTurmaName
+          nivel: assignedNivel,
+          nome: finalTurmaName,
+          curso_id: turmaForm.curso_id || '',
+          curso_nome: selectedCurso?.nome || ''
         };
 
         const dupTurma = turmas.find(t => 
@@ -6840,7 +7050,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
-            titulo: '⚙️ Turma Atualizada',
+            titulo: 'Turma Atualizada',
             mensagem: `A turma "${finalTurmaName}" foi modificada com sucesso.`,
             tipo: 'info',
             lido: false,
@@ -6852,7 +7062,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
-            titulo: '🏫 Nova Turma Criada',
+            titulo: 'Nova Turma Criada',
             mensagem: `A turma "${finalTurmaName}" foi criada com sucesso no sistema.`,
             tipo: 'sucesso',
             lido: false,
@@ -6863,12 +7073,18 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       
       else if (modalType === 'classe') {
         if (!classeForm.nome || !classeForm.nome.trim()) {
-          showSystemNotification("Erro: Informe o nome da disciplina!", "erro");
+          showSystemNotification(isUniversidade ? "Erro: Informe o nome da cadeira!" : "Erro: Informe o nome da disciplina!", "erro");
           setIsSaving(false);
           return;
         }
 
-        if (!classeForm.classes_associadas_ids || classeForm.classes_associadas_ids.length === 0) {
+        if (isUniversidade && !classeForm.curso_id) {
+          showSystemNotification("Erro: Selecione o curso universitário associado à cadeira!", "erro");
+          setIsSaving(false);
+          return;
+        }
+
+        if (!isUniversidade && (!classeForm.classes_associadas_ids || classeForm.classes_associadas_ids.length === 0)) {
           showSystemNotification("Erro: Selecione pelo menos uma classe associada!", "erro");
           setIsSaving(false);
           return;
@@ -6888,17 +7104,19 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           return;
         }
 
-        // Requirement 3: Associated class MUST appear as a suffix on the discipline name
+        // Associated class or course details
         const selectedClassNames = classesEscolares
           .filter(ce => (classeForm.classes_associadas_ids || []).includes(ce.id))
           .map(ce => ce.nome);
+
+        const selectedCursoObj = rawCursos.find(c => c.id === classeForm.curso_id);
 
         const cleanBaseName = classeForm.nome.split(' - ')[0].trim();
         const finalDisciplineName = selectedClassNames.length > 0
           ? `${cleanBaseName} - ${selectedClassNames.join(', ')}`
           : cleanBaseName;
 
-        const generatedCode = classeForm.codigo || ('DISC-' + Math.random().toString(36).substring(2, 8).toUpperCase());
+        const generatedCode = classeForm.codigo || ((isUniversidade ? 'CAD-' : 'DISC-') + Math.random().toString(36).substring(2, 8).toUpperCase());
         const primaryClasseEscolarId = (classeForm.classes_associadas_ids || [])[0] || '';
         const primaryDocenteId = selectedTeacherIds[0] || '';
 
@@ -6912,7 +7130,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           classes_associadas_ids: classeForm.classes_associadas_ids || [],
           classe_escolar_id: primaryClasseEscolarId,
           docente_id: primaryDocenteId,
-          escola_id: targetSchoolId
+          escola_id: targetSchoolId,
+          curso_id: classeForm.curso_id || '',
+          curso_nome: selectedCursoObj?.nome || '',
+          ano_curricular: classeForm.ano_curricular || '1º Ano',
+          periodo_lectivo: classeForm.periodo_lectivo || '1º Semestre'
         };
         delete (disciplinePayload as any).data;
         delete (disciplinePayload as any).horario;
@@ -6926,18 +7148,56 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           (c.nome?.trim().toLowerCase() === finalDisciplineName.toLowerCase() || (c.codigo && generatedCode && c.codigo.toUpperCase() === generatedCode.toUpperCase()))
         );
         if (dupClass) {
-          showSystemNotification(`Erro: Já existe uma disciplina cadastrada com o mesmo nome ou código ("${finalDisciplineName}") nesta escola.`, "erro");
+          showSystemNotification(`Erro: Já existe uma ${isUniversidade ? 'cadeira' : 'disciplina'} cadastrada com o mesmo nome ou código ("${finalDisciplineName}") nesta escola.`, "erro");
           setIsSaving(false);
           return;
         }
 
         if (editingItem) {
           await updateDoc(doc(db, 'classes', editingItem.id), disciplinePayload);
+
+          // Sincronizar com coleção 'cadeiras' se vinculado a curso
+          if (classeForm.curso_id) {
+            try {
+              const numYear = Number(String(classeForm.ano_curricular || '1').replace(/\D/g, '')) || 1;
+              const existingCad = rawCadeiras.find(cd => cd.codigo === generatedCode || cd.id === editingItem.id);
+              if (existingCad) {
+                await updateDoc(doc(db, 'cadeiras', existingCad.id), {
+                  nome: finalDisciplineName,
+                  codigo: generatedCode,
+                  cursoId: classeForm.curso_id,
+                  ano_curricular: numYear,
+                  periodo_lectivo: classeForm.periodo_lectivo || '1º Semestre',
+                  institutionId: targetSchoolId,
+                  tenant_id: currentTenantId,
+                  updated_at: new Date().toISOString()
+                });
+              } else {
+                await addDoc(collection(db, 'cadeiras'), {
+                  nome: finalDisciplineName,
+                  codigo: generatedCode,
+                  cursoId: classeForm.curso_id,
+                  ano_curricular: numYear,
+                  periodo_lectivo: classeForm.periodo_lectivo || '1º Semestre',
+                  regime_periodo: 'semestre',
+                  tipo_disciplina: 'obrigatoria',
+                  creditos_ects: 6,
+                  institutionId: targetSchoolId,
+                  tenant_id: currentTenantId,
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString()
+                });
+              }
+            } catch (syncErr) {
+              console.warn("Erro ao sincronizar cadeira:", syncErr);
+            }
+          }
+
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
-            titulo: '📚 Disciplina Atualizada',
-            mensagem: `A disciplina "${finalDisciplineName}" foi atualizada com sucesso.`,
+            titulo: isUniversidade ? ' Cadeira Atualizada' : ' Disciplina Atualizada',
+            mensagem: `A ${isUniversidade ? 'cadeira' : 'disciplina'} "${finalDisciplineName}" foi atualizada com sucesso.`,
             tipo: 'info',
             lido: false,
             created_at: new Date().toISOString()
@@ -6949,11 +7209,35 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             status_aprovacao: 'aprovado',
             ...qParams 
           });
+
+          // Sincronizar com coleção 'cadeiras' se vinculado a curso
+          if (classeForm.curso_id) {
+            try {
+              const numYear = Number(String(classeForm.ano_curricular || '1').replace(/\D/g, '')) || 1;
+              await addDoc(collection(db, 'cadeiras'), {
+                nome: finalDisciplineName,
+                codigo: generatedCode,
+                cursoId: classeForm.curso_id,
+                ano_curricular: numYear,
+                periodo_lectivo: classeForm.periodo_lectivo || '1º Semestre',
+                regime_periodo: 'semestre',
+                tipo_disciplina: 'obrigatoria',
+                creditos_ects: 6,
+                institutionId: targetSchoolId,
+                tenant_id: currentTenantId,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              });
+            } catch (syncErr) {
+              console.warn("Erro ao sincronizar cadeira:", syncErr);
+            }
+          }
+
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
-            titulo: '📚 Nova Disciplina Cadastrada',
-            mensagem: `A disciplina "${finalDisciplineName}" foi cadastrada com sucesso.`,
+            titulo: isUniversidade ? ' Nova Cadeira Cadastrada' : ' Nova Disciplina Cadastrada',
+            mensagem: `A ${isUniversidade ? 'cadeira' : 'disciplina'} "${finalDisciplineName}" foi cadastrada com sucesso.`,
             tipo: 'sucesso',
             lido: false,
             created_at: new Date().toISOString()
@@ -6978,7 +7262,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'todos',
-            titulo: '🏝️ Período de Férias Alterado',
+            titulo: 'Período de Férias Alterado',
             mensagem: `Aviso: O período de férias "${feriasForm.descricao}" foi reagendado de ${new Date(feriasForm.data_inicio).toLocaleDateString('pt-PT')} a ${new Date(feriasForm.data_fim).toLocaleDateString('pt-PT')}.`,
             tipo: 'sistema',
             lido: false,
@@ -6989,7 +7273,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'todos',
-            titulo: '🏝️ Novo Período de Férias Cadastrado',
+            titulo: 'Novo Período de Férias Cadastrado',
             mensagem: `Aviso geral: Período de Férias "${feriasForm.descricao}" agendado de ${new Date(feriasForm.data_inicio).toLocaleDateString('pt-PT')} a ${new Date(feriasForm.data_fim).toLocaleDateString('pt-PT')}.`,
             tipo: 'sistema',
             lido: false,
@@ -7303,7 +7587,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
-            titulo: '⚙️ Classe Acadêmica Atualizada',
+            titulo: 'Classe Acadêmica Atualizada',
             mensagem: `A classe acadêmica "${classeEscolarForm.nome}" foi alterada no sistema.`,
             tipo: 'info',
             lido: false,
@@ -7315,7 +7599,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
-            titulo: '🏫 Nova Classe Acadêmica Criada',
+            titulo: 'Nova Classe Acadêmica Criada',
             mensagem: `A classe acadêmica "${classeEscolarForm.nome}" foi registrada com sucesso.`,
             tipo: 'sucesso',
             lido: false,
@@ -7351,7 +7635,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
-            titulo: '🚪 Sala de Aula Atualizada',
+            titulo: 'Sala de Aula Atualizada',
             mensagem: `Os dados da sala "${salaForm.nome}" foram alterados.`,
             tipo: 'info',
             lido: false,
@@ -7362,7 +7646,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
-            titulo: '🚪 Nova Sala de Aula Registrada',
+            titulo: 'Nova Sala de Aula Registrada',
             mensagem: `A sala "${salaForm.nome}" (Capacidade: ${salaForm.capacidade}) foi criada com sucesso.`,
             tipo: 'sucesso',
             lido: false,
@@ -7541,7 +7825,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
             estudante_id: payload.estudante_id,
-            titulo: '⚙️ Dossier/Processo Retificado',
+            titulo: 'Dossier/Processo Retificado',
             mensagem: `Os dados do processo "${payload.tipo}" do estudante ${studName} foram retificados.`,
             tipo: 'info',
             modulo: 'processos'
@@ -7553,7 +7837,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               destinatario_id: targetStud.user_id || targetStud.id,
               destinatario_role: 'estudante',
               estudante_id: targetStud.id,
-              titulo: '📂 Atualização no seu Dossier Escolar',
+              titulo: 'Atualização no seu Dossier Escolar',
               mensagem: `O seu processo "${payload.tipo}" foi retificado pela secretaria.`,
               tipo: 'info',
               modulo: 'processos'
@@ -7567,7 +7851,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               destinatario_role: 'pai',
               destinatario_email: (targetStud as any).pai_email || '',
               estudante_id: targetStud?.id,
-              titulo: `📂 Atualização de Dossier (${studName})`,
+              titulo: ` Atualização de Dossier (${studName})`,
               mensagem: `O processo "${payload.tipo}" referente a ${studName} foi atualizado pela escola.`,
               tipo: 'info',
               modulo: 'processos'
@@ -7585,7 +7869,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
             estudante_id: payload.estudante_id,
-            titulo: '📂 Novo Dossier/Processo Registrado',
+            titulo: 'Novo Dossier/Processo Registrado',
             mensagem: `Registrado processo "${payload.tipo}" para o estudante ${studName}.`,
             tipo: 'sucesso',
             modulo: 'processos'
@@ -7597,7 +7881,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               destinatario_id: targetStud.user_id || targetStud.id,
               destinatario_role: 'estudante',
               estudante_id: targetStud.id,
-              titulo: '📂 Nova Atualização no seu Dossier',
+              titulo: 'Nova Atualização no seu Dossier',
               mensagem: `Foi adicionado um novo registo ao seu dossier escolar: "${payload.tipo}".`,
               tipo: 'info',
               modulo: 'processos'
@@ -7611,7 +7895,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               destinatario_role: 'pai',
               destinatario_email: (targetStud as any).pai_email || '',
               estudante_id: targetStud?.id,
-              titulo: `📂 Novo Registo de Dossier: ${studName}`,
+              titulo: ` Novo Registo de Dossier: ${studName}`,
               mensagem: `Informamos que foi adicionado o registo "${payload.tipo}" ao processo escolar de ${studName}.`,
               tipo: 'info',
               modulo: 'processos'
@@ -7747,7 +8031,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       await addDoc(collection(db, 'notificacoes'), {
         destinatario_id: 'admin',
         tenant_id: currentTenantId,
-        titulo: '🗑️ Escola Excluída (Ação Crítica)',
+        titulo: 'Escola Excluída (Ação Crítica)',
         mensagem: notificationMessage,
         tipo: 'alerta',
         lido: false,
@@ -8159,15 +8443,33 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                 {showEstrutura && renderGroupHeader('Estrutura')}
                 {hasPermission('provincias') && renderMenuItem('provincias', 'Distritos / Províncias', <Map className="w-4.5 h-4.5" />)}
-                {hasPermission('escolas') && renderMenuItem('escolas', `Escolas (${schools.length})`, <School className="w-4.5 h-4.5" />)}
+                {hasPermission('escolas') && renderMenuItem(
+                  'escolas', 
+                  isUniversidade ? `Instituições Universitárias (${schools.length})` : isInstituto ? `Polos / Institutos (${schools.length})` : `Escolas (${schools.length})`, 
+                  <School className="w-4.5 h-4.5" />
+                )}
                 {hasPermission('salas') && renderMenuItem('salas', `Salas de Aula (${rawSalas.length})`, <DoorOpen className="w-4.5 h-4.5" />)}
 
                 {showAcademico && renderGroupHeader('Académico')}
                 {hasPermission('docentes') && renderMenuItem('docentes', 'Docentes', <Users className="w-4.5 h-4.5" />)}
                 {hasPermission('estudantes') && renderMenuItem('estudantes', 'Estudantes', <GraduationCap className="w-4.5 h-4.5" />)}
                 {hasPermission('turmas') && renderMenuItem('turmas', 'Turmas', <BookOpen className="w-4.5 h-4.5" />)}
-                {hasPermission('disciplinas') && renderMenuItem('disciplinas', `Disciplinas (${classes.filter(isBaseDiscipline).length})`, <BookMarked className="w-4.5 h-4.5" />)}
-                {hasPermission('classes') && renderMenuItem('classes_escolares', `Classes (${classesEscolares.length})`, <List className="w-4.5 h-4.5" />)}
+                {hasPermission('disciplinas') && renderMenuItem(
+                  'disciplinas', 
+                  isUniversidade ? `Cadeiras (${classes.filter(isBaseDiscipline).length})` : isInstituto ? `Módulos (${classes.filter(isBaseDiscipline).length})` : `Disciplinas (${classes.filter(isBaseDiscipline).length})`, 
+                  <BookMarked className="w-4.5 h-4.5" />
+                )}
+                {hasPermission('classes') && renderMenuItem(
+                  'classes_escolares',
+                  institutionFeatures.allowsCursos && !institutionFeatures.allowsClasses
+                    ? `Cursos (${rawCursos.length})`
+                    : institutionFeatures.allowsCursos && institutionFeatures.allowsClasses
+                      ? 'Classes / Cursos'
+                      : `Classes (${classesEscolares.length})`,
+                  institutionFeatures.allowsCursos && !institutionFeatures.allowsClasses
+                    ? <BookOpen className="w-4.5 h-4.5" />
+                    : <List className="w-4.5 h-4.5" />
+                )}
                 {hasPermission('calendario') && renderMenuItem('calendario', 'Calendário & Horários', <Calendar className="w-4.5 h-4.5" />)}
                 {hasPermission('plano_aulas') && renderMenuItem('plano_aulas', 'Plano de Aulas', <BookOpenCheck className="w-4.5 h-4.5" />)}
                 {hasPermission('pauta_geral') && renderMenuItem('pauta_geral', 'Pauta Geral', <Award className="w-4.5 h-4.5" />)}
@@ -8255,7 +8557,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             <div className="hidden md:flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
               <div>
                 <h1 className="text-2xl font-extrabold font-sans text-slate-900 dark:text-white uppercase tracking-wider">
-                  {VIEW_KEY_TITLES[activeTab.toLowerCase()] || activeTab}
+                  {activeTab === 'classes_escolares'
+                    ? (institutionFeatures.allowsCursos && !institutionFeatures.allowsClasses
+                        ? 'Cursos e Cadeiras Curriculares'
+                        : institutionFeatures.allowsCursos && institutionFeatures.allowsClasses
+                          ? 'Classes e Cursos Curriculares'
+                          : 'Classes Escolares (Anos Académicos)')
+                    : (VIEW_KEY_TITLES[activeTab.toLowerCase()] || activeTab)}
                 </h1>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-semibold">
                   Ambiente isolado e seguro da instituição escolar.
@@ -8385,7 +8693,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         Painel do Estudante
                       </span>
                       <h2 className="text-2xl md:text-3xl font-black tracking-tight">
-                        Olá, {loggedInUserName}! 👋
+                        Olá, {loggedInUserName}! 
                       </h2>
                     </div>
                     <div className="bg-white/10 backdrop-blur-md border border-white/15 p-4 rounded-2xl shrink-0 space-y-1">
@@ -8590,7 +8898,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       Painel do Docente
                     </span>
                     <h2 className="text-2xl md:text-3xl font-black tracking-tight">
-                      Olá, Prof. {loggedInUserName}! 🧑‍🏫
+                      Olá, Prof. {loggedInUserName}! ‍
                     </h2>
                     <p className="text-slate-300 text-sm max-w-xl">
                       Seu portal de docência integrado. Gerencie suas turmas, lance notas (Pautas) de seus alunos e acompanhe seu calendário acadêmico.
@@ -9118,6 +9426,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     assiduidadeLogs={assiduidadeLogs}
                     processosAluno={rawProcessos}
                     planoAulas={rawPlanoAulas}
+                    tipoInstituicao={tenant?.tipoInstituicao || 'escola'}
+                    cursos={rawCursos}
+                    cadeiras={rawCadeiras}
+                    salas={rawSalas}
+                    tenantConfig={config}
                     tenantId={tenant?.id}
                   />
                 </div>
@@ -9157,7 +9470,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   </div>
                   <div className="relative z-10 space-y-2">
                     <div className="inline-flex items-center gap-2 bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-3 py-1 rounded-full text-xs font-bold font-mono tracking-wider">
-                      🛡️ PAINEL DO ADMINISTRADOR
+                       PAINEL DO ADMINISTRADOR
                     </div>
                     <h3 className="font-sans font-extrabold text-3xl tracking-tight">Análise Administrativa & Integridade</h3>
                     <p className="text-sm text-slate-300 max-w-xl">
@@ -9645,7 +9958,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               {s.tipo}
                             </span>
                             <span className="text-xs text-slate-400 font-medium">
-                              👥 Cap: {s.capacidade} alunos
+                               Cap: {s.capacidade} alunos
                             </span>
                           </div>
                           <p className="font-bold text-slate-800 text-base">{s.nome}</p>
@@ -9720,7 +10033,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       <div className="flex items-center gap-2">
                         <AlertTriangle className="w-5 h-5 text-amber-600 animate-pulse" />
                         <div>
-                          <h4 className="font-extrabold text-amber-800 text-sm">⚠️ Importações Pendentes ({pendingImports.length})</h4>
+                          <h4 className="font-extrabold text-amber-800 text-sm"> Importações Pendentes ({pendingImports.length})</h4>
                           <p className="text-xs text-amber-600">Estas escolas foram importadas, mas a província informada não está cadastrada no sistema. Cadastre-a para aprovar.</p>
                         </div>
                       </div>
@@ -9736,9 +10049,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               <span className="bg-amber-100 text-amber-800 text-[9px] font-bold px-2 py-0.5 rounded-full">Pendente</span>
                             </div>
                             <div className="text-[10px] text-slate-500 space-y-1">
-                              {imp.latitude && <p>🌐 Coordenadas: {imp.latitude}, {imp.longitude}</p>}
-                              {imp.telefone && <p>📞 Telefone: {imp.telefone}</p>}
-                              {imp.email && <p>✉️ Email: {imp.email}</p>}
+                              {imp.latitude && <p> Coordenadas: {imp.latitude}, {imp.longitude}</p>}
+                              {imp.telefone && <p> Telefone: {imp.telefone}</p>}
+                              {imp.email && <p> Email: {imp.email}</p>}
                             </div>
                             <div className="flex gap-2 pt-1 border-t border-slate-100">
                               <button
@@ -10008,7 +10321,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     />
                                   ) : (
                                     <div className="w-8 h-8 bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 rounded-lg flex items-center justify-center text-[10px] font-bold text-slate-400 font-mono">
-                                      🏫
+                                      
                                     </div>
                                   )}
                                   <div className="font-bold text-slate-900 dark:text-white">{s.nome}</div>
@@ -10020,11 +10333,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 </span>
                               </td>
                               <td className="px-6 py-4 space-y-0.5 text-xs">
-                                <div className="text-slate-600 dark:text-slate-300 font-medium">📞 {s.telefone}</div>
-                                <div className="text-slate-400 dark:text-slate-500">✉️ {s.email}</div>
+                                <div className="text-slate-600 dark:text-slate-300 font-medium"> {s.telefone}</div>
+                                <div className="text-slate-400 dark:text-slate-500"> {s.email}</div>
                               </td>
                               <td className="px-6 py-4 text-xs max-w-xs truncate text-slate-500 dark:text-slate-400" title={s.endereco}>
-                                📍 {s.endereco}
+                                 {s.endereco}
                               </td>
                               <td className="px-6 py-4">
                                 <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${s.ativo ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
@@ -10136,9 +10449,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           </div>
 
                           <div className="text-xs text-slate-500 dark:text-slate-400 space-y-1 bg-slate-50 dark:bg-slate-950/40 p-2.5 rounded-lg border border-slate-100 dark:border-slate-800/55">
-                            <p>📞 {s.telefone}</p>
-                            <p>✉️ {s.email}</p>
-                            <p className="truncate">📍 {s.endereco}</p>
+                            <p> {s.telefone}</p>
+                            <p> {s.email}</p>
+                            <p className="truncate"> {s.endereco}</p>
                           </div>
 
                           <div className="flex justify-end gap-1.5 border-t border-slate-100 dark:border-slate-800 pt-2.5">
@@ -10892,7 +11205,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                     try {
                                                       await addDoc(collection(db, 'notificacoes'), {
                                                         destinatario_id: 'todos',
-                                                        titulo: '⚠️ Alerta de Prazo de Mensalidade',
+                                                        titulo: 'Alerta de Prazo de Mensalidade',
                                                         mensagem: `A fatura "${f.descricao}" do estudante ${usr?.nome} está pendente no valor de ${f.valor.toLocaleString('pt-MZ', { style: 'currency', currency: 'MZN' })}.`,
                                                         tipo: 'alerta',
                                                         lido: false,
@@ -10924,7 +11237,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                                                       const popup = document.createElement('div');
                                                       popup.className = 'fixed bottom-5 right-5 bg-indigo-600 text-white font-bold text-xs px-4 py-3 rounded-xl shadow-2xl border border-indigo-500 z-50 flex items-center gap-2 animate-bounce';
-                                                      popup.innerHTML = `✅ Alertas de prazo enviados para administrador, estudante e encarregado!`;
+                                                      popup.innerHTML = ` Alertas de prazo enviados para administrador, estudante e encarregado!`;
                                                       document.body.appendChild(popup);
                                                       setTimeout(() => popup.remove(), 6000);
 
@@ -11180,8 +11493,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               </span>
                             </div>
                             <div className="text-xs text-slate-600 space-y-1 pt-2 border-t border-slate-100">
-                              <p>🧑‍🏫 <strong>Professor Titular:</strong> {titUsr?.nome || 'Sem Titular designado'}</p>
-                              <p>📅 <strong>Ano Letivo:</strong> {t.ano_letivo} • Nivel: {t.nivel}</p>
+                              <p>‍ <strong>Professor Titular:</strong> {titUsr?.nome || 'Sem Titular designado'}</p>
+                              <p> <strong>Ano Letivo:</strong> {t.ano_letivo} • Nivel: {t.nivel}</p>
                             </div>
                             
                             <div className="flex justify-end gap-2 pt-3">
@@ -11250,11 +11563,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       <div className="flex items-center gap-2">
                         <div>
                           <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
-                            <BookMarked className="w-5 h-5 text-indigo-600" /> Cadastro de Disciplinas
+                            <BookMarked className="w-5 h-5 text-indigo-600" /> {isUniversidade ? 'Cadastro de Cadeiras Curriculares' : (isInstituto ? 'Cadastro de Módulos Curriculares' : 'Cadastro de Disciplinas')}
                           </h3>
-                          <p className="text-xs text-slate-400">Consulte e gerencie as disciplinas cadastradas no sistema com filtros por escola e docente.</p>
+                          <p className="text-xs text-slate-400">
+                            {isUniversidade 
+                              ? 'Consulte e gerencie as cadeiras curriculares associadas aos cursos da instituição universitária.'
+                              : 'Consulte e gerencie as disciplinas cadastradas no sistema com filtros por escola e docente.'}
+                          </p>
                         </div>
-                        {renderModuleRefreshButton('Disciplinas')}
+                        {renderModuleRefreshButton(isUniversidade ? 'Cadeiras' : 'Disciplinas')}
                       </div>
                       {isLimitReached('max_disciplinas', classes.filter(isBaseDiscipline).length) ? (
                         <button 
@@ -11280,8 +11597,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 setEditingItem(null);
                                 setClasseForm({ 
                                   nome: '', 
-                                  codigo: 'DISC-' + Math.random().toString(36).substring(2, 8).toUpperCase(),
+                                  codigo: (isUniversidade ? 'CAD-' : 'DISC-') + Math.random().toString(36).substring(2, 8).toUpperCase(),
                                   turma_id: turmas[0]?.id || '', 
+                                  curso_id: rawCursos[0]?.id || '',
+                                  curso_nome: rawCursos[0]?.nome || '',
+                                  ano_curricular: '1º Ano',
+                                  periodo_lectivo: '1º Semestre',
                                   docente_id: teachers[0]?.id || '', 
                                   horario: '08:00 - 09:30', 
                                   sala: rawSalas[0]?.nome || '', 
@@ -11300,7 +11621,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               }}
                               className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2.5 px-4 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
                             >
-                              <Plus className="w-4 h-4" /> Cadastrar Disciplina
+                              <Plus className="w-4 h-4" /> {isUniversidade ? 'Cadastrar Cadeira' : (isInstituto ? 'Cadastrar Módulo' : 'Cadastrar Disciplina')}
                             </button>
                           </div>
                         )
@@ -11360,7 +11681,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     disciplineSchoolFilter === 'todas' ? 'bg-indigo-50 text-indigo-900 font-bold' : 'hover:bg-slate-50 text-slate-700'
                                   }`}
                                 >
-                                  🏢 Todas as Escolas
+                                   Todas as Escolas
                                 </button>
                                 {schools
                                   .filter(s => s.nome.toLowerCase().includes(schoolFilterSearchText.toLowerCase()))
@@ -11444,7 +11765,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     disciplineDocenteFilter === 'todos' ? 'bg-indigo-50 text-indigo-900 font-bold' : 'hover:bg-slate-50 text-slate-700'
                                   }`}
                                 >
-                                  👨‍🏫 Todos os Docentes
+                                  ‍ Todos os Docentes
                                 </button>
                                 {teachers
                                   .filter(t => {
@@ -11526,9 +11847,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       <table className="w-full text-left border-collapse text-sm">
                         <thead>
                           <tr className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100 text-xs">
-                            <th className="p-3.5">Nome da Disciplina & Código</th>
-                            <th className="p-3.5">Escola(s)</th>
-                            <th className="p-3.5">Classe(s) Associada(s)</th>
+                            <th className="p-3.5">{isUniversidade ? 'Cadeira Curricular & Código' : (isInstituto ? 'Módulo Curricular & Código' : 'Nome da Disciplina & Código')}</th>
+                            <th className="p-3.5">{isUniversidade ? 'Faculdade / Unidade' : 'Escola(s)'}</th>
+                            <th className="p-3.5">{isUniversidade ? 'Curso & Ano Curricular' : 'Classe(s) Associada(s)'}</th>
                             <th className="p-3.5">Docente(s) Responsável(is)</th>
                             <th className="p-3.5 text-right sticky right-0 bg-slate-50 dark:bg-slate-900 z-10">Ações</th>
                           </tr>
@@ -11537,7 +11858,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           {searchedClasses.length === 0 ? (
                             <tr>
                               <td colSpan={5} className="p-8 text-center text-slate-400">
-                                Nenhuma disciplina encontrada com os filtros selecionados.
+                                {isUniversidade ? 'Nenhuma cadeira encontrada com os filtros selecionados.' : 'Nenhuma disciplina encontrada com os filtros selecionados.'}
                               </td>
                             </tr>
                           ) : (
@@ -11580,17 +11901,34 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     </div>
                                   </td>
                                   <td className="p-3.5">
-                                    <div className="flex flex-wrap gap-1">
-                                      {classList.length > 0 ? (
-                                        classList.map(ce => (
-                                          <span key={ce.id} className="bg-indigo-50 text-indigo-800 border border-indigo-100 text-[11px] py-0.5 px-2 rounded-md font-bold">
-                                            {ce.nome}
+                                    {isUniversidade ? (
+                                      <div className="flex flex-col gap-1">
+                                        {((c as any).curso_id || (c as any).curso_nome) ? (
+                                          <span className="inline-flex items-center gap-1 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-800 dark:text-indigo-300 border border-indigo-200/60 text-[11px] py-0.5 px-2 rounded-md font-bold">
+                                             {(c as any).curso_nome || rawCursos.find(cu => cu.id === (c as any).curso_id)?.nome || 'Curso'}
                                           </span>
-                                        ))
-                                      ) : (
-                                        <span className="text-slate-400 text-xs italic">Sem classe definida</span>
-                                      )}
-                                    </div>
+                                        ) : (
+                                          <span className="text-slate-400 text-xs italic">Sem curso associado</span>
+                                        )}
+                                        <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-medium">
+                                          <span>{(c as any).ano_curricular || '1º Ano'}</span>
+                                          <span>•</span>
+                                          <span>{(c as any).periodo_lectivo || '1º Semestre'}</span>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="flex flex-wrap gap-1">
+                                        {classList.length > 0 ? (
+                                          classList.map(ce => (
+                                            <span key={ce.id} className="bg-indigo-50 text-indigo-800 border border-indigo-100 text-[11px] py-0.5 px-2 rounded-md font-bold">
+                                              {ce.nome}
+                                            </span>
+                                          ))
+                                        ) : (
+                                          <span className="text-slate-400 text-xs italic">Sem classe definida</span>
+                                        )}
+                                      </div>
+                                    )}
                                   </td>
                                   <td className="p-3.5 text-slate-600">
                                     <div className="flex flex-wrap gap-1">
@@ -11615,13 +11953,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                           setEditingItem(c);
                                           setClasseForm({
                                             nome: c.nome,
-                                            codigo: c.codigo || ('DISC-' + Math.random().toString(36).substring(2, 8).toUpperCase()),
+                                            codigo: c.codigo || ((isUniversidade ? 'CAD-' : 'DISC-') + Math.random().toString(36).substring(2, 8).toUpperCase()),
                                             escola_id: c.escola_id || schools[0]?.id || '',
                                             escolas_ids: (c as any).escolas_ids || (c.escola_id ? [c.escola_id] : []),
                                             classes_associadas_ids: c.classes_associadas_ids || (c.classe_escolar_id ? [c.classe_escolar_id] : []),
                                             professores_responsaveis: c.professores_responsaveis || (c.docente_id ? [c.docente_id] : []),
                                             docente_id: c.docente_id || '',
                                             turma_id: c.turma_id || '',
+                                            curso_id: (c as any).curso_id || '',
+                                            curso_nome: (c as any).curso_nome || '',
+                                            ano_curricular: (c as any).ano_curricular || '1º Ano',
+                                            periodo_lectivo: (c as any).periodo_lectivo || '1º Semestre',
                                             horario: c.horario || '',
                                             sala: c.sala || '',
                                             data: c.data || new Date().toISOString().split('T')[0],
@@ -11680,134 +12022,175 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               )
             )}
 
-            {/* TAB: CLASSES (GRADE LEVELS) */}
+            {/* TAB: CLASSES (GRADE LEVELS) & CURSOS */}
             {activeTab === 'classes_escolares' && (
-              !hasPermission('classes_escolares') ? renderRestrictedAccess('Classes Escolares') : (
+              !hasPermission('classes_escolares') ? renderRestrictedAccess('Classes / Cursos') : (
                 <div className="space-y-6 animate-fadeIn">
-                  <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-4">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                      <div className="flex items-center gap-2">
-                        <div>
-                          <h3 className="font-bold text-slate-800 text-lg">Classes Escolares (Anos Académicos)</h3>
-                          <p className="text-xs text-slate-400">Configure as classes letivas oficiais autorizadas para o seu plano (e.g. 7ª Classe, 10ª Classe).</p>
-                        </div>
-                        {renderModuleRefreshButton('Classes Escolares')}
-                      </div>
-                      {isLimitReached('max_classes', classesEscolares.length) ? (
-                        <button 
-                          onClick={() => openUpgradeModal('max_classes', classesEscolares.length)}
-                          className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs py-2.5 px-4 rounded-lg flex items-center gap-1.5 shadow-sm transition-all animate-pulse cursor-pointer"
-                        >
-                          <Sparkles className="w-3.5 h-3.5" /> Upgrade • Limite Atingido
-                        </button>
-                      ) : (
-                        hasPermission('classes_escolares', 'criar') && (
-                          <button 
-                            onClick={() => {
-                              setEditingItem(null);
-                              setClasseEscolarForm({ nome: '', nivel: 'Primário', descricao: '', escola_id: schools[0]?.id || '' });
-                              setModalType('classe_escolar');
-                              setIsModalOpen(true);
-                            }}
-                            className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2.5 px-4 rounded-lg flex items-center gap-1.5 transition-colors self-start sm:self-center cursor-pointer"
-                          >
-                            <Plus className="w-4 h-4" /> Cadastrar Classe Letiva
-                          </button>
-                        )
-                      )}
-                    </div>
-
-                  {/* Limit meter */}
-                  {plan && (
-                    <div className="p-4 bg-indigo-50/50 rounded-xl border border-indigo-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs">
-                      <div>
-                        <p className="font-bold text-indigo-950">Limite do {plan.nome}: {plan.limits.max_classes >= 9999 ? "Ilimitado" : `${plan.limits.max_classes} classes`}</p>
-                        <p className="text-slate-500 mt-0.5">As classes representam o progresso de graduação anual dos estudantes.</p>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <div className="w-32 bg-slate-200 rounded-full h-2">
-                          <div 
-                            className={`h-2 rounded-full ${classesEscolares.length >= (plan.limits.max_classes ?? 7) ? 'bg-rose-500' : 'bg-indigo-600'}`}
-                            style={{ width: `${Math.min(100, (classesEscolares.length / (plan.limits.max_classes ?? 7)) * 100)}%` }}
-                          />
-                        </div>
-                        <span className="font-mono font-bold text-slate-700">{classesEscolares.length} / {plan.limits.max_classes >= 9999 ? '∞' : (plan.limits.max_classes ?? 7)}</span>
-                      </div>
+                  {/* Sub-tab Switcher when institution allows both Classes and Cursos (e.g. Global) */}
+                  {institutionFeatures.allowsClasses && institutionFeatures.allowsCursos && (
+                    <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
+                      <button
+                        type="button"
+                        onClick={() => setActiveClassesSubTab('classes')}
+                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                          activeClassesSubTab === 'classes'
+                            ? 'bg-indigo-600 text-white shadow-xs'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300'
+                        }`}
+                      >
+                        <List className="w-4 h-4" /> Classes Escolares (Anos Académicos)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setActiveClassesSubTab('cursos')}
+                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                          activeClassesSubTab === 'cursos'
+                            ? 'bg-indigo-600 text-white shadow-xs'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300'
+                        }`}
+                      >
+                        <BookOpen className="w-4 h-4" /> Cursos e Cadeiras Curriculares
+                      </button>
                     </div>
                   )}
 
-                  <div className="overflow-x-auto border border-slate-100 rounded-xl">
-                    <table className="w-full text-left border-collapse text-sm">
-                      <thead>
-                        <tr className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100">
-                          <th className="p-4">Nome da Classe</th>
-                          <th className="p-4">Escola Associada</th>
-                          <th className="p-4">Nível de Ensino</th>
-                          <th className="p-4">Descrição do Currículo</th>
-                          <th className="p-4 text-right sticky right-0 bg-slate-50 dark:bg-slate-900 z-10">Ações</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-50">
-                        {classesEscolares.length === 0 ? (
-                          <tr>
-                            <td colSpan={5} className="p-8 text-center text-slate-400">
-                              Nenhuma classe escolar cadastrada neste tenant. Clique em "Cadastrar Classe Letiva" para começar.
-                            </td>
-                          </tr>
+                  {(institutionFeatures.allowsCursos && (!institutionFeatures.allowsClasses || activeClassesSubTab === 'cursos')) ? (
+                    <CursosModule
+                      tenantTipoInstituicao={tenant?.tipoInstituicao || 'universidade'}
+                      schools={schools}
+                      cursos={rawCursos}
+                      cadeiras={rawCadeiras}
+                      onSaveCurso={handleSaveCurso}
+                      onDeleteCurso={handleDeleteCurso}
+                      onSaveCadeira={handleSaveCadeira}
+                      onDeleteCadeira={handleDeleteCadeira}
+                    />
+                  ) : (
+                    <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="flex items-center gap-2">
+                          <div>
+                            <h3 className="font-bold text-slate-800 text-lg">Classes Escolares (Anos Académicos)</h3>
+                            <p className="text-xs text-slate-400">Configure as classes letivas oficiais autorizadas para o seu plano (e.g. 7ª Classe, 10ª Classe).</p>
+                          </div>
+                          {renderModuleRefreshButton('Classes Escolares')}
+                        </div>
+                        {isLimitReached('max_classes', classesEscolares.length) ? (
+                          <button 
+                            onClick={() => openUpgradeModal('max_classes', classesEscolares.length)}
+                            className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs py-2.5 px-4 rounded-lg flex items-center gap-1.5 shadow-sm transition-all animate-pulse cursor-pointer"
+                          >
+                            <Sparkles className="w-3.5 h-3.5" /> Upgrade • Limite Atingido
+                          </button>
                         ) : (
-                          classesEscolares.map(c => {
-                            const sch = schools.find(s => s.id === c.escola_id);
-                            return (
-                              <tr key={c.id} className="hover:bg-slate-50/50 transition-colors">
-                                <td className="p-4 font-bold text-slate-800">{c.nome}</td>
-                                <td className="p-4 font-semibold text-xs text-indigo-950">{sch ? sch.nome : 'Sem Escola'}</td>
-                                <td className="p-4">
-                                  <span className="bg-slate-100 text-indigo-700 text-xs py-1 px-2.5 rounded-full font-bold uppercase">
-                                    {c.nivel}
-                                  </span>
-                                </td>
-                                <td className="p-4 text-slate-500 text-xs">{c.descricao || 'Nenhuma descrição currícular'}</td>
-                                <td className="p-4 text-right space-x-2 sticky right-0 bg-white dark:bg-slate-900 z-10">
-                                  {hasPermission('classes_escolares', 'editar') && (
-                                    <button 
-                                      onClick={() => {
-                                        setEditingItem(c);
-                                        setClasseEscolarForm({
-                                          nome: c.nome,
-                                          nivel: c.nivel,
-                                          descricao: c.descricao || '',
-                                          escola_id: c.escola_id || ''
-                                        });
-                                        setModalType('classe_escolar');
-                                        setIsModalOpen(true);
-                                      }}
-                                      className="text-indigo-600 hover:text-indigo-900 font-bold text-xs cursor-pointer"
-                                    >
-                                      Editar
-                                    </button>
-                                  )}
-                                {hasPermission('classes_escolares', 'excluir') && (
-                                  <button 
-                                    onClick={async () => {
-                                      if (confirm(`Tem certeza que deseja excluir a classe "${c.nome}"?`)) {
-                                        await deleteDoc(doc(db, 'classes_escolares', c.id));
-                                        loadTenantContext();
-                                      }
-                                    }}
-                                    className="text-rose-600 hover:text-rose-900 font-bold text-xs cursor-pointer"
-                                  >
-                                    Excluir
-                                  </button>
-                                )}
+                          hasPermission('classes_escolares', 'criar') && (
+                            <button 
+                              onClick={() => {
+                                setEditingItem(null);
+                                setClasseEscolarForm({ nome: '', nivel: 'Primário', descricao: '', escola_id: schools[0]?.id || '' });
+                                setModalType('classe_escolar');
+                                setIsModalOpen(true);
+                              }}
+                              className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2.5 px-4 rounded-lg flex items-center gap-1.5 transition-colors self-start sm:self-center cursor-pointer"
+                            >
+                              <Plus className="w-4 h-4" /> Cadastrar Classe Letiva
+                            </button>
+                          )
+                        )}
+                      </div>
+
+                    {/* Limit meter */}
+                    {plan && (
+                      <div className="p-4 bg-indigo-50/50 rounded-xl border border-indigo-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs">
+                        <div>
+                          <p className="font-bold text-indigo-950">Limite do {plan.nome}: {plan.limits.max_classes >= 9999 ? "Ilimitado" : `${plan.limits.max_classes} classes`}</p>
+                          <p className="text-slate-500 mt-0.5">As classes representam o progresso de graduação anual dos estudantes.</p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="w-32 bg-slate-200 rounded-full h-2">
+                            <div 
+                              className={`h-2 rounded-full ${classesEscolares.length >= (plan.limits.max_classes ?? 7) ? 'bg-rose-500' : 'bg-indigo-600'}`}
+                              style={{ width: `${Math.min(100, (classesEscolares.length / (plan.limits.max_classes ?? 7)) * 100)}%` }}
+                            />
+                          </div>
+                          <span className="font-mono font-bold text-slate-700">{classesEscolares.length} / {plan.limits.max_classes >= 9999 ? '∞' : (plan.limits.max_classes ?? 7)}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="overflow-x-auto border border-slate-100 rounded-xl">
+                      <table className="w-full text-left border-collapse text-sm">
+                        <thead>
+                          <tr className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100">
+                            <th className="p-4">Nome da Classe</th>
+                            <th className="p-4">Escola Associada</th>
+                            <th className="p-4">Nível de Ensino</th>
+                            <th className="p-4">Descrição do Currículo</th>
+                            <th className="p-4 text-right sticky right-0 bg-slate-50 dark:bg-slate-900 z-10">Ações</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                          {classesEscolares.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="p-8 text-center text-slate-400">
+                                Nenhuma classe escolar cadastrada neste tenant. Clique em "Cadastrar Classe Letiva" para começar.
                               </td>
                             </tr>
-                          ); })
-                        )}
-                      </tbody>
-                    </table>
+                          ) : (
+                            classesEscolares.map(c => {
+                              const sch = schools.find(s => s.id === c.escola_id);
+                              return (
+                                <tr key={c.id} className="hover:bg-slate-50/50 transition-colors">
+                                  <td className="p-4 font-bold text-slate-800">{c.nome}</td>
+                                  <td className="p-4 font-semibold text-xs text-indigo-950">{sch ? sch.nome : 'Sem Escola'}</td>
+                                  <td className="p-4">
+                                    <span className="bg-slate-100 text-indigo-700 text-xs py-1 px-2.5 rounded-full font-bold uppercase">
+                                      {c.nivel}
+                                    </span>
+                                  </td>
+                                  <td className="p-4 text-slate-500 text-xs">{c.descricao || 'Nenhuma descrição currícular'}</td>
+                                  <td className="p-4 text-right space-x-2 sticky right-0 bg-white dark:bg-slate-900 z-10">
+                                    {hasPermission('classes_escolares', 'editar') && (
+                                      <button 
+                                        onClick={() => {
+                                          setEditingItem(c);
+                                          setClasseEscolarForm({
+                                            nome: c.nome,
+                                            nivel: c.nivel,
+                                            descricao: c.descricao || '',
+                                            escola_id: c.escola_id || ''
+                                          });
+                                          setModalType('classe_escolar');
+                                          setIsModalOpen(true);
+                                        }}
+                                        className="text-indigo-600 hover:text-indigo-900 font-bold text-xs cursor-pointer"
+                                      >
+                                        Editar
+                                      </button>
+                                    )}
+                                  {hasPermission('classes_escolares', 'excluir') && (
+                                    <button 
+                                      onClick={async () => {
+                                        if (confirm(`Tem certeza que deseja excluir a classe "${c.nome}"?`)) {
+                                          await deleteDoc(doc(db, 'classes_escolares', c.id));
+                                          loadTenantContext();
+                                        }
+                                      }}
+                                      className="text-rose-600 hover:text-rose-900 font-bold text-xs cursor-pointer"
+                                    >
+                                      Excluir
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                            ); })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
+                  )}
                 </div>
-              </div>
               )
             )}
 
@@ -11853,7 +12236,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 : 'text-slate-500 hover:text-slate-750'
                             }`}
                           >
-                            📅 Grade Semanal
+                             Grade Semanal
                           </button>
                           <button
                             onClick={() => setCalendarSubTab('ferias')}
@@ -11863,7 +12246,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 : 'text-slate-500 hover:text-slate-750'
                             }`}
                           >
-                            🌴 Férias das Turmas
+                             Férias das Turmas
                           </button>
                           <button
                             onClick={() => setCalendarSubTab('feriados')}
@@ -11873,7 +12256,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 : 'text-slate-500 hover:text-slate-750'
                             }`}
                           >
-                            🚩 Feriados
+                             Feriados
                           </button>
                           <button
                             id="tab_exames_agendamentos"
@@ -11884,7 +12267,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 : 'text-slate-500 hover:text-slate-750'
                             }`}
                           >
-                            📝 Exames & Avaliações
+                             Exames & Avaliações
                           </button>
                         </div>
                       </div>
@@ -11926,9 +12309,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                   }}
                                   value={selectedTurn}
                                 >
-                                  <option value="manha">🌅 Manhã</option>
-                                  <option value="tarde">☀️ Tarde</option>
-                                  <option value="noite">🌙 Noite</option>
+                                  <option value="manha">Manhã</option>
+                                  <option value="tarde">Tarde</option>
+                                  <option value="noite">Noite</option>
                                 </select>
                               </div>
 
@@ -12078,7 +12461,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             </button>
                             
                             <span className="text-xs sm:text-sm font-bold text-indigo-950 font-sans tracking-wide bg-indigo-50/50 border border-indigo-100/80 rounded-xl px-4 py-1.5 shadow-2xs flex items-center gap-2">
-                              📅 {formatCalendarDateWeek(calendarSelectedDate)}
+                               {formatCalendarDateWeek(calendarSelectedDate)}
                             </span>
 
                             <button
@@ -12143,16 +12526,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     return (
                                       <tr key={v.id} className="hover:bg-slate-50/50 transition-colors">
                                         <td className="p-3.5 font-semibold text-slate-800 flex items-center gap-1.5">
-                                          <span>🌴</span> {v.descricao}
+                                          <span></span> {v.descricao}
                                         </td>
                                         <td className="p-3.5 text-slate-650 font-medium">
                                           {v.turma_id === 'todas' || !v.turma_id ? (
                                             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
-                                              ✨ Geral (Todas)
+                                               Geral (Todas)
                                             </span>
                                           ) : (
                                             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-250">
-                                              🏫 {turmaObj?.nome || 'Turma excluída'}
+                                               {turmaObj?.nome || 'Turma excluída'}
                                             </span>
                                           )}
                                         </td>
@@ -12284,14 +12667,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     return (
                                       <tr key={f.id} className="hover:bg-slate-50/50 transition-colors">
                                         <td className="p-3.5 font-semibold text-slate-850 flex items-center gap-1.5">
-                                          <span>🚩</span> {f.nome}
+                                          <span></span> {f.nome}
                                         </td>
                                         <td className="p-3.5 font-mono text-slate-700 font-bold">
                                           {new Date(f.data + 'T12:00:00').toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric' })}
                                         </td>
                                         <td className="p-3.5 text-slate-600 font-medium">
                                           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                                            🌐 {f.pais || 'Geral'}
+                                             {f.pais || 'Geral'}
                                           </span>
                                         </td>
                                         <td className="p-3.5 text-slate-600 font-medium">
@@ -12429,13 +12812,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
                               >
                                 <option value="todos">Todos os Tipos</option>
-                                <option value="Exame Normal">📝 Exame Normal</option>
-                                <option value="Exame Recurso">🔄 Exame Recurso</option>
-                                <option value="Exame Extraordinário">⚡ Exame Extraordinário</option>
-                                <option value="Avaliação Contínua">📊 Avaliação Contínua</option>
-                                <option value="Teste Escrito">📑 Teste Escrito</option>
-                                <option value="Trabalho Prático">🔬 Trabalho Prático</option>
-                                <option value="Reavaliação">🎯 Reavaliação</option>
+                                <option value="Exame Normal">Exame Normal</option>
+                                <option value="Exame Recurso">Exame Recurso</option>
+                                <option value="Exame Extraordinário">Exame Extraordinário</option>
+                                <option value="Avaliação Contínua">Avaliação Contínua</option>
+                                <option value="Teste Escrito">Teste Escrito</option>
+                                <option value="Trabalho Prático">Trabalho Prático</option>
+                                <option value="Reavaliação">Reavaliação</option>
                               </select>
                             </div>
 
@@ -12510,7 +12893,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                         <td className="p-3.5 font-semibold text-slate-850 whitespace-nowrap">
                                           <div className="flex flex-col">
                                             <span className="font-bold text-slate-800 flex items-center gap-1.5">
-                                              <span>📅</span> {new Date(ex.data + 'T12:00:00').toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                                              <span></span> {new Date(ex.data + 'T12:00:00').toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric' })}
                                             </span>
                                             <span className="text-[10px] font-mono text-slate-500 mt-0.5">
                                               ⏰ {ex.hora_inicio} - {ex.hora_fim}
@@ -12529,10 +12912,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                           </span>
                                         </td>
                                         <td className="p-3.5 text-slate-700 font-medium">
-                                          🧑‍🏫 {ex.docente_nome || teachers.find(t => t.id === ex.docente_id)?.nome || '-'}
+                                          ‍ {ex.docente_nome || teachers.find(t => t.id === ex.docente_id)?.nome || '-'}
                                         </td>
                                         <td className="p-3.5 font-mono font-bold text-slate-600">
-                                          🚪 {ex.sala || '-'}
+                                           {ex.sala || '-'}
                                         </td>
                                         <td className="p-3.5 font-bold text-slate-700">
                                           {ex.peso_nota ? `${ex.peso_nota}%` : '100%'}
@@ -12634,7 +13017,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                       <span className="text-[10px] text-slate-400 font-mono font-medium">({formattedDateHeader})</span>
                                       {holiday && (
                                         <span className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-rose-100 text-rose-800 border border-rose-200 shadow-2xs max-w-[120px] truncate" title={holiday.nome}>
-                                          🚩 {holiday.nome}
+                                           {holiday.nome}
                                         </span>
                                       )}
                                     </div>
@@ -12709,7 +13092,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                       </td>
                                       <td colSpan={7} className="p-3 text-center bg-amber-50/90 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 font-bold text-xs shadow-2xs">
                                         <div className="flex flex-wrap items-center justify-center gap-2">
-                                          <span className="text-sm">☕</span>
+                                          <span className="text-sm"></span>
                                           <span className="font-extrabold tracking-wide uppercase">{matchingBreak.name} ({timeSlot})</span>
                                           <span className="text-[10px] font-bold text-amber-800 dark:text-amber-300 bg-amber-200/80 dark:bg-amber-900/60 border border-amber-300 dark:border-amber-700 px-2.5 py-0.5 rounded-full">
                                             Intervalo Oficial de Recreio
@@ -12759,7 +13142,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                         return (
                                           <td key={dayIdx} className="p-3 border-r border-slate-150 last:border-r-0 text-center bg-amber-50/10">
                                             <div className="bg-amber-100/40 dark:bg-amber-950/20 border border-amber-200/50 rounded-xl p-2.5 text-left space-y-0.5">
-                                              <p className="font-bold text-amber-900 text-[11px] flex items-center gap-1">🌴 Férias</p>
+                                              <p className="font-bold text-amber-900 text-[11px] flex items-center gap-1"> Férias</p>
                                               <p className="text-[9px] text-amber-700 font-semibold truncate" title={vacation.descricao}>{vacation.descricao}</p>
                                             </div>
                                           </td>
@@ -12776,7 +13159,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                           <td key={dayIdx} className="p-2.5 border-r border-slate-150 last:border-r-0 text-center bg-rose-50/20">
                                             <div className="bg-rose-50/90 border border-rose-200 rounded-xl p-2 text-left space-y-0.5 shadow-3xs">
                                               <p className="font-bold text-rose-900 text-[10px] flex items-center gap-1">
-                                                🚩 {holiday.tipo || 'Feriado'}
+                                                 {holiday.tipo || 'Feriado'}
                                               </p>
                                               <p className="text-[9.5px] text-rose-800 font-bold truncate" title={holiday.nome}>
                                                 {holiday.nome}
@@ -12826,12 +13209,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                               className="bg-amber-100/90 border-2 border-amber-400 hover:border-amber-500 hover:bg-amber-200/80 rounded-xl p-2.5 text-left shadow-xs space-y-1 cursor-pointer transition-all hover:shadow-md active:scale-98 text-amber-950"
                                             >
                                               <span className="inline-flex items-center gap-1 text-[8.5px] font-extrabold bg-amber-200 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-full">
-                                                📝 {exameInSlot.tipo || 'EXAME'}
+                                                 {exameInSlot.tipo || 'EXAME'}
                                               </span>
                                               <p className="font-extrabold text-xs truncate text-amber-950">{exameInSlot.disciplina_nome}</p>
-                                              <p className="text-[9.5px] truncate font-semibold text-amber-800">🧑‍🏫 {exameInSlot.docente_nome || 'Docente'}</p>
+                                              <p className="text-[9.5px] truncate font-semibold text-amber-800">‍ {exameInSlot.docente_nome || 'Docente'}</p>
                                               <div className="flex items-center justify-between text-[9px] font-mono text-amber-700 font-bold pt-0.5">
-                                                <span>🚪 {exameInSlot.sala || 'Sala 01'}</span>
+                                                <span> {exameInSlot.sala || 'Sala 01'}</span>
                                                 <span>⏰ {exameInSlot.hora_inicio}-{exameInSlot.hora_fim}</span>
                                               </div>
                                             </div>
@@ -12865,10 +13248,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                               badge = <span className="inline-block text-[8px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-md mt-1">⏳ Pendente</span>;
                                             } else if (status === 'rejeitado') {
                                               bgClass = "bg-rose-50 border border-rose-250 hover:border-rose-400 hover:bg-rose-100 rounded-xl p-3 text-left shadow-3xs space-y-1 cursor-pointer transition-all hover:shadow-xs active:scale-98 text-rose-900";
-                                              badge = <span className="inline-block text-[8px] font-bold bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded-md mt-1">❌ Rejeitada</span>;
+                                              badge = <span className="inline-block text-[8px] font-bold bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded-md mt-1"> Rejeitada</span>;
                                             } else if (isWeekend) {
                                               bgClass = "bg-emerald-50 border border-emerald-250 hover:border-emerald-400 hover:bg-emerald-100 rounded-xl p-3 text-left shadow-3xs space-y-1 cursor-pointer transition-all hover:shadow-xs active:scale-98 text-emerald-900";
-                                              badge = <span className="inline-block text-[8px] font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded-md mt-1">✅ Aprovada</span>;
+                                              badge = <span className="inline-block text-[8px] font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded-md mt-1"> Aprovada</span>;
                                             }
 
                                             return (
@@ -12884,12 +13267,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                               >
                                                 {holiday && (
                                                   <span className="inline-block text-[8px] font-extrabold bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded-md mb-1 border border-rose-200 truncate max-w-full" title={holiday.nome}>
-                                                    🚩 Feriado: {holiday.nome}
+                                                     Feriado: {holiday.nome}
                                                   </span>
                                                 )}
                                                 <p className="font-bold text-xs truncate">{disc.nome}</p>
-                                                <p className="text-[10px] truncate font-semibold opacity-90">🧑‍🏫 {teaUsr?.nome || 'Docente'}</p>
-                                                <p className="text-[9px] font-mono opacity-75">🚪 {disc.sala}</p>
+                                                <p className="text-[10px] truncate font-semibold opacity-90">‍ {teaUsr?.nome || 'Docente'}</p>
+                                                <p className="text-[9px] font-mono opacity-75"> {disc.sala}</p>
                                                 {badge}
                                               </div>
                                             );
@@ -12990,7 +13373,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     <p className="font-bold text-indigo-700 text-xs">{(selectedClassPopup.classe as any).materia_topico}</p>
                                     {(selectedClassPopup.classe as any).extraordinario && (
                                       <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
-                                        ✨ Extraordinário
+                                         Extraordinário
                                       </span>
                                     )}
                                   </div>
@@ -12998,21 +13381,21 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               )}
                               <div>
                                 <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Docente Responsável</span>
-                                <p className="font-semibold text-indigo-900 mt-0.5">🧑‍🏫 {selectedClassPopup.docente?.nome || 'Docente Não Encontrado'}</p>
+                                <p className="font-semibold text-indigo-900 mt-0.5">‍ {selectedClassPopup.docente?.nome || 'Docente Não Encontrado'}</p>
                               </div>
                               <div className="grid grid-cols-2 gap-2 pt-1.5 border-t border-slate-100">
                                 <div>
                                   <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Sala</span>
-                                  <p className="font-medium text-slate-700 mt-0.5">🚪 {selectedClassPopup.classe.sala}</p>
+                                  <p className="font-medium text-slate-700 mt-0.5"> {selectedClassPopup.classe.sala}</p>
                                 </div>
                                 <div>
                                   <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Horário</span>
-                                  <p className="font-semibold text-emerald-700 mt-0.5">⏱️ {selectedClassPopup.classe.horario}</p>
+                                  <p className="font-semibold text-emerald-700 mt-0.5">⏱ {selectedClassPopup.classe.horario}</p>
                                 </div>
                               </div>
                               <div>
                                 <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Data da Aula</span>
-                                <p className="font-medium text-slate-700 mt-0.5">📅 {selectedClassPopup.dataStr}</p>
+                                <p className="font-medium text-slate-700 mt-0.5"> {selectedClassPopup.dataStr}</p>
                               </div>
                               {(() => {
                                 const disc = selectedClassPopup.classe;
@@ -13193,7 +13576,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                                       const popup = document.createElement('div');
                                       popup.className = 'fixed bottom-5 right-5 bg-rose-600 text-white font-bold text-xs px-4 py-3 rounded-xl shadow-2xl border border-rose-500 z-[1000000] flex items-center gap-2 animate-bounce';
-                                      popup.innerHTML = `🗑️ Disciplina "${c.nome}" excluída da agenda! Administrador notificado.`;
+                                      popup.innerHTML = ` Disciplina "${c.nome}" excluída da agenda! Administrador notificado.`;
                                       document.body.appendChild(popup);
                                       setTimeout(() => popup.remove(), 6000);
 
@@ -13202,7 +13585,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                         await addDoc(collection(db, 'notificacoes'), {
                                           destinatario_id: 'admin',
                                           tenant_id: currentTenantId,
-                                          titulo: '🗑️ Disciplina Excluída',
+                                          titulo: 'Disciplina Excluída',
                                           mensagem: `A disciplina "${c.nome}" agendada para o dia ${c.data || c.dia_semana} às ${c.horario} foi excluída da agenda.`,
                                           tipo: 'cadastro',
                                           lido: false,
@@ -13376,7 +13759,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 onChange={(e) => setPautaGeralEscolaId(e.target.value)}
                                 className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold text-slate-700"
                               >
-                                <option value="">✨ Todas as Escolas</option>
+                                <option value="">Todas as Escolas</option>
                                 {schools.map(s => (
                                   <option key={s.id} value={s.id}>{s.nome}</option>
                                 ))}
@@ -13403,10 +13786,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 onChange={(e) => setPautaGeralEstado(e.target.value)}
                                 className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold text-slate-700"
                               >
-                                <option value="">🌟 Todos os Estados</option>
-                                <option value="aprovado">🟢 Aprovado</option>
-                                <option value="reprovado">🔴 Reprovado</option>
-                                <option value="recuperacao">🟡 Recuperação / Admitido</option>
+                                <option value="">Todos os Estados</option>
+                                <option value="aprovado">Aprovado</option>
+                                <option value="reprovado">Reprovado</option>
+                                <option value="recuperacao">Recuperação / Admitido</option>
                               </select>
                             </div>
 
@@ -13641,11 +14024,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 </span>
                                 {p.status === 'rascunho' ? (
                                   <span className="bg-amber-100 text-amber-800 border border-amber-200 text-[9px] font-bold px-1.5 py-0.2 rounded">
-                                    📝 Rascunho
+                                     Rascunho
                                   </span>
                                 ) : (
                                   <span className="bg-emerald-100 text-emerald-800 border border-emerald-200 text-[9px] font-bold px-1.5 py-0.2 rounded">
-                                    ✓ Publicado
+                                     Publicado
                                   </span>
                                 )}
                               </div>
@@ -13782,6 +14165,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   onUpdateDocenteDossier={handleUpdateDocenteDossier}
                   onNotifyTeacherMissingData={handleNotifyTeacherMissingData}
                   onRefreshData={() => handleManualRefresh('Processos')}
+                  onOpenFichaAcademica={(student) => setSelectedProcessoStudent(student)}
                 />
               )
             )}
@@ -14122,7 +14506,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   })();
 
                   if (!canValidate) {
-                    showSystemNotification("❌ ERRO: Você não tem permissão para validar presença de outros utilizadores!", "erro");
+                    showSystemNotification("ERRO: Você não tem permissão para validar presença de outros utilizadores!", "erro");
                     return;
                   }
 
@@ -14152,7 +14536,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   })();
 
                   if (!hasAgendaToday && !overrideStatus) {
-                    showSystemNotification(`❌ Presença não validada: O ${tipo === 'estudante' ? 'estudante' : 'funcionário'} ${item?.nome || 'pesquisado'} não possui agenda para hoje (${todayDayName}).`, 'erro');
+                    showSystemNotification(`Presença não validada: O ${tipo === 'estudante' ? 'estudante' : 'funcionário'} ${item?.nome || 'pesquisado'} não possui agenda para hoje (${todayDayName}).`, 'erro');
                     return;
                   }
 
@@ -14258,7 +14642,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   if (studentMatch) {
                     if (!studentMatch.ativo) {
                       const studentName = studentMatch.nome || tenantUsers.find(u => u.id === studentMatch.user_id)?.nome || 'Estudante';
-                      showSystemNotification(`❌ ERRO: O estudante ${studentName} está inativo no sistema!`, 'erro');
+                      showSystemNotification(`ERRO: O estudante ${studentName} está inativo no sistema!`, 'erro');
                       return;
                     }
                     await registerCheckIn('estudante', studentMatch);
@@ -14267,7 +14651,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     await registerCheckIn('docente', teacherMatch);
                     setValidateIdInput('');
                   } else {
-                    showSystemNotification(`❌ ERRO: Nenhum estudante ou docente encontrado com o ID "${validateIdInput}"!`, 'erro');
+                    showSystemNotification(`ERRO: Nenhum estudante ou docente encontrado com o ID "${validateIdInput}"!`, 'erro');
                   }
                 };
 
@@ -15701,7 +16085,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 }}
                                 className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold cursor-pointer"
                               >
-                                ✕
+                                
                               </button>
                             )}
                           </div>
@@ -16833,7 +17217,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             <p className="text-slate-600 dark:text-slate-400 mb-4 font-semibold leading-relaxed">
               Tem certeza que deseja registrar a desistência definitiva dos estudos para o(a) estudante <span className="text-rose-600 font-extrabold">{tenantUsers.find(u => u.id === studentToDropout.user_id)?.nome || 'Estudante'}</span>? 
               <br />
-              <span className="text-rose-500 font-bold block mt-2 text-[10px] uppercase">⚠️ Esta ação irá suspender permanentemente o acesso do aluno ao sistema e notificar a Direção, Professores e Encarregados.</span>
+              <span className="text-rose-500 font-bold block mt-2 text-[10px] uppercase"> Esta ação irá suspender permanentemente o acesso do aluno ao sistema e notificar a Direção, Professores e Encarregados.</span>
             </p>
 
             <form
@@ -16886,7 +17270,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     tenant_id: currentTenantId,
                     destinatario_id: 'admin',
                     destinatario_role: 'admin',
-                    titulo: `⚠️ Alerta: Desistência de Aluno - ${studName}`,
+                    titulo: ` Alerta: Desistência de Aluno - ${studName}`,
                     mensagem: `O(A) estudante "${studName}" (Matrícula: ${s.numero_matricula}) foi registrado(a) como desistente dos estudos. Acesso ao sistema suspenso.`,
                     tipo: 'alerta',
                     lido: false,
@@ -16911,7 +17295,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       await addDoc(collection(db, 'notificacoes'), {
                         tenant_id: currentTenantId,
                         destinatario_id: admin.id,
-                        titulo: `⚠️ Desistência de Aluno - ${studName}`,
+                        titulo: ` Desistência de Aluno - ${studName}`,
                         mensagem: `O(A) estudante "${studName}" (Matrícula: ${s.numero_matricula}) foi registrado(a) como desistente dos estudos.`,
                         tipo: 'alerta',
                         lido: false,
@@ -16942,7 +17326,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         await addDoc(collection(db, 'notificacoes'), {
                           tenant_id: currentTenantId,
                           destinatario_id: teacherUser.id,
-                          titulo: `📢 Desistência de Aluno - ${studName}`,
+                          titulo: ` Desistência de Aluno - ${studName}`,
                           mensagem: `O(A) estudante "${studName}" da sua turma foi registrado(a) como desistente dos estudos.`,
                           tipo: 'info',
                           lido: false,
@@ -16968,7 +17352,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     await addDoc(collection(db, 'notificacoes'), {
                       tenant_id: currentTenantId,
                       destinatario_id: parentUser.id,
-                      titulo: `⚠️ Desistência de Estudos - ${studName}`,
+                      titulo: ` Desistência de Estudos - ${studName}`,
                       mensagem: `O registro do(a) seu(sua) educando(a) "${studName}" foi alterado para desistente e o acesso dele foi suspenso.`,
                       tipo: 'alerta',
                       lido: false,
@@ -16979,7 +17363,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   // Show 6-second popup notification (Rule 3)
                   const popup = document.createElement('div');
                   popup.className = 'fixed bottom-5 right-5 bg-rose-600 text-white font-bold text-xs px-4 py-3 rounded-xl shadow-2xl border border-rose-500 z-50 flex items-center gap-2 animate-bounce';
-                  popup.innerHTML = `⚠️ Registro de desistência para ${studName} efetuado com sucesso!`;
+                  popup.innerHTML = ` Registro de desistência para ${studName} efetuado com sucesso!`;
                   document.body.appendChild(popup);
                   setTimeout(() => popup.remove(), 6000);
 
@@ -17116,7 +17500,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   if (oldDTUser) {
                     await addDoc(collection(db, 'notificacoes'), {
                       destinatario_id: oldDTUser.id,
-                      titulo: '🔄 Aluno Transferido',
+                      titulo: 'Aluno Transferido',
                       mensagem: `O aluno "${studName}" foi transferido da sua turma (${oldTurma?.nome}) para a escola "${destinationSchoolName}" / turma "${newTurma?.nome}".`,
                       tipo: 'sistema',
                       lido: false,
@@ -17141,7 +17525,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   if (newDTUser) {
                     await addDoc(collection(db, 'notificacoes'), {
                       destinatario_id: newDTUser.id,
-                      titulo: '🔄 Novo Aluno Recebido (Transferência)',
+                      titulo: 'Novo Aluno Recebido (Transferência)',
                       mensagem: `O aluno "${studName}" foi admitido na sua turma (${newTurma?.nome}) vindo da escola "${originalSchoolName}".`,
                       tipo: 'sistema',
                       lido: false,
@@ -17335,7 +17719,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   // Trigger 6-second popup notification (Rule 3)
                   const popup = document.createElement('div');
                   popup.className = 'fixed bottom-5 right-5 bg-emerald-600 text-white font-bold text-xs px-4 py-3 rounded-xl shadow-2xl border border-emerald-500 z-50 flex items-center gap-2 animate-bounce';
-                  popup.innerHTML = `✅ Fatura lançada e e-mail de aviso enviado!`;
+                  popup.innerHTML = ` Fatura lançada e e-mail de aviso enviado!`;
                   document.body.appendChild(popup);
                   setTimeout(() => popup.remove(), 6000);
 
@@ -17443,7 +17827,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 </div>
               </div>
               <button onClick={() => setIsProcessPanelOpen(false)} className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-full cursor-pointer text-slate-500">
-                ✕
+                
               </button>
             </div>
 
@@ -17488,7 +17872,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     // Show 6-second popup notification (Rule 3)
                     const popup = document.createElement('div');
                     popup.className = 'fixed bottom-5 right-5 bg-emerald-600 text-white font-bold text-xs px-4 py-3 rounded-xl shadow-2xl border border-emerald-500 z-50 flex items-center gap-2 animate-bounce';
-                    popup.innerHTML = `✅ Informações do Dossier atualizadas com sucesso!`;
+                    popup.innerHTML = ` Informações do Dossier atualizadas com sucesso!`;
                     document.body.appendChild(popup);
                     setTimeout(() => popup.remove(), 6000);
 
@@ -17628,7 +18012,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         const discName = classes.find(c => c.id === p.classe_id)?.nome || 'Cadeira Curricular';
                         return {
                           id: p.id,
-                          tipo: '📊 Lançamento de Nota',
+                          tipo: ' Lançamento de Nota',
                           descricao: `Nota publicada para a disciplina "${discName}" (${p.trimestre}). Média Final: ${p.nota_media} valores (${p.situacao}).`,
                           data: p.data_lancamento || p.criado_em || new Date().toISOString(),
                           autor: 'Corpo Docente'
@@ -17683,7 +18067,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       // Show 6-second popup notification (Rule 3)
                       const popup = document.createElement('div');
                       popup.className = 'fixed bottom-5 right-5 bg-indigo-600 text-white font-bold text-xs px-4 py-3 rounded-xl shadow-2xl border border-indigo-500 z-50 flex items-center gap-2 animate-bounce';
-                      popup.innerHTML = `✅ Nova ocorrência lançada no histórico!`;
+                      popup.innerHTML = ` Nova ocorrência lançada no histórico!`;
                       document.body.appendChild(popup);
                       setTimeout(() => popup.remove(), 6000);
 
@@ -17775,14 +18159,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 }}
                 className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer text-lg font-bold p-1 rounded-full hover:bg-slate-50 dark:hover:bg-slate-800"
               >
-                ✕
+                
               </button>
             </div>
 
             <div className="space-y-4">
               <div className="bg-indigo-50/50 dark:bg-indigo-950/20 p-4 rounded-2xl border border-indigo-100/50 dark:border-indigo-900/30 text-xs text-slate-600 dark:text-slate-350 space-y-2">
                 <p className="font-bold text-indigo-900 dark:text-indigo-400 flex items-center gap-1">
-                  💡 Instruções de Importação
+                   Instruções de Importação
                 </p>
                 <ul className="list-disc list-inside space-y-1">
                   <li>Baixe o modelo pré-formatado correspondente a este módulo.</li>
@@ -17795,7 +18179,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     onClick={() => handleDownloadTemplate(importModule)}
                     className="bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-[11px] py-1.5 px-3 rounded-lg flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
                   >
-                    📥 Baixar Modelo Oficial de Excel
+                     Baixar Modelo Oficial de Excel
                   </button>
                 </div>
               </div>
@@ -17868,13 +18252,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   {/* Security Analysis Banner */}
                   <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
                     <h5 className="text-[10px] uppercase tracking-wider font-extrabold text-slate-400 mb-1.5 flex items-center gap-1">
-                      🛡️ Relatório de Análise de Segurança
+                       Relatório de Análise de Segurança
                     </h5>
                     {securityScanErrors.length > 0 ? (
                       <div className="bg-rose-50 dark:bg-rose-950/20 text-rose-700 dark:text-rose-400 p-3 rounded-xl border border-rose-100 dark:border-rose-900/30 text-xs font-semibold space-y-1">
                         {securityScanErrors.map((err, i) => (
                           <p key={i} className="flex items-start gap-1">
-                            <span>❌</span> {err}
+                            <span></span> {err}
                           </p>
                         ))}
                       </div>
@@ -17893,7 +18277,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 <div className="space-y-2">
                   <div className="flex justify-between items-center">
                     <h4 className="text-xs font-extrabold text-slate-400 uppercase tracking-wider">
-                      📊 Pré-visualização de Dados ({parsedPreview.length} linhas detetadas)
+                       Pré-visualização de Dados ({parsedPreview.length} linhas detetadas)
                     </h4>
                   </div>
                   <div className="max-h-40 overflow-y-auto border border-slate-100 dark:border-slate-800 rounded-xl">
@@ -17929,7 +18313,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               {/* Import validation errors */}
               {importErrors.length > 0 && (
                 <div className="bg-rose-50 dark:bg-rose-950/20 text-rose-700 dark:text-rose-400 p-4 rounded-2xl border border-rose-100 dark:border-rose-900/30 text-xs space-y-1 max-h-36 overflow-y-auto">
-                  <p className="font-bold mb-1">❌ Inconsistências de dados encontradas ({importErrors.length}):</p>
+                  <p className="font-bold mb-1"> Inconsistências de dados encontradas ({importErrors.length}):</p>
                   {importErrors.map((err, i) => (
                     <p key={i}>• {err}</p>
                   ))}
@@ -18049,26 +18433,45 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="sm:col-span-2">
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Nome da Instituição / Escola *</label>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">
+                        {isUniversidade ? 'Nome da Faculdade / Unidade Universitária *' : isInstituto ? 'Nome do Polo / Instituto *' : 'Nome da Escola / Unidade *'}
+                      </label>
                       <input 
                         type="text"
                         required
                         value={escolaForm.nome}
                         onChange={(e) => setEscolaForm({ ...escolaForm, nome: e.target.value })}
-                        placeholder="Ex: Escola Primária Central ou Faculdade de Tecnologia"
+                        placeholder={isUniversidade ? "Ex: Faculdade de Ciências e Tecnologias" : isInstituto ? "Ex: Instituto Técnico de Saúde" : "Ex: Escola Secundária Josina Machel"}
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Tipo de Instituição *</label>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Tipo de Unidade *</label>
                       <select
-                        value={escolaForm.tipo_instituicao || 'Escola'}
+                        value={escolaForm.tipo_instituicao || (isUniversidade ? 'Faculdade' : isInstituto ? 'Instituto' : 'Escola')}
                         onChange={(e) => setEscolaForm({ ...escolaForm, tipo_instituicao: e.target.value as any })}
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold text-slate-750 cursor-pointer"
                       >
-                        <option value="Escola">Escola</option>
-                        <option value="Faculdade">Faculdade</option>
-                        <option value="Instituto">Instituto</option>
+                        {isUniversidade ? (
+                          <>
+                            <option value="Faculdade">Faculdade</option>
+                            <option value="Instituto Universitário">Instituto Universitário</option>
+                            <option value="Escola Superior">Escola Superior</option>
+                            <option value="Departamento">Departamento Académico</option>
+                          </>
+                        ) : isInstituto ? (
+                          <>
+                            <option value="Instituto">Instituto Técnico</option>
+                            <option value="Polo">Polo de Formação</option>
+                            <option value="Centro Profissional">Centro de Formação Profissional</option>
+                          </>
+                        ) : (
+                          <>
+                            <option value="Escola">Escola Primária / Secundária</option>
+                            <option value="Colégio">Colégio</option>
+                            <option value="Complexo Escolar">Complexo Escolar</option>
+                          </>
+                        )}
                       </select>
                     </div>
                   </div>
@@ -18088,7 +18491,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           onChange={(e) => setEscolaForm({ ...escolaForm, regime_manha: e.target.checked })}
                           className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
                         />
-                        <span>🌅 Manhã</span>
+                        <span> Manhã</span>
                       </label>
                       <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer select-none bg-white dark:bg-slate-850 p-2 rounded-lg border border-slate-200 dark:border-slate-800">
                         <input
@@ -18097,7 +18500,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           onChange={(e) => setEscolaForm({ ...escolaForm, regime_tarde: e.target.checked })}
                           className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
                         />
-                        <span>☀️ Tarde</span>
+                        <span> Tarde</span>
                       </label>
                       <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer select-none bg-white dark:bg-slate-850 p-2 rounded-lg border border-slate-200 dark:border-slate-800">
                         <input
@@ -18106,7 +18509,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           onChange={(e) => setEscolaForm({ ...escolaForm, regime_noite: e.target.checked })}
                           className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
                         />
-                        <span>🌙 Noite</span>
+                        <span> Noite</span>
                       </label>
                     </div>
                   </div>
@@ -18248,7 +18651,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             onClick={() => setEscolaForm({ ...escolaForm, logo_url: '' })}
                             className="absolute -top-1.5 -right-1.5 bg-rose-500 hover:bg-rose-600 text-white rounded-full p-1 shadow-md transition-all cursor-pointer"
                           >
-                            <span className="text-[10px] leading-none block font-bold">✕</span>
+                            <span className="text-[10px] leading-none block font-bold"></span>
                           </button>
                         </div>
                       ) : (
@@ -18307,7 +18710,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     {escolaForm.controlar_assiduidade && (
                       <div className="bg-indigo-50/40 dark:bg-indigo-950/20 border border-indigo-100/50 dark:border-indigo-900/30 rounded-xl p-4 mt-3 space-y-3 text-left">
                         <div className="font-bold text-xs text-indigo-900 dark:text-indigo-300 flex items-center gap-1">
-                          ⏱️ Tolerância e Horários Limites de Assiduidade
+                          ⏱ Tolerância e Horários Limites de Assiduidade
                         </div>
                         <p className="text-[10px] text-indigo-800 dark:text-indigo-400 leading-relaxed">
                           Defina o horário limite de validação para cada regime habilitado. Estudantes que tentarem validar a presença após o horário limite serão marcados como faltosos automaticamente.
@@ -18503,6 +18906,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   schools={schools}
                   turmas={turmas}
                   tenantUsers={tenantUsers}
+                  cursos={rawCursos}
+                  cadeiras={rawCadeiras}
+                  students={students}
+                  salas={rawSalas}
+                  isUniversidade={isUniversidade}
+                  tenantTipoInstituicao={tenant?.tipoInstituicao || 'escola'}
                   allowedLevels={['primario', 'secundario', 'superior', 'profissional']}
                   onPhotoUploaded={(b64) => setStudentForm(prev => ({ ...prev, foto_url: b64 }))}
                   onPhotoRemoved={() => setStudentForm(prev => ({ ...prev, foto_url: '' }))}
@@ -18510,22 +18919,75 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               )}
 
               {/* TURMA FORM */}
+              {/* TURMA FORM */}
               {modalType === 'turma' && (
                 <>
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">Nome da Turma</label>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Nome da Turma <span className="text-rose-500">*</span>
+                    </label>
                     <input 
                       type="text"
                       required
                       value={turmaForm.nome}
                       onChange={(e) => setTurmaForm({ ...turmaForm, nome: e.target.value })}
-                      placeholder="Ex: 8ª Classe - Turma C"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
+                      placeholder={isUniversidade ? "Ex: LEI-1º Ano - Turma A" : isInstituto ? "Ex: TI-Nível 4 - Turma B" : "Ex: 8ª Classe - Turma C"}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold"
                     />
                   </div>
+
+                  {/* Dropdown Curso */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Curso {isUniversidade && <span className="text-rose-500">*</span>}
+                    </label>
+                    <select
+                      value={turmaForm.curso_id || ''}
+                      onChange={(e) => {
+                        const cId = e.target.value;
+                        const c = rawCursos.find(cur => cur.id === cId);
+                        setTurmaForm({
+                          ...turmaForm,
+                          curso_id: cId,
+                          nome: turmaForm.nome || (c ? `${c.codigo || c.nome} - Turma A` : '')
+                        });
+                      }}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-800 font-semibold focus:ring-2 focus:ring-indigo-500 focus:outline-none cursor-pointer"
+                    >
+                      <option value="">-- Selecionar Curso Cadastrado --</option>
+                      {rawCursos.map(c => (
+                        <option key={c.id} value={c.id}>
+                          {c.codigo ? `[${c.codigo}] ` : ''}{c.nome} {c.grau ? `(${c.grau})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Ano Letivo (Auto-selecionado)</label>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        {isUniversidade ? 'Ano de Ensino / Curricular' : 'Classe (Ano Letivo)'} <span className="text-rose-500">*</span>
+                      </label>
+                      <select 
+                        required
+                        value={turmaForm.classe_escolar_id || ''}
+                        onChange={(e) => setTurmaForm({ ...turmaForm, classe_escolar_id: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-800 font-semibold focus:ring-2 focus:ring-indigo-500 focus:outline-none cursor-pointer"
+                      >
+                        <option value="">-- Selecionar Ano de Ensino --</option>
+                        <option value="1º Ano">1º Ano</option>
+                        <option value="2º Ano">2º Ano</option>
+                        <option value="3º Ano">3º Ano</option>
+                        <option value="4º Ano">4º Ano</option>
+                        <option value="5º Ano">5º Ano</option>
+                        {classesEscolares.map(ce => (
+                          <option key={ce.id} value={ce.id}>{ce.nome} {ce.nivel ? `(${ce.nivel})` : ''}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Ano Letivo (Oficial)</label>
                       <input 
                         type="text"
                         readOnly
@@ -18533,50 +18995,19 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         className="w-full bg-slate-100 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-500 font-bold cursor-not-allowed font-mono"
                       />
                     </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Nível Acadêmico</label>
-                      <select 
-                        value={['Primário', 'Secundário', 'Formação profissional/Instituto', 'Universitário'].includes(turmaForm.nivel) ? turmaForm.nivel : (turmaForm.nivel ? 'Outro' : 'Primário')}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          if (val === 'Outro') {
-                            setTurmaForm({ ...turmaForm, nivel: '' });
-                          } else {
-                            setTurmaForm({ ...turmaForm, nivel: val });
-                          }
-                        }}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 font-bold"
-                      >
-                        <option value="Primário">Primário</option>
-                        <option value="Secundário">Secundário</option>
-                        <option value="Formação profissional/Instituto">Formação profissional/Instituto</option>
-                        <option value="Universitário">Universitário</option>
-                        <option value="Outro">Outro (Especificar...)</option>
-                      </select>
-
-                      {!['Primário', 'Secundário', 'Formação profissional/Instituto', 'Universitário'].includes(turmaForm.nivel) && (
-                        <div className="mt-1.5 animate-in fade-in slide-in-from-top-1 duration-200">
-                          <input 
-                            type="text"
-                            required
-                            value={turmaForm.nivel}
-                            onChange={(e) => setTurmaForm({ ...turmaForm, nivel: e.target.value })}
-                            placeholder="Especificar nível académico..."
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs"
-                          />
-                        </div>
-                      )}
-                    </div>
                   </div>
+
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Diretor de Turma</label>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">
+                        {isUniversidade ? 'Regente / Diretor da Turma' : 'Diretor de Turma'}
+                      </label>
                       <select 
                         value={turmaForm.docente_id}
                         onChange={(e) => setTurmaForm({ ...turmaForm, docente_id: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 cursor-pointer"
                       >
-                        <option value="">-- Selecionar Diretor --</option>
+                        <option value="">-- Selecionar Docente Responsável --</option>
                         {(() => {
                           const targetSchId = turmaForm.escola_id || schools[0]?.id;
                           return teachers
@@ -18597,39 +19028,21 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         required
                         value={turmaForm.capacidade_max}
                         onChange={(e) => setTurmaForm({ ...turmaForm, capacidade_max: Number(e.target.value) })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold"
                       />
                     </div>
                   </div>
+
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Classe (Ano Letivo) <span className="text-rose-500">*</span>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">
+                      {isUniversidade ? 'Faculdade / Unidade Universitária' : isInstituto ? 'Polo / Instituto' : 'Escola'}
                     </label>
-                    <select 
-                      required
-                      value={turmaForm.classe_escolar_id || ''}
-                      onChange={(e) => setTurmaForm({ ...turmaForm, classe_escolar_id: e.target.value })}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                    >
-                      <option value="">-- Selecionar Classe Associada --</option>
-                      {(() => {
-                        const targetSchId = turmaForm.escola_id || schools[0]?.id;
-                        return classesEscolares
-                          .filter(ce => !targetSchId || !ce.escola_id || ce.escola_id === targetSchId)
-                          .map(ce => (
-                            <option key={ce.id} value={ce.id}>{ce.nome} ({ce.nivel})</option>
-                          ));
-                      })()}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">Escola</label>
                     <select 
                       value={turmaForm.escola_id}
                       onChange={(e) => setTurmaForm({ ...turmaForm, escola_id: e.target.value })}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 cursor-pointer"
                     >
-                      <option value="">-- Selecionar Escola --</option>
+                      <option value="">-- Selecionar Unidade --</option>
                       {schools.map(s => (
                         <option key={s.id} value={s.id}>{s.nome}</option>
                       ))}
@@ -18648,15 +19061,21 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       <BookMarked className="w-5 h-5" />
                     </div>
                     <div>
-                      <h4 className="font-bold text-slate-800 text-xs">Formulário de Cadastro de Disciplina</h4>
-                      <p className="text-[11px] text-slate-500">Preencha as informações obrigatórias para cadastrar a disciplina no sistema.</p>
+                      <h4 className="font-bold text-slate-800 text-xs">
+                        {isUniversidade ? 'Formulário de Cadastro de Cadeira Curricular' : 'Formulário de Cadastro de Disciplina'}
+                      </h4>
+                      <p className="text-[11px] text-slate-500">
+                        {isUniversidade 
+                          ? 'Preencha as informações da cadeira curricular e associe-a a um curso registrado.'
+                          : 'Preencha as informações obrigatórias para cadastrar a disciplina no sistema.'}
+                      </p>
                     </div>
                   </div>
 
-                  {/* Campo 1: Disciplina (String) */}
+                  {/* Campo 1: Disciplina / Cadeira Curricular */}
                   <div className="space-y-1.5">
                     <label className="block text-xs font-bold text-slate-700">
-                      1. Disciplina (Matéria) <span className="text-rose-500">*</span>
+                      {isUniversidade ? '1. Nome da Cadeira Curricular' : '1. Disciplina (Matéria)'} <span className="text-rose-500">*</span>
                     </label>
                     <div className="space-y-2">
                       <input 
@@ -18664,15 +19083,18 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         required
                         value={classeForm.nome || ''}
                         onChange={(e) => setClasseForm({ ...classeForm, nome: e.target.value })}
-                        placeholder="Digite o nome da disciplina (ex: Matemática, Física, Língua Portuguesa)..."
+                        placeholder={isUniversidade ? "Digite o nome da cadeira (ex: Análise Matemática I, Algoritmos, Introdução ao Direito)..." : "Digite o nome da disciplina (ex: Matemática, Física, Língua Portuguesa)..."}
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm text-slate-800 font-semibold focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                       />
                       
-                      {/* Sugestões rápidas de disciplinas */}
+                      {/* Sugestões rápidas de disciplinas / cadeiras */}
                       <div>
                         <p className="text-[10px] text-slate-400 font-medium mb-1">Sugestões rápidas:</p>
                         <div className="flex flex-wrap gap-1.5">
-                          {["Matemática", "Língua Portuguesa", "Física", "Química", "Biologia", "História", "Geografia", "Inglês", "Filosofia", "Educação Física", "Artes", "Informática"].map(sub => (
+                          {(isUniversidade 
+                            ? ["Análise Matemática I", "Álgebra Linear", "Física Geral", "Introdução à Programação", "Direito Constitucional", "Economia I", "Metodologia de Investigação", "Sistemas Digitais", "Bioquímica", "Estatística Aplicada"]
+                            : ["Matemática", "Língua Portuguesa", "Física", "Química", "Biologia", "História", "Geografia", "Inglês", "Filosofia", "Educação Física", "Artes", "Informática"]
+                          ).map(sub => (
                             <button
                               key={sub}
                               type="button"
@@ -18691,17 +19113,90 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     </div>
                   </div>
 
-                  {/* Campo 2: Escola (dropdown com pesquisa dinâmica e selecção múltipla, listar escolas associadas ao utilizador) */}
+                  {/* Campo Específico Universitário: Curso Associado & Ano Curricular */}
+                  {isUniversidade && (
+                    <div className="space-y-3 p-3.5 bg-indigo-50/50 border border-indigo-100 rounded-xl">
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-bold text-slate-800 flex items-center justify-between">
+                          <span>2. Curso Universitário Associado <span className="text-rose-500">*</span></span>
+                          <span className="text-[10px] text-indigo-600 font-semibold bg-indigo-100/60 px-2 py-0.5 rounded-full">
+                            {rawCursos.length} Cursos Cadastrados
+                          </span>
+                        </label>
+                        <select
+                          required
+                          value={classeForm.curso_id || ''}
+                          onChange={(e) => {
+                            const found = rawCursos.find(cu => cu.id === e.target.value);
+                            setClasseForm({
+                              ...classeForm,
+                              curso_id: e.target.value,
+                              curso_nome: found?.nome || ''
+                            });
+                          }}
+                          className="w-full bg-white border border-slate-300 rounded-xl p-2.5 text-xs text-slate-800 font-semibold focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                        >
+                          <option value="">-- Selecione o Curso Curricular --</option>
+                          {rawCursos.map(c => (
+                            <option key={c.id} value={c.id}>
+                              {c.nome} {c.codigo ? `(${c.codigo})` : ''} - {c.grau || 'Licenciatura'}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-[10px] text-slate-500">
+                          A cadeira será sincronizada diretamente ao plano de estudos deste curso.
+                        </p>
+                      </div>
+
+                      {/* Ano Curricular e Semestre */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                            Ano Curricular <span className="text-rose-500">*</span>
+                          </label>
+                          <select
+                            value={classeForm.ano_curricular || '1º Ano'}
+                            onChange={(e) => setClasseForm({ ...classeForm, ano_curricular: e.target.value })}
+                            className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs text-slate-800 font-semibold focus:ring-1 focus:ring-indigo-500"
+                          >
+                            <option value="1º Ano">1º Ano</option>
+                            <option value="2º Ano">2º Ano</option>
+                            <option value="3º Ano">3º Ano</option>
+                            <option value="4º Ano">4º Ano</option>
+                            <option value="5º Ano">5º Ano</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                            Período / Semestre <span className="text-rose-500">*</span>
+                          </label>
+                          <select
+                            value={classeForm.periodo_lectivo || '1º Semestre'}
+                            onChange={(e) => setClasseForm({ ...classeForm, periodo_lectivo: e.target.value })}
+                            className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs text-slate-800 font-semibold focus:ring-1 focus:ring-indigo-500"
+                          >
+                            <option value="1º Semestre">1º Semestre</option>
+                            <option value="2º Semestre">2º Semestre</option>
+                            <option value="Anual">Anual</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Campo Escola / Faculdade */}
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
                       <label className="block text-xs font-bold text-slate-700">
-                        2. Escola <span className="text-rose-500">*</span>
+                        {isUniversidade ? '3. Faculdade / Unidade Universitária' : '2. Escola'} <span className="text-rose-500">*</span>
                       </label>
                       <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
                         {(classeForm.escolas_ids || (classeForm.escola_id ? [classeForm.escola_id] : [])).length} Selecionada(s)
                       </span>
                     </div>
-                    <p className="text-[11px] text-slate-400">Escolas associadas à sua sessão (pesquisa dinâmica e seleção múltipla):</p>
+                    <p className="text-[11px] text-slate-400">
+                      {isUniversidade ? 'Unidades universitárias associadas à cadeira:' : 'Escolas associadas à sua sessão:'}
+                    </p>
 
                     <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-3">
                       {/* Pesquisa Dinâmica */}
@@ -18709,7 +19204,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
                         <input 
                           type="text"
-                          placeholder="Pesquisar escola por nome ou código..."
+                          placeholder={isUniversidade ? "Pesquisar faculdade por nome ou código..." : "Pesquisar escola por nome ou código..."}
                           value={formSchoolSearchText}
                           onChange={(e) => setFormSchoolSearchText(e.target.value)}
                           className="w-full bg-white border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -18728,7 +19223,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           if (filteredUserSchools.length === 0) {
                             return (
                               <p className="text-xs text-slate-400 italic py-2 text-center">
-                                Nenhuma escola encontrada.
+                                {isUniversidade ? 'Nenhuma faculdade encontrada.' : 'Nenhuma escola encontrada.'}
                               </p>
                             );
                           }
@@ -18778,17 +19273,19 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     </div>
                   </div>
 
-                  {/* Campo 3: Classe (dropdown com pesquisa dinâmica, listar classes associadas às escolas selecionadas) */}
+                  {/* Campo Classe ou Turmas Associadas */}
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
                       <label className="block text-xs font-bold text-slate-700">
-                        3. Classe <span className="text-rose-500">*</span>
+                        {isUniversidade ? '4. Classes / Anos Letivos de Referência' : '3. Classe'} {!isUniversidade && <span className="text-rose-500">*</span>}
                       </label>
                       <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
                         {(classeForm.classes_associadas_ids || []).length} Selecionada(s)
                       </span>
                     </div>
-                    <p className="text-[11px] text-slate-400">Classes associadas às escolas selecionadas (pesquisa dinâmica):</p>
+                    <p className="text-[11px] text-slate-400">
+                      {isUniversidade ? 'Vincular a anos de ensino de referência (opcional):' : 'Classes associadas às escolas selecionadas:'}
+                    </p>
 
                     <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-3">
                       {/* Pesquisa Dinâmica */}
@@ -18796,7 +19293,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
                         <input 
                           type="text"
-                          placeholder="Pesquisar classe por nome (ex: 10ª Classe)..."
+                          placeholder={isUniversidade ? "Pesquisar ano letivo / classe..." : "Pesquisar classe por nome (ex: 10ª Classe)..."}
                           value={formClassSearchText}
                           onChange={(e) => setFormClassSearchText(e.target.value)}
                           className="w-full bg-white border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -18823,8 +19320,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             return (
                               <p className="text-xs text-amber-600 italic py-2 text-center">
                                 {availableClasses.length === 0 
-                                  ? "Nenhuma classe cadastrada nas escolas selecionadas."
-                                  : `Nenhuma classe encontrada para "${formClassSearchText}".`}
+                                  ? (isUniversidade ? "Nenhuma classe cadastrada nas faculdades selecionadas." : "Nenhuma classe cadastrada nas escolas selecionadas.")
+                                  : `Nenhum registro encontrado para "${formClassSearchText}".`}
                               </p>
                             );
                           }
@@ -18872,16 +19369,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     </div>
                   </div>
 
-                  {/* Campo 4: ID (automática) */}
+                  {/* Campo ID / Código */}
                   <div className="space-y-1.5">
                     <label className="block text-xs font-bold text-slate-700">
-                      4. ID da Disciplina <span className="text-slate-400 font-normal">(Gerado automaticamente)</span>
+                      {isUniversidade ? '5. Código da Cadeira' : '4. ID da Disciplina'} <span className="text-slate-400 font-normal">(Gerado automaticamente)</span>
                     </label>
                     <div className="relative">
                       <input 
                         type="text"
                         readOnly
-                        value={classeForm.codigo || editingItem?.id || 'DISC-AUTOMATIC'}
+                        value={classeForm.codigo || editingItem?.id || (isUniversidade ? 'CAD-AUTOMATIC' : 'DISC-AUTOMATIC')}
                         className="w-full bg-slate-100 border border-slate-200 rounded-xl p-2.5 text-sm text-slate-700 font-bold font-mono cursor-not-allowed shadow-inner"
                       />
                       <span className="absolute right-3 top-2.5 text-[10px] font-bold bg-slate-200 text-slate-600 px-2 py-0.5 rounded-md">
@@ -18890,17 +19387,19 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     </div>
                   </div>
 
-                  {/* Campo 5: Docente/Professor responsável (dropdown com pesquisa dinâmica, listar docentes associados às escolas selecionadas) */}
+                  {/* Campo Docente/Professor responsável */}
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
                       <label className="block text-xs font-bold text-slate-700">
-                        5. Docente / Professor Responsável
+                        {isUniversidade ? '6. Regente / Docente Responsável' : '5. Docente / Professor Responsável'}
                       </label>
                       <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
                         {(classeForm.professores_responsaveis || []).length} Selecionado(s)
                       </span>
                     </div>
-                    <p className="text-[11px] text-slate-400">Docentes associados às escolas selecionadas (pesquisa dinâmica):</p>
+                    <p className="text-[11px] text-slate-400">
+                      {isUniversidade ? 'Docentes da faculdade ou departamento acadêmico:' : 'Docentes associados às escolas selecionadas (pesquisa dinâmica):'}
+                    </p>
 
                     <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-3">
                       {/* Pesquisa Dinâmica */}
@@ -19105,7 +19604,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               {modalType === 'pauta' && (
                 <>
                   <div className="col-span-2 bg-slate-50 border border-slate-150 rounded-xl p-3 mb-2">
-                    <label className="block text-xs font-extrabold text-slate-500 mb-1 flex items-center gap-1">🏫 Filtrar por Escola</label>
+                    <label className="block text-xs font-extrabold text-slate-500 mb-1 flex items-center gap-1"> Filtrar por Escola</label>
                     <select
                       value={selectedPautaSchoolId}
                       onChange={(e) => {
@@ -19128,7 +19627,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       }}
                       className="w-full bg-white border border-slate-200 rounded-lg p-2.5 text-xs font-bold text-slate-700 cursor-pointer"
                     >
-                      <option value="">✨ Todas as Escolas</option>
+                      <option value="">Todas as Escolas</option>
                       {schools.map(sch => (
                         <option key={sch.id} value={sch.id}>{sch.nome}</option>
                       ))}
@@ -19661,7 +20160,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       label="Aplicável a (Turma / Classe)"
                       required
                       options={[
-                        { value: 'todas', label: '✨ Todas as Turmas (Geral)' },
+                        { value: 'todas', label: ' Todas as Turmas (Geral)' },
                         ...turmas.map(t => ({ value: t.id, label: t.nome }))
                       ]}
                       value={feriasForm.turma_id || 'todas'}
@@ -19830,11 +20329,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             >
                               <option value="">{t('calendario_selecione_materia') || '-- Selecione a Matéria Planeada --'}</option>
                               {availableTopics.length === 0 ? (
-                                <option value="" disabled>⚠️ Nenhuma matéria cadastrada no Plano de Aulas deste docente</option>
+                                <option value="" disabled>Nenhuma matéria cadastrada no Plano de Aulas deste docente</option>
                               ) : (
                                 availableTopics.map(t => (
                                   <option key={t.id} value={t.id} disabled={t.status === 'lecionado'}>
-                                    {t.status === 'lecionado' ? '✅' : '⏳'} #{t.ordem || 1} - {t.topico} ({t.status === 'lecionado' ? 'Já Lecionado' : 'Pendente'})
+                                    {t.status === 'lecionado' ? '' : '⏳'} #{t.ordem || 1} - {t.topico} ({t.status === 'lecionado' ? 'Já Lecionado' : 'Pendente'})
                                   </option>
                                 ))
                               )}
@@ -19859,7 +20358,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           className="w-full bg-white border border-purple-300 rounded-xl p-2.5 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500"
                         />
                         <p className="text-[10px] text-purple-700 font-medium">
-                          ✨ Ao salvar, este tópico será adicionado automaticamente ao Plano de Aulas com a insígnia "Extraordinário".
+                           Ao salvar, este tópico será adicionado automaticamente ao Plano de Aulas com a insígnia "Extraordinário".
                         </p>
                       </div>
                     )}
@@ -19927,7 +20426,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       return (
                         <div className="p-3.5 bg-amber-50/80 border border-amber-200 rounded-xl space-y-2 animate-fadeIn">
                           <div className="flex items-center gap-2 text-amber-800 font-bold text-xs">
-                            <span className="text-base">⚠️</span>
+                            <span className="text-base"></span>
                             <span>Atenção: A data selecionada é um {isWeekend ? 'Final de Semana' : ''}{isWeekend && isHoliday ? ' e ' : ''}{isHoliday ? 'Feriado' : ''}!</span>
                           </div>
                           <label className="block text-xs font-bold text-amber-900">
@@ -20018,7 +20517,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 <>
                   <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 space-y-1">
                     <p className="font-bold flex items-center gap-1.5">
-                      <span>📝</span> Agendamento de Exames & Avaliações
+                      <span></span> Agendamento de Exames & Avaliações
                     </p>
                     <p className="text-[11px] text-amber-800/90 font-medium">
                       O agendamento será exibido com destaque no Calendário da turma e sincronizado com o cronograma acadêmico.
@@ -20050,13 +20549,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         onChange={(e) => setExameForm({ ...exameForm, tipo: e.target.value as any })}
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
                       >
-                        <option value="Exame Normal">📝 Exame Normal</option>
-                        <option value="Exame Recurso">🔄 Exame de Recurso</option>
-                        <option value="Exame Extraordinário">⚡ Exame Extraordinário</option>
-                        <option value="Avaliação Contínua">📊 Avaliação Contínua (ACS/ACP)</option>
-                        <option value="Teste Escrito">📑 Teste Escrito / Prova</option>
-                        <option value="Trabalho Prático">🔬 Trabalho Prático / Defesa</option>
-                        <option value="Reavaliação">🎯 Reavaliação</option>
+                        <option value="Exame Normal">Exame Normal</option>
+                        <option value="Exame Recurso">Exame de Recurso</option>
+                        <option value="Exame Extraordinário">Exame Extraordinário</option>
+                        <option value="Avaliação Contínua">Avaliação Contínua (ACS/ACP)</option>
+                        <option value="Teste Escrito">Teste Escrito / Prova</option>
+                        <option value="Trabalho Prático">Trabalho Prático / Defesa</option>
+                        <option value="Reavaliação">Reavaliação</option>
                       </select>
                     </div>
 
@@ -20341,7 +20840,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           onClick={() => setActiveToast(null)}
         >
           <div className="bg-indigo-600 p-2 rounded-xl text-white font-extrabold text-base flex-shrink-0 animate-bounce">
-            🔔
+            
           </div>
           <div className="space-y-1 text-xs">
             <p className="font-extrabold text-slate-100">{activeToast.titulo}</p>
@@ -20500,7 +20999,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 })()}
               </p>
               <div className="bg-indigo-50/50 dark:bg-indigo-950/25 border border-indigo-100 dark:border-indigo-950/50 p-3 rounded-xl space-y-1">
-                <p className="font-extrabold text-indigo-700 dark:text-indigo-400 flex items-center gap-1">💡 Dica de Utilização:</p>
+                <p className="font-extrabold text-indigo-700 dark:text-indigo-400 flex items-center gap-1"> Dica de Utilização:</p>
                 <p className="text-[11px] text-indigo-600/90 dark:text-indigo-300">
                   Qualquer modificação feita nesta tela é salva instantaneamente no banco de dados isolado da sua instituição em nuvem.
                 </p>
@@ -20547,7 +21046,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               </div>
               <div>
                 <span className="bg-rose-500/10 text-rose-600 dark:text-rose-400 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider font-mono">
-                  🚨 Ação Crítica & Irreversível
+                   Ação Crítica & Irreversível
                 </span>
                 <h3 className="text-lg font-black text-slate-900 dark:text-white font-sans mt-0.5">
                   Excluir Escola Parceira
@@ -20899,6 +21398,24 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         tenantUsers={tenantUsers}
         isSaving={isSaving}
       />
+
+      {/* FICHA ACADÉMICA COMPLETA DO ESTUDANTE (9 ABAS) */}
+      {selectedProcessoStudent && (
+        <ProcessoAlunoFicha
+          student={selectedProcessoStudent}
+          tenantTipoInstituicao={tenant?.tipoInstituicao || 'escola'}
+          cursos={rawCursos}
+          cadeiras={rawCadeiras}
+          inscricoes={rawInscricoes}
+          pautas={rawPautas}
+          classes={rawClasses}
+          turmas={rawTurmas}
+          schools={rawSchools}
+          tenantUsers={tenantUsers}
+          currentUserRole={currentUserRole}
+          onClose={() => setSelectedProcessoStudent(null)}
+        />
+      )}
 
       {isCookiePolicyOpen && (
         <CookiePolicyModal onClose={() => setIsCookiePolicyOpen(false)} />

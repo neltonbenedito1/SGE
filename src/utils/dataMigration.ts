@@ -244,3 +244,74 @@ export async function runGlobalDataMigration(options: MigrationOptions): Promise
     logs
   };
 }
+
+/**
+ * Migração Idempotente Específica para Tipo de Instituição (Regras Gerais - Secção 1.1 & 8.2)
+ * 1. Tenants existentes sem tipoInstituicao recebem 'escola' por defeito.
+ * 2. Disciplinas / Classes existentes recebem institutionId baseado no escola_id ou tenant_id.
+ */
+export async function migrateInstitutionTypes(): Promise<{
+  tenantsUpdated: number;
+  classesUpdated: number;
+}> {
+  let tenantsUpdated = 0;
+  let classesUpdated = 0;
+
+  try {
+    // 1. Atualizar Tenants
+    const tenantsSnap = await getDocs(collection(db, 'tenants'));
+    const tenantBatch = writeBatch(db);
+    let tCount = 0;
+
+    tenantsSnap.forEach(d => {
+      const data = d.data();
+      if (!data.tipoInstituicao) {
+        tenantBatch.update(doc(db, 'tenants', d.id), {
+          tipoInstituicao: 'escola',
+          regime_funcionamento: data.regime_funcionamento || 'Ambos',
+          updated_at: new Date().toISOString()
+        });
+        tCount++;
+        tenantsUpdated++;
+      }
+    });
+
+    if (tCount > 0) {
+      await tenantBatch.commit();
+    }
+  } catch (err) {
+    console.warn('[Migration Warning] migrateInstitutionTypes (tenants):', err);
+  }
+
+  try {
+    // 2. Atualizar Classes / Disciplinas (institutionId)
+    const classesSnap = await getDocs(collection(db, 'classes'));
+    const classBatch = writeBatch(db);
+    let cCount = 0;
+
+    classesSnap.forEach(d => {
+      const data = d.data();
+      if (!data.institutionId) {
+        const instId = data.escola_id || data.tenant_id;
+        if (instId) {
+          classBatch.update(doc(db, 'classes', d.id), {
+            institutionId: instId,
+            periodo_lectivo: data.periodo_lectivo || '1º Trimestre',
+            ano_curricular: data.ano_curricular || 1
+          });
+          cCount++;
+          classesUpdated++;
+        }
+      }
+    });
+
+    if (cCount > 0) {
+      await classBatch.commit();
+    }
+  } catch (err) {
+    console.warn('[Migration Warning] migrateInstitutionTypes (classes):', err);
+  }
+
+  return { tenantsUpdated, classesUpdated };
+}
+

@@ -8,12 +8,13 @@ import {
   Percent, ShieldAlert, BarChart3, ListChecks, ArrowUpRight,
   Calendar, Filter, Download, Eye, FileText, CheckCircle, AlertTriangle,
   TrendingDown, Clock, History, UserCheck, RefreshCw, FileSpreadsheet,
-  Activity, BookOpenCheck, ShieldCheck, HelpCircle, FileCheck
+  Activity, BookOpenCheck, ShieldCheck, HelpCircle, FileCheck, DoorOpen, Layers, Building
 } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, getDocs, addDoc, query, orderBy, getDoc, doc } from 'firebase/firestore';
 import { ActividadePendente, PlanoAula } from '../types';
 import { PerformanceEvaluationModule } from './PerformanceEvaluationModule';
+import { getAnalyticsCardsForInstitution, AnalyticsCardType, getTerminology } from '../lib/terminology';
 
 // --- TS INTERFACES ---
 interface School {
@@ -37,6 +38,9 @@ interface Student {
   ativo?: boolean;
   user_id?: string;
   numero_matricula?: string;
+  curso_id?: string;
+  curso?: string;
+  dados_nivel?: any;
 }
 
 interface Turma {
@@ -86,6 +90,11 @@ interface AnalyticsModuleProps {
   processosAluno?: any[];
   planoAulas?: PlanoAula[];
   tenantId?: string;
+  tipoInstituicao?: string;
+  cursos?: any[];
+  cadeiras?: any[];
+  salas?: any[];
+  tenantConfig?: any;
 }
 
 interface MonthlyReport {
@@ -130,7 +139,12 @@ export function AnalyticsModule({
   assiduidadeLogs = [],
   processosAluno = [],
   planoAulas = [],
-  tenantId = 'default'
+  tenantId = 'default',
+  tipoInstituicao = 'escola',
+  cursos = [],
+  cadeiras = [],
+  salas = [],
+  tenantConfig
 }: AnalyticsModuleProps) {
 
   // --- SUB-TABS STATE ---
@@ -452,6 +466,37 @@ export function AnalyticsModule({
     const passFactor = approvalRatePercent > 0 ? (approvalRatePercent / 100) : 0.8;
     return Math.min(100, Math.round(((completion * 0.6) + (passFactor * 0.4)) * 100));
   }, [plannedClassesCount, conductedClassesCount, approvalRatePercent]);
+
+  // --- CAPACIDADE & METRICAS POR TIPO DE INSTITUIÇÃO ---
+  const totalSalasCapacidade = useMemo(() => {
+    if (!salas || salas.length === 0) return 0;
+    return salas.reduce((acc, s) => acc + (Number(s.capacidade) || 30), 0);
+  }, [salas]);
+
+  const numSalas = salas ? salas.length : 0;
+  const numCursos = cursos ? cursos.length : 0;
+  const capacityPerCourse = numCursos > 0 ? Math.floor(totalSalasCapacidade / numCursos) : 0;
+  const minCapacidadeCurso = Number(tenantConfig?.capacidade_minima_por_curso) || 25;
+  const isCourseCapacityBelowMin = numCursos > 0 && capacityPerCourse < minCapacidadeCurso;
+
+  // Modulos para Instituto
+  const modulesList = useMemo(() => {
+    if (classes && classes.length > 0) return classes;
+    if (cadeiras && cadeiras.length > 0) return cadeiras;
+    return [];
+  }, [classes, cadeiras]);
+
+  const capacityPerModule = modulesList.length > 0 
+    ? Math.floor(totalSalasCapacidade / modulesList.length) 
+    : 0;
+
+  const allowedCards = useMemo(() => {
+    return getAnalyticsCardsForInstitution(tipoInstituicao);
+  }, [tipoInstituicao]);
+
+  const schoolOccupancyRate = totalSalasCapacidade > 0 
+    ? Math.min(100, Math.round((activeStudentsCount / totalSalasCapacidade) * 100)) 
+    : 0;
 
 
   // --- CHART A DATA: Rendimento Escolar Donut ---
@@ -929,9 +974,9 @@ export function AnalyticsModule({
             disabled={!isAdmin}
             className="p-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold focus:outline-hidden text-slate-800 dark:text-white disabled:opacity-75 disabled:cursor-not-allowed"
           >
-            {isAdmin && <option value="todos">🌍 Todas as Escolas</option>}
+            {isAdmin && <option value="todos">Todas as Escolas</option>}
             {availableSchools.map((s, idx) => (
-              <option key={`analytics-sch-${s.id || idx}-${idx}`} value={s.id}>🏫 {s.nome}</option>
+              <option key={`analytics-sch-${s.id || idx}-${idx}`} value={s.id}>{s.nome}</option>
             ))}
           </select>
         </div>
@@ -948,9 +993,9 @@ export function AnalyticsModule({
             }}
             className="p-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold focus:outline-hidden text-slate-800 dark:text-white"
           >
-            <option value="todos">👥 Todas as Turmas</option>
+            <option value="todos">Todas as Turmas</option>
             {availableTurmas.map((t, idx) => (
-              <option key={`analytics-turma-${t.id || idx}-${idx}`} value={t.id}>📐 {t.nome}</option>
+              <option key={`analytics-turma-${t.id || idx}-${idx}`} value={t.id}>{t.nome}</option>
             ))}
           </select>
         </div>
@@ -967,11 +1012,11 @@ export function AnalyticsModule({
             disabled={isDocente}
             className="p-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold focus:outline-hidden text-slate-800 dark:text-white disabled:opacity-75"
           >
-            <option value="todos">🧑‍🏫 Todos Docentes</option>
+            <option value="todos">Todos Docentes</option>
             {availableTeachers.map((t, idx) => {
               const u = tenantUsers.find(tu => tu.id === (t as any).user_id || tu.id === t.id);
               return (
-                <option key={`analytics-prof-${t.id || idx}-${idx}`} value={t.id}>👤 {u?.nome || t.especialidade || t.id}</option>
+                <option key={`analytics-prof-${t.id || idx}-${idx}`} value={t.id}>{u?.nome || t.especialidade || t.id}</option>
               );
             })}
           </select>
@@ -988,11 +1033,11 @@ export function AnalyticsModule({
             }}
             className="p-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold focus:outline-hidden text-slate-800 dark:text-white"
           >
-            <option value="todos">🎓 Todos os Estudantes</option>
+            <option value="todos">Todos os Estudantes</option>
             {availableStudents.map((s, idx) => {
               const u = tenantUsers.find(tu => tu.id === s.user_id || tu.id === s.id);
               return (
-                <option key={`analytics-stud-${s.id || idx}-${idx}`} value={s.id}>👤 {u?.nome || s.numero_matricula || s.id}</option>
+                <option key={`analytics-stud-${s.id || idx}-${idx}`} value={s.id}>{u?.nome || s.numero_matricula || s.id}</option>
               );
             })}
           </select>
@@ -1072,95 +1117,335 @@ export function AnalyticsModule({
       {activeSubTab === 'overview' && (
         <div className="space-y-6">
           
-          {/* Bento-Grid KPI Cards */}
+          {/* Bento-Grid KPI Cards Orientados por Tipo de Instituição */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             
-            {/* Card 1: Total Alunos Ativos */}
-            <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-800 shadow-xs flex flex-col justify-between">
-              <div className="flex items-start justify-between">
-                <div>
-                  <span className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-wider">Estudantes Ativos</span>
-                  <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Alvo ideal: &gt; 100</p>
+            {/* Card de Capacidade Específico por Tipo de Instituição */}
+            {allowedCards.includes('escola_capacidade_salas') && (
+              <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-800 shadow-xs flex flex-col justify-between">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <span className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-wider">Capacidade de Salas</span>
+                    <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Lotação e Ocupação Escolar</p>
+                  </div>
+                  <div className="bg-teal-50 dark:bg-teal-950/40 p-2 rounded-xl text-teal-600 dark:text-teal-400">
+                    <DoorOpen className="w-5 h-5" />
+                  </div>
                 </div>
-                <div className="bg-indigo-50 dark:bg-indigo-950/40 p-2 rounded-xl text-indigo-600 dark:text-indigo-400">
-                  <GraduationCap className="w-5 h-5" />
+                <div className="mt-3">
+                  <div className="text-2xl font-black text-slate-900 dark:text-white font-sans tracking-tight">
+                    {numSalas} salas &middot; {activeStudentsCount}/{totalSalasCapacidade}
+                  </div>
+                  <div className="mt-2 space-y-1">
+                    <div className="flex justify-between text-[11px] font-semibold text-slate-500">
+                      <span>Ocupação Geral</span>
+                      <span className="font-bold text-slate-700 dark:text-slate-300">{schoolOccupancyRate}%</span>
+                    </div>
+                    <div className="w-full bg-slate-150 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
+                      <div 
+                        className={`h-full transition-all duration-300 ${schoolOccupancyRate > 95 ? 'bg-rose-500' : schoolOccupancyRate > 75 ? 'bg-amber-500' : 'bg-teal-500'}`} 
+                        style={{ width: `${Math.min(100, schoolOccupancyRate)}%` }} 
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div className="mt-4 flex items-end justify-between">
-                <div>
-                  <h3 className="text-3xl font-black text-slate-900 dark:text-white font-sans">{activeStudentsCount}</h3>
-                  <p className="text-[10px] font-bold text-emerald-600 flex items-center gap-0.5 mt-1">
-                    <TrendingUp className="w-3.5 h-3.5" /> +12% Este Mês
+            )}
+
+            {/* Universidade: Card Resumo de Capacidade Instalada Total */}
+            {allowedCards.includes('universidade_capacidade_total') && (
+              <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-800 shadow-xs flex flex-col justify-between">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <span className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-wider">Capacidade Instalada</span>
+                    <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{numCursos} Cursos em {numSalas} Salas</p>
+                  </div>
+                  <div className="bg-indigo-50 dark:bg-indigo-950/40 p-2 rounded-xl text-indigo-600 dark:text-indigo-400">
+                    <Building className="w-5 h-5" />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <div className="flex items-baseline justify-between">
+                    <h3 className="text-2xl font-black text-slate-900 dark:text-white font-sans">{totalSalasCapacidade} <span className="text-xs font-normal text-slate-400">lugares</span></h3>
+                    <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">~{capacityPerCourse} / curso</span>
+                  </div>
+                  {isCourseCapacityBelowMin ? (
+                    <div className="mt-2 p-1.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 rounded-lg flex items-center gap-1.5 text-[10px] text-amber-700 dark:text-amber-300 font-semibold">
+                      <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-600" />
+                      <span>Capacidade abaixo do mínimo ({minCapacidadeCurso})</span>
+                    </div>
+                  ) : (
+                    <p className="text-[10px] text-emerald-600 font-semibold mt-2 flex items-center gap-1">
+                      <CheckCircle className="w-3 h-3" /> Distribuição curricular equilibrada
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Instituto: Card Resumo de Capacidade Modular */}
+            {allowedCards.includes('instituto_capacidade_total') && (
+              <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-800 shadow-xs flex flex-col justify-between">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <span className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-wider">Capacidade Modular</span>
+                    <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{modulesList.length} Módulos em {numSalas} Salas</p>
+                  </div>
+                  <div className="bg-sky-50 dark:bg-sky-950/40 p-2 rounded-xl text-sky-600 dark:text-sky-400">
+                    <Layers className="w-5 h-5" />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <div className="flex items-baseline justify-between">
+                    <h3 className="text-2xl font-black text-slate-900 dark:text-white font-sans">{totalSalasCapacidade} <span className="text-xs font-normal text-slate-400">vagas</span></h3>
+                    <span className="text-xs font-bold text-sky-600 dark:text-sky-400">~{capacityPerModule} / módulo</span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-2">
+                    Média distribuída conforme carga de salas operacionais.
                   </p>
                 </div>
-                {/* Goal Indicator Ring */}
-                <div className={`w-3 h-3 rounded-full ${activeStudentsCount > 100 ? 'bg-emerald-500 shadow-md shadow-emerald-500/20' : activeStudentsCount >= 50 ? 'bg-amber-500 shadow-md' : 'bg-rose-500'}`} title="Indicador de Meta" />
               </div>
-            </div>
+            )}
 
-            {/* Card 2: Rendimento Médio Global */}
-            <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-800 shadow-xs flex flex-col justify-between">
-              <div className="flex items-start justify-between">
-                <div>
-                  <span className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-wider">Média de Notas</span>
-                  <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Meta Mínima: 10.0 Val</p>
+            {/* Card: Total Alunos Ativos */}
+            {allowedCards.includes('estudantes_ativos') && (
+              <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-800 shadow-xs flex flex-col justify-between">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <span className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-wider">Estudantes Ativos</span>
+                    <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Matrículas Vigentes</p>
+                  </div>
+                  <div className="bg-indigo-50 dark:bg-indigo-950/40 p-2 rounded-xl text-indigo-600 dark:text-indigo-400">
+                    <GraduationCap className="w-5 h-5" />
+                  </div>
                 </div>
-                <div className="bg-emerald-50 dark:bg-emerald-950/40 p-2 rounded-xl text-emerald-600 dark:text-emerald-400">
-                  <Award className="w-5 h-5" />
+                <div className="mt-4 flex items-end justify-between">
+                  <div>
+                    <h3 className="text-3xl font-black text-slate-900 dark:text-white font-sans">{activeStudentsCount}</h3>
+                    <p className="text-[10px] font-bold text-emerald-600 flex items-center gap-0.5 mt-1">
+                      <TrendingUp className="w-3.5 h-3.5" /> Frequência Regular
+                    </p>
+                  </div>
+                  <div className={`w-3 h-3 rounded-full ${activeStudentsCount > 50 ? 'bg-emerald-500 shadow-md shadow-emerald-500/20' : 'bg-amber-500 shadow-md'}`} title="Indicador de Meta" />
                 </div>
               </div>
-              <div className="mt-4 flex items-end justify-between">
-                <div>
-                  <h3 className="text-3xl font-black text-slate-900 dark:text-white font-sans">{overallAvgGrade || '---'}</h3>
-                  <p className="text-[10px] font-bold text-emerald-600 flex items-center gap-0.5 mt-1">
-                    {overallAvgGrade >= 10 ? 'Aproveitamento Positivo' : 'Necessita Atenção'}
-                  </p>
-                </div>
-                <div className={`w-3 h-3 rounded-full ${overallAvgGrade >= 14 ? 'bg-emerald-500 shadow-md shadow-emerald-500/20' : overallAvgGrade >= 10 ? 'bg-amber-400' : 'bg-rose-500 animate-pulse'}`} />
-              </div>
-            </div>
+            )}
 
-            {/* Card 3: Taxa de Aprovação */}
-            <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-800 shadow-xs flex flex-col justify-between">
-              <div className="flex items-start justify-between">
-                <div>
-                  <span className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-wider">Taxa de Aprovação</span>
-                  <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Meta Mínima: 75%</p>
+            {/* Card: Rendimento Médio Global */}
+            {allowedCards.includes('rendimento_medio') && (
+              <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-800 shadow-xs flex flex-col justify-between">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <span className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-wider">Média de Notas</span>
+                    <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Meta Mínima: 10.0 Val</p>
+                  </div>
+                  <div className="bg-emerald-50 dark:bg-emerald-950/40 p-2 rounded-xl text-emerald-600 dark:text-emerald-400">
+                    <Award className="w-5 h-5" />
+                  </div>
                 </div>
-                <div className="bg-blue-50 dark:bg-blue-950/40 p-2 rounded-xl text-blue-600 dark:text-blue-400">
-                  <Percent className="w-5 h-5" />
+                <div className="mt-4 flex items-end justify-between">
+                  <div>
+                    <h3 className="text-3xl font-black text-slate-900 dark:text-white font-sans">{overallAvgGrade || '---'}</h3>
+                    <p className="text-[10px] font-bold text-emerald-600 flex items-center gap-0.5 mt-1">
+                      {overallAvgGrade >= 10 ? 'Aproveitamento Positivo' : 'Necessita Atenção'}
+                    </p>
+                  </div>
+                  <div className={`w-3 h-3 rounded-full ${overallAvgGrade >= 14 ? 'bg-emerald-500 shadow-md shadow-emerald-500/20' : overallAvgGrade >= 10 ? 'bg-amber-400' : 'bg-rose-500 animate-pulse'}`} />
                 </div>
               </div>
-              <div className="mt-4 flex items-end justify-between">
-                <div>
-                  <h3 className="text-3xl font-black text-slate-900 dark:text-white font-sans">{approvalRatePercent}%</h3>
-                  <p className="text-[10px] font-bold text-indigo-500 mt-1">Sinalização de Desempenho</p>
-                </div>
-                <div className={`w-3 h-3 rounded-full ${approvalRatePercent >= 75 ? 'bg-emerald-500 shadow-md shadow-emerald-500/20' : approvalRatePercent >= 50 ? 'bg-amber-400' : 'bg-rose-500 animate-pulse'}`} />
-              </div>
-            </div>
+            )}
 
-            {/* Card 4: Eficiência de Ensino */}
-            <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-800 shadow-xs flex flex-col justify-between">
-              <div className="flex items-start justify-between">
-                <div>
-                  <span className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-wider">Eficiência de Ensino</span>
-                  <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Carga Prevista cumprida</p>
+            {/* Card: Taxa de Aprovação */}
+            {allowedCards.includes('taxa_aprovacao') && (
+              <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-800 shadow-xs flex flex-col justify-between">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <span className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-wider">Taxa de Aprovação</span>
+                    <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Meta Mínima: 75%</p>
+                  </div>
+                  <div className="bg-blue-50 dark:bg-blue-950/40 p-2 rounded-xl text-blue-600 dark:text-blue-400">
+                    <Percent className="w-5 h-5" />
+                  </div>
                 </div>
-                <div className="bg-amber-50 dark:bg-amber-950/40 p-2 rounded-xl text-amber-600 dark:text-amber-400">
-                  <Clock className="w-5 h-5" />
+                <div className="mt-4 flex items-end justify-between">
+                  <div>
+                    <h3 className="text-3xl font-black text-slate-900 dark:text-white font-sans">{approvalRatePercent}%</h3>
+                    <p className="text-[10px] font-bold text-indigo-500 mt-1">Sinalização de Desempenho</p>
+                  </div>
+                  <div className={`w-3 h-3 rounded-full ${approvalRatePercent >= 75 ? 'bg-emerald-500 shadow-md shadow-emerald-500/20' : approvalRatePercent >= 50 ? 'bg-amber-400' : 'bg-rose-500 animate-pulse'}`} />
                 </div>
               </div>
-              <div className="mt-4 flex items-end justify-between">
-                <div>
-                  <h3 className="text-3xl font-black text-slate-900 dark:text-white font-sans">{teachingEfficiencyRate}%</h3>
-                  <p className="text-[10px] font-bold text-amber-600 dark:text-amber-400 mt-1">Aulas Cumpridas: {conductedClassesCount}</p>
+            )}
+
+            {/* Card: Eficiência de Ensino (se aplicável ao perfil escolar) */}
+            {allowedCards.includes('eficiencia_ensino') && (
+              <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/60 dark:border-slate-800 shadow-xs flex flex-col justify-between">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <span className="text-slate-400 dark:text-slate-500 text-[10px] font-bold uppercase tracking-wider">Eficiência de Ensino</span>
+                    <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Carga Prevista cumprida</p>
+                  </div>
+                  <div className="bg-amber-50 dark:bg-amber-950/40 p-2 rounded-xl text-amber-600 dark:text-amber-400">
+                    <Clock className="w-5 h-5" />
+                  </div>
                 </div>
-                <div className={`w-3 h-3 rounded-full ${teachingEfficiencyRate >= 85 ? 'bg-emerald-500' : 'bg-amber-400'}`} />
+                <div className="mt-4 flex items-end justify-between">
+                  <div>
+                    <h3 className="text-3xl font-black text-slate-900 dark:text-white font-sans">{teachingEfficiencyRate}%</h3>
+                    <p className="text-[10px] font-bold text-amber-600 dark:text-amber-400 mt-1">Aulas Cumpridas: {conductedClassesCount}</p>
+                  </div>
+                  <div className={`w-3 h-3 rounded-full ${teachingEfficiencyRate >= 85 ? 'bg-emerald-500' : 'bg-amber-400'}`} />
+                </div>
               </div>
-            </div>
+            )}
 
           </div>
+
+          {/* SEÇÃO UNIVERSITÁRIA: CARDS DE CAPACIDADE DE ESTUDANTES POR CURSO (Regra 1.2) */}
+          {allowedCards.includes('universidade_capacidade_por_curso') && (
+            <div className="bg-slate-50 dark:bg-slate-900/40 p-5 rounded-2xl border border-slate-200/70 dark:border-slate-800 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                    <Building className="w-4 h-4 text-indigo-600" /> Capacidade e Lotação de Estudantes por Curso
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Fórmula regulamentar: Capacidade Instalada ({totalSalasCapacidade} lugares em {numSalas} salas) &divide; {numCursos} cursos = {capacityPerCourse} vagas/curso. Mínimo regulamentar: {minCapacidadeCurso} vagas.
+                  </p>
+                </div>
+                <span className="text-[11px] font-bold px-3 py-1 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-lg border border-slate-200 dark:border-slate-700 self-start sm:self-auto">
+                  {numCursos} Cursos Monitorizados
+                </span>
+              </div>
+
+              {cursos.length === 0 ? (
+                <div className="p-8 text-center bg-white dark:bg-slate-900 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-xs text-slate-400">
+                  Nenhum curso cadastrado no sistema para cálculo analítico de capacidade.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {cursos.map(c => {
+                    const cursoStudents = students.filter(s => s.ativo !== false && (s.curso_id === c.id || s.curso === c.nome || s.dados_nivel?.curso === c.nome));
+                    const enrolled = cursoStudents.length;
+                    const vagas = Math.max(0, capacityPerCourse - enrolled);
+                    const occupPercent = capacityPerCourse > 0 ? Math.min(100, Math.round((enrolled / capacityPerCourse) * 100)) : 0;
+                    const isBelowMin = capacityPerCourse < minCapacidadeCurso;
+
+                    return (
+                      <div key={c.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between space-y-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <span className="font-mono text-[10px] font-bold text-indigo-600 dark:text-indigo-400">
+                              {c.codigo || 'CURSO'}
+                            </span>
+                            <h4 className="text-xs font-bold text-slate-800 dark:text-slate-100 line-clamp-1 mt-0.5">
+                              {c.nome}
+                            </h4>
+                          </div>
+                          {isBelowMin ? (
+                            <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200 dark:border-rose-800 shrink-0">
+                              Capacidade abaixo do mínimo
+                            </span>
+                          ) : (
+                            <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 shrink-0">
+                              Conforme
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2 py-2 border-y border-slate-100 dark:border-slate-800/60 text-center">
+                          <div>
+                            <span className="text-[9px] text-slate-400 uppercase font-bold block">Capacidade</span>
+                            <span className="text-xs font-black text-slate-700 dark:text-slate-200">{capacityPerCourse}</span>
+                          </div>
+                          <div>
+                            <span className="text-[9px] text-slate-400 uppercase font-bold block">Matriculados</span>
+                            <span className="text-xs font-black text-indigo-600 dark:text-indigo-400">{enrolled}</span>
+                          </div>
+                          <div>
+                            <span className="text-[9px] text-slate-400 uppercase font-bold block">Vagas Livres</span>
+                            <span className={`text-xs font-black ${vagas === 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{vagas}</span>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[10px] font-semibold text-slate-500">
+                            <span>Lotação do Curso</span>
+                            <span>{occupPercent}%</span>
+                          </div>
+                          <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
+                            <div 
+                              className={`h-full transition-all duration-300 ${occupPercent >= 100 ? 'bg-rose-500' : occupPercent >= 80 ? 'bg-amber-500' : 'bg-indigo-600'}`}
+                              style={{ width: `${occupPercent}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* SEÇÃO INSTITUTOS: CARDS DE CAPACIDADE POR MÓDULO (Regra 1.4) */}
+          {allowedCards.includes('instituto_capacidade_por_modulo') && (
+            <div className="bg-slate-50 dark:bg-slate-900/40 p-5 rounded-2xl border border-slate-200/70 dark:border-slate-800 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-sky-600" /> Capacidade e Ocupação por Módulo Técnico
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Distribuição da capacidade instalada ({totalSalasCapacidade} vagas) entre os {modulesList.length} módulos cadastrados.
+                  </p>
+                </div>
+                <span className="text-[11px] font-bold px-3 py-1 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-lg border border-slate-200 dark:border-slate-700 self-start sm:self-auto">
+                  {modulesList.length} Módulos Registados
+                </span>
+              </div>
+
+              {modulesList.length === 0 ? (
+                <div className="p-8 text-center bg-white dark:bg-slate-900 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-xs text-slate-400">
+                  Nenhum módulo cadastrado no sistema para cálculo de capacidade.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {modulesList.map(mod => {
+                    const modName = mod.nome || mod.codigo || 'Módulo Sem Nome';
+                    const modEnrolled = students.filter(s => s.ativo !== false && (s.turma_id === mod.turma_id || s.dados_nivel?.modulo === modName)).length;
+                    const vagas = Math.max(0, capacityPerModule - modEnrolled);
+
+                    return (
+                      <div key={mod.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between space-y-3">
+                        <div>
+                          <span className="font-mono text-[10px] font-bold text-sky-600 dark:text-sky-400">MÓDULO</span>
+                          <h4 className="text-xs font-bold text-slate-800 dark:text-slate-100 line-clamp-1 mt-0.5">
+                            {modName}
+                          </h4>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2 py-2 border-y border-slate-100 dark:border-slate-800/60 text-center">
+                          <div>
+                            <span className="text-[9px] text-slate-400 uppercase font-bold block">Capacidade</span>
+                            <span className="text-xs font-black text-slate-700 dark:text-slate-200">{capacityPerModule}</span>
+                          </div>
+                          <div>
+                            <span className="text-[9px] text-slate-400 uppercase font-bold block">Matriculados</span>
+                            <span className="text-xs font-black text-sky-600 dark:text-sky-400">{modEnrolled}</span>
+                          </div>
+                          <div>
+                            <span className="text-[9px] text-slate-400 uppercase font-bold block">Vagas</span>
+                            <span className={`text-xs font-black ${vagas === 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{vagas}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Demographics and Quick Distribution Chart row */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

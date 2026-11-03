@@ -59,6 +59,7 @@ interface ProcessoIndividualModuleProps {
   onSaveProcessoDocente: (processo: Partial<ProcessoDocente>) => Promise<void>;
   onUpdateDocenteDossier: (docenteId: string, updatedFields: Partial<Docente>) => Promise<void>;
   onNotifyTeacherMissingData: (docente: Docente) => void;
+  onOpenFichaAcademica?: (student: Estudante) => void;
   onRefreshData?: () => void;
 }
 
@@ -89,6 +90,7 @@ export default function ProcessoIndividualModule({
   onSaveProcessoDocente,
   onUpdateDocenteDossier,
   onNotifyTeacherMissingData,
+  onOpenFichaAcademica,
   onRefreshData
 }: ProcessoIndividualModuleProps) {
   // Main Category Tab: 'alunos' | 'docentes'
@@ -436,6 +438,15 @@ export default function ProcessoIndividualModule({
                             >
                               <FolderOpen className="w-3.5 h-3.5" /> Abrir Dossier
                             </button>
+                            {onOpenFichaAcademica && (
+                              <button
+                                onClick={() => onOpenFichaAcademica(s)}
+                                className="bg-purple-600 hover:bg-purple-500 text-white font-extrabold text-[10px] px-3 py-1.5 rounded-xl flex items-center gap-1.5 cursor-pointer transition-all shadow-xs"
+                                title="Abrir Ficha Académica Completa Oficial (9 Abas)"
+                              >
+                                <GraduationCap className="w-3.5 h-3.5" /> Ficha Académica
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>

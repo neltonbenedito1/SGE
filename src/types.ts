@@ -12,6 +12,8 @@ export interface SuperUser {
   created_at: string;
 }
 
+export type TipoInstituicao = 'escola' | 'instituto' | 'universidade' | 'global';
+
 export interface Tenant {
   id: string;
   nome: string;
@@ -32,6 +34,96 @@ export interface Tenant {
   pais_origem?: string;
   paises_sucursais?: string[];
   paises_atuacao?: string[];
+  // Novos campos estruturais por tipo de instituição
+  tipoInstituicao?: TipoInstituicao;
+  codigo_oficial?: string; // MEC ou Licenciamento técnico ou Registo
+  tipo_escola?: 'Primária' | 'Secundária' | 'Ambas' | string;
+  regime_funcionamento?: 'Diurno' | 'Noturno' | 'Ambos' | string;
+  diretor_responsavel?: string;
+  nuit?: string;
+  capacidade_total?: number;
+  regime_avaliacao?: string;
+  // Universidade
+  sigla_registo?: string;
+  universidade_afiliacao?: string;
+  regime_ensino?: 'Semestral' | 'Anual' | 'Créditos ECTS' | 'Modular' | 'Competências' | string;
+  modalidade_oferta?: 'Presencial' | 'Semipresencial' | 'EAD' | string;
+  decano_faculdade?: string;
+  campus_endereco?: string;
+  acreditacao_governamental?: 'Acreditada' | 'Em Processo' | string;
+  sistema_avaliacao?: string;
+  // Instituto
+  codigo_licenciamento?: string;
+  area_especializacao?: string;
+  instalacoes_oficinas?: string[]; // Laboratórios, Oficinas, Simuladores
+  parcerias_empresas?: boolean;
+  modelo_avaliacao?: string;
+  assiduidadeAtiva?: boolean;
+}
+
+export interface Curso {
+  id: string;
+  tenant_id: string;
+  institutionId: string;
+  nome: string;
+  codigo: string;
+  tipo: 'graduacao' | 'tecnico' | 'classe' | string;
+  grau?: 'Licenciatura' | 'Mestrado' | 'Doutoramento' | 'Técnico Médio' | 'Técnico Básico' | 'Classe Escolar' | string;
+  duracao_anos?: number;
+  duracao_periodos?: number;
+  regime: 'semestral' | 'trimestral' | 'modular' | 'anual' | 'creditos' | string;
+  nivelEnsino: 'escola' | 'instituto' | 'universidade' | 'primario' | 'secundario' | 'superior' | 'profissional' | string;
+  area_especializacao?: string;
+  faculdade_unidade?: string;
+  descricao?: string;
+  ativo: boolean;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface Cadeira {
+  id: string;
+  tenant_id: string;
+  institutionId: string;
+  cursoId?: string;
+  nome: string;
+  codigo: string;
+  ano_curricular: number; // 1º Ano, 2º Ano, etc.
+  periodo_lectivo: string; // Ex: '1º Semestre', '2º Trimestre', 'Módulo 1', 'Ano 1'
+  regime_periodo: 'semestre' | 'trimestre' | 'modulo' | 'ano' | string;
+  creditos_ects?: number;
+  horas_teoricas?: number;
+  horas_praticas?: number;
+  tipo_disciplina: 'obrigatoria' | 'opcional';
+  pre_requisitos?: string[]; // IDs de outras cadeiras do mesmo curso
+  tipo_trabalho_conclusao?: 'Monografia' | 'Dissertação' | 'Projecto' | 'Nenhum' | string;
+  docente_id?: string;
+  // Instituto
+  nivel_qualificacao_qnc?: 'Nível 3' | 'Nível 4' | 'Nível 5' | string;
+  competencia_pratica?: string;
+  equipamentos_exigidos?: string;
+  estagio_horas?: number;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface InscricaoCadeira {
+  id: string;
+  tenant_id: string;
+  estudante_id: string;
+  institutionId: string;
+  cursoId?: string;
+  cadeira_id: string;
+  cadeira_nome?: string;
+  cadeira_codigo?: string;
+  ano_lectivo: string;
+  periodo_lectivo: string;
+  ano_curricular: number;
+  estado: 'Por cursar' | 'Em curso' | 'Aprovado' | 'Reprovado' | 'Dispensado';
+  nota_final?: number;
+  creditos_concluidos?: number;
+  data_inscricao: string;
+  updated_at?: string;
 }
 
 export interface Plano {
@@ -206,6 +298,8 @@ export interface Estudante {
   turma_id: string;
   pai_id: string;
   nivelEnsino?: 'primario' | 'secundario' | 'superior' | 'profissional';
+  curso_id?: string;
+  ano_curricular?: number;
   ano_lectivo?: string;
   dados_nivel?: Record<string, any>;
   naturalidade_provincia?: string;
@@ -223,6 +317,7 @@ export interface Estudante {
   email?: string;
   data_admissao?: string;
   foto_url?: string;
+  regime?: string;
   ativo?: boolean;
   motivo_desativacao?: string;
   desativado_em?: string;
@@ -284,9 +379,13 @@ export interface Turma {
   docente_id: string; // Professor titular
   capacidade_max: number;
   classe_escolar_id?: string;
+  curso_id?: string; // Curso associado (ensino superior/profissional)
+  ano_curricular?: string; // Ex: '1º Ano', '2º Ano', etc.
   horario?: string;
   turno?: string;
+  regime?: string;
 }
+
 
 export interface Classe {
   id: string;
@@ -535,6 +634,7 @@ export interface TenantConfig {
   biblioteca_permitir_renovacao?: boolean;
   biblioteca_permitir_download?: boolean;
   capacidade_padrao_turma?: number;      // Ex: 30 alunos
+  capacidade_minima_por_curso?: number;  // Ex: 25 alunos (padrão)
   prefixo_matricula?: string;            // Ex: "MAT"
   idade_minima_matricula?: number;       // Ex: 5 anos
   carga_horaria_maxima_docente?: number; // Ex: 32 horas semanais

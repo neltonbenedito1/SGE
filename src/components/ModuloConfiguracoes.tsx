@@ -288,6 +288,7 @@ export const ModuloConfiguracoes: React.FC<ModuloConfiguracoesProps> = ({
       setFormData(prev => ({
         ...prev,
         capacidade_padrao_turma: 30,
+        capacidade_minima_por_curso: 25,
         prefixo_matricula: 'MAT',
         idade_minima_matricula: 5
       }));
@@ -878,7 +879,7 @@ export const ModuloConfiguracoes: React.FC<ModuloConfiguracoesProps> = ({
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
                     <h4 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2">
-                      ☕ Intervalos Oficiais & Recreios da Grade
+                      Intervalos Oficiais & Recreios da Grade
                     </h4>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
                       Cadastre os períodos de recreio/pausa por turno. Nenhuma aula pode ser agendada durante o intervalo.
@@ -1157,7 +1158,7 @@ export const ModuloConfiguracoes: React.FC<ModuloConfiguracoesProps> = ({
                               : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
                           }`}
                         >
-                          {isChecked ? '✓ ' : '+ '} {metodo}
+                          <span className="mr-1 font-bold">{isChecked ? '•' : '+'}</span> {metodo}
                         </button>
                       );
                     })}
@@ -1288,6 +1289,26 @@ export const ModuloConfiguracoes: React.FC<ModuloConfiguracoesProps> = ({
                     onChange={(e) => setFormData({ ...formData, idade_minima_matricula: Number(e.target.value) })}
                     className="w-full bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-sm font-bold"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider mb-1">
+                    Capacidade Mínima por Curso (Estudantes)
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={500}
+                    value={formData.capacidade_minima_por_curso ?? 25}
+                    onChange={(e) => {
+                      const val = Math.max(1, parseInt(e.target.value, 10) || 1);
+                      setFormData({ ...formData, capacidade_minima_por_curso: val });
+                    }}
+                    className="w-full bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-sm font-bold"
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Mínimo exigido por curso para o cálculo analítico de capacidade instalada e sustentabilidade acadêmica (Padrão: 25).
+                  </p>
                 </div>
               </div>
             </div>

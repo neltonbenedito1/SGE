@@ -827,7 +827,7 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                 const booksWithRatings = livros.filter(l => avaliacoes.some(r => r.livro_id === l.id));
                 if (booksWithRatings.length === 0) return '—';
                 const totalAvg = booksWithRatings.reduce((acc, l) => acc + getAverageRating(l.id), 0) / booksWithRatings.length;
-                return `${totalAvg.toFixed(1)} ★`;
+                return `${totalAvg.toFixed(1)} `;
               })()}
             </p>
           </div>
@@ -986,7 +986,7 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                           <div className="flex justify-between items-center gap-1 mb-1">
                             <p className="text-xs font-bold text-indigo-950 truncate">{l.titulo}</p>
                             <div className="flex items-center gap-0.5 text-xs text-amber-500 font-bold shrink-0">
-                              <span>★</span>
+                              <span></span>
                               <span>{rating > 0 ? rating : '—'}</span>
                             </div>
                           </div>
@@ -1203,7 +1203,7 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                           <div className="flex justify-between text-xs">
                             <span className="font-bold text-slate-700">Utilizador {r.utilizador_id.substring(0, 6)}</span>
                             <div className="flex text-amber-500 font-bold text-[10px]">
-                              {Array.from({ length: r.nota }).map((_, i) => <span key={i}>★</span>)}
+                              {Array.from({ length: r.nota }).map((_, i) => <span key={i}></span>)}
                             </div>
                           </div>
                           <p className="text-xs text-slate-600 italic leading-relaxed">"{r.comentario}"</p>
@@ -1446,7 +1446,7 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                     <p className="text-xs font-bold text-slate-650">Arraste a capa ou clique para selecionar</p>
                     <p className="text-[10px] text-slate-400 mt-0.5">PNG, JPG, JPEG (Máx. 2MB)</p>
                     {bookForm.capa_url && (
-                      <p className="text-xs text-emerald-600 font-bold mt-2">✓ Capa carregada com sucesso!</p>
+                      <p className="text-xs text-emerald-600 font-bold mt-2"> Capa carregada com sucesso!</p>
                     )}
                   </div>
                 </div>
@@ -1465,7 +1465,7 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                     <p className="text-[10px] text-slate-400 mt-0.5">Ficheiro PDF (Máx. 15MB)</p>
                     {uploadedPdfFileName && (
                       <div className="mt-2 space-y-1">
-                        <p className="text-xs text-emerald-600 font-bold">✓ {uploadedPdfFileName} ({uploadedPdfSize} MB)</p>
+                        <p className="text-xs text-emerald-600 font-bold"> {uploadedPdfFileName} ({uploadedPdfSize} MB)</p>
                         {detectedPdfPages !== null && (
                           <span className="inline-flex items-center gap-1 text-[10px] bg-indigo-50 text-indigo-700 px-2.5 py-0.5 rounded-full font-mono font-bold">
                             <Check className="w-3 h-3 text-emerald-500" /> {detectedPdfPages} páginas detectadas no PDF
@@ -1604,7 +1604,7 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                   <p className="text-[10px] text-slate-400 mt-0.5">Suporta arquivos .pdf (Máx. 15MB)</p>
                   {uploadedEditionFileName && (
                     <div className="mt-2 text-xs text-emerald-600 font-bold">
-                      ✓ {uploadedEditionFileName} ({editionForm.tamanho_ficheiro} MB) carregado!
+                       {uploadedEditionFileName} ({editionForm.tamanho_ficheiro} MB) carregado!
                     </div>
                   )}
                 </div>
@@ -1750,7 +1750,7 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                     try {
                       await addDoc(collection(db, 'notificacoes'), {
                         destinatario_id: 'admin',
-                        titulo: '🚨 Livro Removido do Acervo',
+                        titulo: ' Livro Removido do Acervo',
                         mensagem: `O utilizador "${currentUserName}" excluiu o livro "${data.title}" e todas as suas edições/avaliações associadas da Biblioteca.`,
                         tipo: 'alerta',
                         lido: false,
@@ -1770,7 +1770,7 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                     try {
                       await addDoc(collection(db, 'notificacoes'), {
                         destinatario_id: 'admin',
-                        titulo: '🚨 Edição de Livro Removida',
+                        titulo: ' Edição de Livro Removida',
                         mensagem: `O utilizador "${currentUserName}" excluiu a edição "${data.title}" da Biblioteca.`,
                         tipo: 'alerta',
                         lido: false,

@@ -23,7 +23,9 @@ import {
   query,
   where
 } from 'firebase/firestore';
-import { Tenant, Plano } from './types';
+import { Tenant, Plano, TipoInstituicao } from './types';
+import { INSTITUTION_TYPES, getInstitutionConfig } from './config/institutionTypes';
+import { INSTITUTION_FORM_SCHEMAS } from './config/institutionFormSchemas';
 
 const SuperAdminPortal = lazy(() => import('./components/SuperAdminPortal'));
 const TenantPortal = lazy(() => import('./components/TenantPortal'));
@@ -242,7 +244,7 @@ export default function App() {
       ) {
         console.warn('Intercepted unhandled JS Error:', msg);
         setJsPopup({
-          title: '⚠️ Aviso de Execução JavaScript',
+          title: ' Aviso de Execução JavaScript',
           message: msg,
           type: 'error'
         });
@@ -261,7 +263,7 @@ export default function App() {
         ) {
           console.warn('Intercepted unhandled Promise Rejection:', reasonStr);
           setJsPopup({
-            title: '⚠️ Aviso de Operação Assíncrona (JS)',
+            title: ' Aviso de Operação Assíncrona (JS)',
             message: reasonStr,
             type: 'error'
           });
@@ -301,6 +303,36 @@ export default function App() {
     window.addEventListener('sge-tenant-deleted', handleTenantDeleted);
     return () => window.removeEventListener('sge-tenant-deleted', handleTenantDeleted);
   }, []);
+
+  // Initial state for auto-onboarding / institution registration
+  const INITIAL_ONBOARDING_FORM = {
+    nome: '',
+    tipoInstituicao: 'escola' as TipoInstituicao,
+    logo_url: '',
+    pais_origem: 'Moçambique',
+    paises_sucursais: [] as string[],
+    email_admin: '',
+    telefone: '',
+    endereco: '',
+    plano_id: 'plano-basico',
+    idioma_padrao: 'pt',
+    senha: '',
+    confirmar_senha: '',
+    regime_letivo: 'trimestral',
+    codigo_mec: '',
+    nuit: '',
+    nivel_ensino: 'Secundário',
+    reitor_nome: '',
+    vice_reitor_nome: '',
+    numero_faculdades: 1,
+    graus_conferidos: 'Licenciatura, Mestrado',
+    numero_registro_ensino_superior: '',
+    data_credenciamento: '',
+    cursos_tecnicos: '',
+    laboratorios_oficinas: '',
+    coordenador_estagio: '',
+    convenios_estagio: ''
+  };
 
   // Get filtered command list
   const getCommandItems = () => {
@@ -410,19 +442,7 @@ export default function App() {
         action: () => {
           setOnboardingPreRegisteredNotice(null);
           setOnboardingError(null);
-          setOnboardingForm({
-            nome: '',
-            logo_url: '',
-            pais_origem: 'Moçambique',
-            paises_sucursais: [],
-            email_admin: '',
-            senha: '',
-            confirmar_senha: '',
-            telefone: '',
-            endereco: '',
-            plano_id: plans[0]?.id || 'plano-basico',
-            idioma_padrao: 'pt'
-          });
+          setOnboardingForm({ ...INITIAL_ONBOARDING_FORM, plano_id: plans[0]?.id || 'plano-basico' });
           setIsOnboardingModalOpen(true);
         }
       });
@@ -733,19 +753,7 @@ export default function App() {
 
   // Onboarding states
   const [isOnboardingModalOpen, setIsOnboardingModalOpen] = useState(false);
-  const [onboardingForm, setOnboardingForm] = useState({
-    nome: '',
-    logo_url: '',
-    pais_origem: 'Moçambique',
-    paises_sucursais: [] as string[],
-    email_admin: '',
-    telefone: '',
-    endereco: '',
-    plano_id: 'plano-basico',
-    idioma_padrao: 'pt',
-    senha: '',
-    confirmar_senha: ''
-  });
+  const [onboardingForm, setOnboardingForm] = useState(INITIAL_ONBOARDING_FORM);
   const [onboardingShowPassword, setOnboardingShowPassword] = useState(false);
   const [onboardingShowConfirmPassword, setOnboardingShowConfirmPassword] = useState(false);
   const [onboardingPreRegisteredNotice, setOnboardingPreRegisteredNotice] = useState<string | null>(null);
@@ -940,7 +948,7 @@ export default function App() {
       }
 
       if (userDocData.ativo === false) {
-        setLoginError('⚠️ Acesso Bloqueado: Esta conta de utilizador foi suspensa ou desativada no sistema.');
+        setLoginError(' Acesso Bloqueado: Esta conta de utilizador foi suspensa ou desativada no sistema.');
         setLoginLoading(false);
         return;
       }
@@ -956,13 +964,13 @@ export default function App() {
       });
 
       if (!matchedTenant || (matchedTenant as Tenant).status === 'cancelado' || (matchedTenant as any).deleted_at) {
-        setLoginError('⚠️ Acesso Revogado: Esta conta de instituição foi eliminada do sistema.');
+        setLoginError(' Acesso Revogado: Esta conta de instituição foi eliminada do sistema.');
         setLoginLoading(false);
         return;
       }
 
       if ((matchedTenant as Tenant).status === 'suspenso') {
-        setLoginError('⚠️ Acesso Bloqueado: Esta instituição está suspensa pelo Administrador Geral.');
+        setLoginError(' Acesso Bloqueado: Esta instituição está suspensa pelo Administrador Geral.');
         setLoginLoading(false);
         return;
       }
@@ -1461,7 +1469,7 @@ const clientSideCache: Record<string, any> = {
         />
       )}
 
-      {/* LOGIN & SIGN-UP POPUP MODAL (OPENED VIA ⚡ LOGIN / SIGN-UP) */}
+      {/* LOGIN & SIGN-UP POPUP MODAL (OPENED VIA  LOGIN / SIGN-UP) */}
       {isLoginModalOpen && (currentView === 'landing' || currentView === 'brandbook') && (
         <div className="fixed inset-0 z-[9980] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6 overflow-y-auto animate-in fade-in duration-300">
           <div 
@@ -1496,19 +1504,7 @@ const clientSideCache: Record<string, any> = {
                 onClick={() => {
                   setOnboardingPreRegisteredNotice(null);
                   setOnboardingError(null);
-                  setOnboardingForm({
-                    nome: '',
-                    logo_url: '',
-                    pais_origem: 'Moçambique',
-                    paises_sucursais: [],
-                    email_admin: '',
-                    senha: '',
-                    confirmar_senha: '',
-                    telefone: '',
-                    endereco: '',
-                    plano_id: plans[0]?.id || 'plano-basico',
-                    idioma_padrao: 'pt'
-                  });
+                  setOnboardingForm({ ...INITIAL_ONBOARDING_FORM, plano_id: plans[0]?.id || 'plano-basico' });
                   setIsOnboardingModalOpen(true);
                 }}
                 className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-blue-600/30 cursor-pointer shrink-0"
@@ -1698,19 +1694,7 @@ const clientSideCache: Record<string, any> = {
                 onClick={() => {
                   setOnboardingPreRegisteredNotice(null);
                   setOnboardingError(null);
-                  setOnboardingForm({
-                    nome: '',
-                    logo_url: '',
-                    pais_origem: 'Moçambique',
-                    paises_sucursais: [],
-                    email_admin: '',
-                    senha: '',
-                    confirmar_senha: '',
-                    telefone: '',
-                    endereco: '',
-                    plano_id: plans[0]?.id || 'plano-basico',
-                    idioma_padrao: 'pt'
-                  });
+                  setOnboardingForm({ ...INITIAL_ONBOARDING_FORM, plano_id: plans[0]?.id || 'plano-basico' });
                   setIsOnboardingModalOpen(true);
                 }}
                 className="text-blue-500 hover:text-blue-600 font-bold underline transition-colors cursor-pointer"
@@ -1976,6 +1960,12 @@ const clientSideCache: Record<string, any> = {
                       <span className="font-bold text-white">{onboardingForm.nome}</span>
                     </div>
                     <div className="flex justify-between border-b border-slate-850 pb-1.5">
+                      <span className="text-slate-400">Tipo de Instituição:</span>
+                      <span className="font-bold text-indigo-400">
+                        {getInstitutionConfig(onboardingForm.tipoInstituicao).label}
+                      </span>
+                    </div>
+                    <div className="flex justify-between border-b border-slate-850 pb-1.5">
                       <span className="text-slate-400">País de Origem:</span>
                       <span className="font-bold text-indigo-400">{onboardingForm.pais_origem}</span>
                     </div>
@@ -2101,10 +2091,44 @@ const clientSideCache: Record<string, any> = {
                     </div>
                   </div>
 
+                  {/* TIPO DE INSTITUIÇÃO (ESCOLA, INSTITUTO, UNIVERSIDADE) */}
+                  <div className="bg-slate-950/60 p-4 rounded-xl border border-indigo-500/20 space-y-2">
+                    <label className="block text-xs font-bold text-indigo-300 uppercase tracking-wider flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Award className="w-3.5 h-3.5 text-indigo-400" />
+                        Tipo de Instituição *
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-normal">
+                        Determina o regime e a estrutura curricular
+                      </span>
+                    </label>
+                    <select
+                      value={onboardingForm.tipoInstituicao}
+                      onChange={(e) => {
+                        const newType = e.target.value as TipoInstituicao;
+                        const config = getInstitutionConfig(newType);
+                        setOnboardingForm(prev => ({
+                          ...prev,
+                          tipoInstituicao: newType,
+                          regime_letivo: config.defaultPeriodType || 'trimestral',
+                          nivel_ensino: config.allowedStudentLevels[0] || 'secundario'
+                        }));
+                      }}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer font-semibold"
+                    >
+                      <option value="escola"> Escola (Ensino Primário / Secundário / Geral)</option>
+                      <option value="instituto"> Instituto Técnico / Médio Profissional</option>
+                      <option value="universidade"> Universidade / Ensino Superior</option>
+                    </select>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      {getInstitutionConfig(onboardingForm.tipoInstituicao).description}
+                    </p>
+                  </div>
+
                   {/* NOME DA INSTITUIÇÃO */}
                   <div>
                     <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">
-                      Nome da Instituição Escolar *
+                      {onboardingForm.tipoInstituicao === 'universidade' ? 'Nome da Universidade / IES *' : onboardingForm.tipoInstituicao === 'instituto' ? 'Nome do Instituto Politécnico / Médio *' : 'Nome da Instituição Escolar *'}
                     </label>
                     <input 
                       type="text"
@@ -2236,6 +2260,66 @@ const clientSideCache: Record<string, any> = {
                       placeholder="Ex: Av. 24 de Julho, Nº 1450, Maputo"
                       className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     />
+                  </div>
+
+                  {/* CAMPOS ESPECÍFICOS POR TIPO DE INSTITUIÇÃO */}
+                  <div className="bg-slate-950/70 p-4 rounded-xl border border-indigo-500/20 space-y-3">
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                      <span className="text-xs font-bold text-indigo-300 uppercase tracking-wider flex items-center gap-1.5">
+                        <Award className="w-3.5 h-3.5 text-indigo-400" />
+                        Parâmetros Específicos &bull; {getInstitutionConfig(onboardingForm.tipoInstituicao).label}
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        {INSTITUTION_FORM_SCHEMAS[onboardingForm.tipoInstituicao]?.title}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {INSTITUTION_FORM_SCHEMAS[onboardingForm.tipoInstituicao]?.fields.map((field) => (
+                        <div key={field.name} className={field.type === 'textarea' ? 'sm:col-span-2' : ''}>
+                          <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-1">
+                            {field.label} {field.required && <span className="text-rose-400">*</span>}
+                          </label>
+
+                          {field.type === 'select' ? (
+                            <select
+                              value={(onboardingForm as any)[field.name] ?? ''}
+                              onChange={(e) => setOnboardingForm(prev => ({ ...prev, [field.name]: e.target.value }))}
+                              className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                              required={field.required}
+                            >
+                              <option value="">Selecione...</option>
+                              {field.options?.map((opt) => (
+                                <option key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
+                          ) : field.type === 'textarea' ? (
+                            <textarea
+                              rows={2}
+                              value={(onboardingForm as any)[field.name] ?? ''}
+                              onChange={(e) => setOnboardingForm(prev => ({ ...prev, [field.name]: e.target.value }))}
+                              placeholder={field.placeholder}
+                              className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                              required={field.required}
+                            />
+                          ) : (
+                            <input
+                              type={field.type}
+                              value={(onboardingForm as any)[field.name] ?? ''}
+                              onChange={(e) => setOnboardingForm(prev => ({ ...prev, [field.name]: e.target.value }))}
+                              placeholder={field.placeholder}
+                              className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                              required={field.required}
+                            />
+                          )}
+                          {field.helperText && (
+                            <p className="text-[10px] text-slate-500 mt-0.5">{field.helperText}</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
 
                   {/* PLANO E IDIOMA */}

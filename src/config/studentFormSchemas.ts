@@ -56,6 +56,39 @@ export const PROVINCIAS_MOCAMBIQUE_OPTIONS: FieldOption[] = [
   { value: 'Niassa', label: 'Niassa' },
 ];
 
+export const NACIONALIDADES_OPTIONS: FieldOption[] = [
+  { value: 'Moçambicana', label: 'Moçambicana' },
+  { value: 'Sul-Africana', label: 'Sul-Africana' },
+  { value: 'Zimbabueana', label: 'Zimbabueana' },
+  { value: 'Angolana', label: 'Angolana' },
+  { value: 'Portuguesa', label: 'Portuguesa' },
+  { value: 'Brasileira', label: 'Brasileira' },
+  { value: 'Chinesa', label: 'Chinesa' },
+  { value: 'Indiana', label: 'Indiana' },
+  { value: 'Outra', label: 'Outra' },
+];
+
+export const LINGUAS_MATERNAS_OPTIONS: FieldOption[] = [
+  { value: 'Português', label: 'Português' },
+  { value: 'Changana', label: 'Changana (Xichangana)' },
+  { value: 'Sena', label: 'Sena (Chisena)' },
+  { value: 'Ndau', label: 'Ndau (Chindau)' },
+  { value: 'Macua', label: 'Emakhuwa (Macua)' },
+  { value: 'Chuwabu', label: 'Echuwabu' },
+  { value: 'Tsonga', label: 'Xitsonga' },
+  { value: 'Lomwe', label: 'Elomwe' },
+  { value: 'Inglês', label: 'Inglês' },
+  { value: 'Outra', label: 'Outra' },
+];
+
+export const RELIGIAO_OPTIONS: FieldOption[] = [
+  { value: 'Cristã Católica', label: 'Cristã Católica' },
+  { value: 'Cristã Protestante / Evangélica', label: 'Cristã Protestante / Evangélica' },
+  { value: 'Islâmica', label: 'Islâmica' },
+  { value: 'Outra', label: 'Outra' },
+  { value: 'Não declarada / Nenhuma', label: 'Não declarada / Nenhuma' },
+];
+
 export const STUDENT_LEVEL_SCHEMAS: Record<NivelEnsino, StudentLevelSchema> = {
   primario: {
     id: 'primario',
@@ -74,10 +107,10 @@ export const STUDENT_LEVEL_SCHEMAS: Record<NivelEnsino, StudentLevelSchema> = {
           { id: 'genero', label: 'Sexo / Género', type: 'select', required: true, options: [{ value: 'Masculino', label: 'Masculino' }, { value: 'Feminino', label: 'Feminino' }] },
           { id: 'naturalidade_provincia', label: 'Naturalidade (Província)', type: 'select', required: true, options: PROVINCIAS_MOCAMBIQUE_OPTIONS },
           { id: 'naturalidade_distrito', label: 'Distrito de Nascimento', type: 'text', required: true, placeholder: 'Ex: KaMpfumo' },
-          { id: 'nacionalidade', label: 'Nacionalidade', type: 'text', required: true, placeholder: 'Moçambicana' },
+          { id: 'nacionalidade', label: 'Nacionalidade', type: 'select', required: true, options: NACIONALIDADES_OPTIONS },
           { id: 'certidao_nascimento_numero', label: 'Nº da Certidão de Nascimento', type: 'text', required: true, placeholder: 'Nº do assento / certidão' },
-          { id: 'lingua_materna', label: 'Língua Materna', type: 'text', placeholder: 'Ex: Português, Changana, Sena...' },
-          { id: 'religiao', label: 'Religião (Opcional)', type: 'text', placeholder: 'Opcional' },
+          { id: 'lingua_materna', label: 'Língua Materna', type: 'select', options: LINGUAS_MATERNAS_OPTIONS },
+          { id: 'religiao', label: 'Religião (Opcional)', type: 'select', options: RELIGIAO_OPTIONS },
         ]
       },
       {
@@ -197,7 +230,7 @@ export const STUDENT_LEVEL_SCHEMAS: Record<NivelEnsino, StudentLevelSchema> = {
           { id: 'genero', label: 'Sexo / Género', type: 'select', required: true, options: [{ value: 'Masculino', label: 'Masculino' }, { value: 'Feminino', label: 'Feminino' }] },
           { id: 'naturalidade_provincia', label: 'Naturalidade (Província)', type: 'select', required: true, options: PROVINCIAS_MOCAMBIQUE_OPTIONS },
           { id: 'naturalidade_distrito', label: 'Distrito de Nascimento', type: 'text', required: true },
-          { id: 'nacionalidade', label: 'Nacionalidade', type: 'text', required: true, placeholder: 'Moçambicana' },
+          { id: 'nacionalidade', label: 'Nacionalidade', type: 'select', required: true, options: NACIONALIDADES_OPTIONS },
           { id: 'tipo_documento', label: 'Tipo de Documento', type: 'select', required: true, options: [
             { value: 'Bilhete de Identidade', label: 'Bilhete de Identidade (BI)' },
             { value: 'Passaporte', label: 'Passaporte' },
@@ -350,7 +383,7 @@ export const STUDENT_LEVEL_SCHEMAS: Record<NivelEnsino, StudentLevelSchema> = {
           { id: 'genero', label: 'Sexo / Género', type: 'select', required: true, options: [{ value: 'Masculino', label: 'Masculino' }, { value: 'Feminino', label: 'Feminino' }] },
           { id: 'naturalidade_provincia', label: 'Naturalidade (Província)', type: 'select', required: true, options: PROVINCIAS_MOCAMBIQUE_OPTIONS },
           { id: 'naturalidade_distrito', label: 'Distrito de Nascimento', type: 'text', required: true },
-          { id: 'nacionalidade', label: 'Nacionalidade', type: 'text', required: true, placeholder: 'Moçambicana' },
+          { id: 'nacionalidade', label: 'Nacionalidade', type: 'select', required: true, options: NACIONALIDADES_OPTIONS },
           { id: 'tipo_documento', label: 'Tipo de Documento', type: 'select', required: true, options: [
             { value: 'Bilhete de Identidade', label: 'Bilhete de Identidade (BI)' },
             { value: 'Passaporte', label: 'Passaporte' },
@@ -411,8 +444,6 @@ export const STUDENT_LEVEL_SCHEMAS: Record<NivelEnsino, StudentLevelSchema> = {
         id: 'ingresso_curso',
         title: 'E. Ingresso e Curso Superior',
         fields: [
-          { id: 'faculdade_departamento', label: 'Faculdade / Departamento', type: 'text', required: true },
-          { id: 'curso', label: 'Curso Superior', type: 'text', required: true },
           { id: 'forma_ingresso', label: 'Forma de Ingresso', type: 'select', required: true, options: [
             { value: 'Exame de admissão', label: 'Exame de Admissão' },
             { value: 'Transferência', label: 'Transferência' },
@@ -482,7 +513,7 @@ export const STUDENT_LEVEL_SCHEMAS: Record<NivelEnsino, StudentLevelSchema> = {
           { id: 'genero', label: 'Sexo / Género', type: 'select', required: true, options: [{ value: 'Masculino', label: 'Masculino' }, { value: 'Feminino', label: 'Feminino' }] },
           { id: 'naturalidade_provincia', label: 'Naturalidade (Província)', type: 'select', required: true, options: PROVINCIAS_MOCAMBIQUE_OPTIONS },
           { id: 'naturalidade_distrito', label: 'Distrito de Nascimento', type: 'text', required: true },
-          { id: 'nacionalidade', label: 'Nacionalidade', type: 'text', required: true, placeholder: 'Moçambicana' },
+          { id: 'nacionalidade', label: 'Nacionalidade', type: 'select', required: true, options: NACIONALIDADES_OPTIONS },
           { id: 'tipo_documento', label: 'Tipo de Documento', type: 'select', required: true, options: [
             { value: 'Bilhete de Identidade', label: 'Bilhete de Identidade (BI)' },
             { value: 'Passaporte', label: 'Passaporte' },
@@ -561,7 +592,6 @@ export const STUDENT_LEVEL_SCHEMAS: Record<NivelEnsino, StudentLevelSchema> = {
             { value: 'Costura e alfaiataria', label: 'Costura e Alfaiataria' },
             { value: 'Outra', label: 'Outra Área Técnica' },
           ]},
-          { id: 'curso', label: 'Nome do Curso', type: 'text', required: true },
           { id: 'regime', label: 'Regime', type: 'select', required: true, options: [
             { value: 'Diurno', label: 'Diurno' },
             { value: 'Pós-laboral', label: 'Pós-Laboral' },

@@ -507,7 +507,7 @@ export function SuperAdminFinancePanel({
               <TrendingUp className="w-5 h-5 text-emerald-600 mb-2" />
               <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Total Recebido</p>
               <h3 className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1 font-mono">
-                {totalPaid.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                {totalPaid.toLocaleString("pt-MZ", { style: "currency", currency: "MZN" })}
               </h3>
               <p className="text-slate-400 text-xs mt-1">{payments.filter(p => p.status === "Pago").length} transações liquidadas</p>
             </div>
@@ -516,7 +516,7 @@ export function SuperAdminFinancePanel({
               <Clock className="w-5 h-5 text-amber-600 mb-2" />
               <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Receita Pendente</p>
               <h3 className="text-2xl font-black text-amber-600 dark:text-amber-400 mt-1 font-mono">
-                {totalPending.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                {totalPending.toLocaleString("pt-MZ", { style: "currency", currency: "MZN" })}
               </h3>
               <p className="text-slate-400 text-xs mt-1">{payments.filter(p => p.status === "Pendente").length} faturas aguardando</p>
             </div>
@@ -525,7 +525,7 @@ export function SuperAdminFinancePanel({
               <AlertTriangle className="w-5 h-5 text-rose-600 mb-2" />
               <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Inadimplência (Atrasado)</p>
               <h3 className="text-2xl font-black text-rose-600 dark:text-rose-400 mt-1 font-mono">
-                {totalOverdue.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                {totalOverdue.toLocaleString("pt-MZ", { style: "currency", currency: "MZN" })}
               </h3>
               <p className="text-slate-400 text-xs mt-1">{payments.filter(p => p.status === "Atrasado").length} cobranças em mora</p>
             </div>
@@ -590,7 +590,7 @@ export function SuperAdminFinancePanel({
                           ) : null}
                         </td>
                         <td className="px-6 py-4 font-semibold text-emerald-600 dark:text-emerald-400 font-mono">
-                          {t.manual_discount ? `BRL ${t.manual_discount}` : "—"}
+                          {t.manual_discount ? `MZN ${t.manual_discount}` : "—"}
                         </td>
                         <td className="px-6 py-4">
                           <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
@@ -674,7 +674,7 @@ export function SuperAdminFinancePanel({
                     <td className="px-6 py-4 font-mono text-xs font-bold text-indigo-600 dark:text-indigo-400">{p.id}</td>
                     <td className="px-6 py-4 font-bold text-slate-900 dark:text-white">{p.tenant_nome}</td>
                     <td className="px-6 py-4 font-mono font-bold">
-                      {p.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                      {p.valor.toLocaleString("pt-MZ", { style: "currency", currency: "MZN" })}
                     </td>
                     <td className="px-6 py-4 font-mono text-xs">{p.data_vencimento}</td>
                     <td className="px-6 py-4 text-xs font-medium text-slate-500 dark:text-slate-400">{p.metodo}</td>
@@ -1328,7 +1328,7 @@ export function SuperAdminFinancePanel({
               {adjustType !== "suspend" && (
                 <div>
                   <label className="block text-xs text-slate-500 font-bold mb-1">
-                    {adjustType === "discount" ? "Valor de Abatimento (BRL)" : "Dias Adicionais de Trial"}
+                    {adjustType === "discount" ? "Valor de Abatimento (MZN)" : "Dias Adicionais de Trial"}
                   </label>
                   <input 
                     type="number" 

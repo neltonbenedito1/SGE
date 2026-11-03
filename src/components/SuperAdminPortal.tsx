@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { 
   collection, 
   getDocs, 
@@ -24,7 +24,10 @@ import { authSecurityService } from '../services/authSecurityService';
 import { LANGUAGES, translate } from '../lib/translation';
 import { localDb, syncLocalDataToFirestore, isFirestoreQuotaExhausted } from '../lib/localDb';
 import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
-import { Tenant, Plano, Pagamento, LogAdmin, SmtpConfig, Notificacao } from '../types';
+import { Tenant, Plano, Pagamento, LogAdmin, SmtpConfig, Notificacao, TipoInstituicao } from '../types';
+import { INSTITUTION_TYPES, INSTITUTION_TYPE_CONFIG, getInstitutionConfig } from '../config/institutionTypes';
+import { INSTITUTION_FORM_SCHEMAS } from '../config/institutionFormSchemas';
+import { migrateInstitutionTypes } from '../utils/dataMigration';
 import { createGmailRawPayload, EmailTemplates } from '../lib/emailUtils';
 import { escapeHtml } from '../lib/sanitize';
 import { SuperAdminFinancePanel } from './SuperAdminFinancePanel';
@@ -37,6 +40,7 @@ import {
   Sparkles, 
   Users, 
   DollarSign, 
+  GraduationCap,
   Plus, 
   Edit3, 
   Trash2, 
@@ -105,6 +109,7 @@ interface SuperAdminPortalProps {
 
 interface TenantFormState {
   nome: string;
+  tipoInstituicao: TipoInstituicao;
   pais_origem?: string;
   paises_sucursais?: string[];
   email_admin: string;
@@ -119,6 +124,27 @@ interface TenantFormState {
   idioma_padrao: string;
   ai_translation_enabled: boolean;
   logo_url?: string;
+  // Dynamic fields per institution type
+  codigo_oficial?: string;
+  tipo_escola?: string;
+  regime_funcionamento?: string;
+  diretor_responsavel?: string;
+  nuit?: string;
+  capacidade_total?: number;
+  regime_avaliacao?: string;
+  sigla_registo?: string;
+  universidade_afiliacao?: string;
+  regime_ensino?: string;
+  modalidade_oferta?: string;
+  decano_faculdade?: string;
+  campus_endereco?: string;
+  acreditacao_governamental?: string;
+  sistema_avaliacao?: string;
+  codigo_licenciamento?: string;
+  area_especializacao?: string;
+  instalacoes_oficinas?: string[];
+  parcerias_empresas?: boolean;
+  modelo_avaliacao?: string;
 }
 
 export default function SuperAdminPortal({ 
@@ -212,6 +238,9 @@ export default function SuperAdminPortal({
   const [payments, setPayments] = useState<Pagamento[]>([]);
   const [logs, setLogs] = useState<LogAdmin[]>([]);
   const [smtpConfigs, setSmtpConfigs] = useState<SmtpConfig[]>([]);
+  const [systemEscolasCount, setSystemEscolasCount] = useState<number>(0);
+  const [systemUsersCount, setSystemUsersCount] = useState<number>(0);
+  const [systemEstudantesCount, setSystemEstudantesCount] = useState<number>(0);
   const [globalSmtp, setGlobalSmtp] = useState<SmtpConfig>(() => {
     try {
       const localSmtps = localDb.getSmtpConfigs();
@@ -243,19 +272,19 @@ export default function SuperAdminPortal({
   const showSystemNotification = useCallback((message: string, type: 'sucesso' | 'erro' | 'info' | 'config' | 'cadastro' = 'info') => {
     const popup = document.createElement('div');
     let bgClass = 'bg-slate-900 text-white border-slate-700';
-    let icon = '🔔';
+    let icon = '';
     if (type === 'sucesso') {
       bgClass = 'bg-emerald-950 text-emerald-100 border-emerald-500';
-      icon = '✅';
+      icon = '';
     } else if (type === 'erro') {
       bgClass = 'bg-rose-950 text-rose-100 border-rose-500';
-      icon = '❌';
+      icon = '';
     } else if (type === 'config') {
       bgClass = 'bg-indigo-950 text-indigo-100 border-indigo-500';
-      icon = '⚙️';
+      icon = '';
     } else if (type === 'cadastro') {
       bgClass = 'bg-cyan-950 text-cyan-100 border-cyan-500';
-      icon = '📝';
+      icon = '';
     }
 
     popup.className = `fixed bottom-5 right-5 ${bgClass} font-sans font-bold text-xs px-5 py-4 rounded-2xl shadow-2xl border z-[9999] flex items-center gap-3 animate-in slide-in-from-bottom-5 duration-300 max-w-sm`;
@@ -372,6 +401,7 @@ export default function SuperAdminPortal({
 
   const [tenantForm, setTenantForm] = useState<TenantFormState>(() => getSavedFormDraft('draft_tenant_form', {
     nome: '',
+    tipoInstituicao: 'escola' as TipoInstituicao,
     pais_origem: 'Moçambique',
     paises_sucursais: [],
     email_admin: '',
@@ -446,6 +476,116 @@ export default function SuperAdminPortal({
   useEffect(() => {
     saveSettingIfAllowed('draft_tenant_form', JSON.stringify(tenantForm), 'formData', 24);
   }, [tenantForm]);
+
+  const openTenantCreate = () => {
+    setEditingTenant(null);
+    setTenantForm({
+      nome: '',
+      tipoInstituicao: 'escola',
+      pais_origem: 'Moçambique',
+      paises_sucursais: [],
+      email_admin: '',
+      telefone: '',
+      endereco: '',
+      plano_id: plans[0]?.id || 'plano-basico',
+      status: 'ativo',
+      data_vencimento: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      senha_temporaria: '',
+      senha: '',
+      confirmar_senha: '',
+      idioma_padrao: 'pt',
+      ai_translation_enabled: true,
+      logo_url: '',
+      tipo_escola: 'Secundária',
+      regime_funcionamento: 'Ambos'
+    });
+    setIsTenantModalOpen(true);
+  };
+
+  const openTenantEdit = (t: Tenant) => {
+    setEditingTenant(t);
+    setTenantForm({
+      nome: t.nome || '',
+      tipoInstituicao: t.tipoInstituicao || 'escola',
+      pais_origem: t.pais_origem || 'Moçambique',
+      paises_sucursais: t.paises_sucursais || [],
+      email_admin: t.email_admin || '',
+      telefone: t.telefone || '',
+      endereco: t.endereco || '',
+      plano_id: t.plano_id || (plans[0]?.id || 'plano-basico'),
+      status: (t.status as any) || 'ativo',
+      data_vencimento: t.data_vencimento || '',
+      senha_temporaria: '',
+      senha: '',
+      confirmar_senha: '',
+      idioma_padrao: t.idioma_padrao || 'pt',
+      ai_translation_enabled: t.ai_translation_enabled !== false,
+      logo_url: t.logo_url || '',
+      codigo_oficial: t.codigo_oficial || '',
+      tipo_escola: t.tipo_escola || 'Secundária',
+      regime_funcionamento: t.regime_funcionamento || 'Ambos',
+      diretor_responsavel: t.diretor_responsavel || '',
+      nuit: t.nuit || '',
+      capacidade_total: t.capacidade_total,
+      regime_avaliacao: t.regime_avaliacao || '',
+      sigla_registo: t.sigla_registo || '',
+      universidade_afiliacao: t.universidade_afiliacao || '',
+      regime_ensino: t.regime_ensino || (t.tipoInstituicao === 'universidade' ? 'Semestral' : (t.tipoInstituicao === 'instituto' ? 'Modular' : 'Semestral')),
+      modalidade_oferta: t.modalidade_oferta || 'Presencial',
+      decano_faculdade: t.decano_faculdade || '',
+      campus_endereco: t.campus_endereco || '',
+      acreditacao_governamental: t.acreditacao_governamental || 'Acreditada',
+      sistema_avaliacao: t.sistema_avaliacao || '',
+      codigo_licenciamento: t.codigo_licenciamento || '',
+      area_especializacao: t.area_especializacao || 'Tecnologia',
+      instalacoes_oficinas: t.instalacoes_oficinas || [],
+      parcerias_empresas: t.parcerias_empresas !== false,
+      modelo_avaliacao: t.modelo_avaliacao || ''
+    });
+    setIsTenantModalOpen(true);
+  };
+
+  const handleTipoInstituicaoChange = (novoTipo: TipoInstituicao) => {
+    if (novoTipo === tenantForm.tipoInstituicao) return;
+
+    const proceedWithChange = () => {
+      setTenantForm(prev => ({
+        ...prev,
+        tipoInstituicao: novoTipo,
+        codigo_oficial: '',
+        tipo_escola: 'Secundária',
+        regime_funcionamento: 'Ambos',
+        diretor_responsavel: '',
+        nuit: '',
+        capacidade_total: undefined,
+        regime_avaliacao: '',
+        sigla_registo: '',
+        universidade_afiliacao: '',
+        regime_ensino: novoTipo === 'universidade' ? 'Semestral' : (novoTipo === 'instituto' ? 'Modular' : 'Semestral'),
+        modalidade_oferta: 'Presencial',
+        decano_faculdade: '',
+        campus_endereco: '',
+        acreditacao_governamental: 'Acreditada',
+        sistema_avaliacao: '',
+        codigo_licenciamento: '',
+        area_especializacao: 'Tecnologia',
+        instalacoes_oficinas: [],
+        parcerias_empresas: true,
+        modelo_avaliacao: ''
+      }));
+    };
+
+    if (editingTenant && editingTenant.tipoInstituicao && editingTenant.tipoInstituicao !== novoTipo) {
+      showConfirm(
+        'Alteração do Tipo de Instituição',
+        'Aviso: A alteração do tipo de instituição afeta formulários, regimes e módulos disponíveis no sistema. Tem a certeza que deseja prosseguir?',
+        proceedWithChange,
+        true
+      );
+    } else {
+      proceedWithChange();
+    }
+  };
 
   // Simulated email server inbox
   const [receivedEmails, setReceivedEmails] = useState<{ id: string; to: string; subject: string; body: string; date: string }[]>([]);
@@ -902,6 +1042,26 @@ export default function SuperAdminPortal({
       }
     }
 
+    // 6. Load Global System Counts from Firestore
+    try {
+      const [escolasSnap, usersSnap, estudantesSnap] = await Promise.allSettled([
+        getDocs(collection(db, 'escolas')),
+        getDocs(collection(db, 'utilizadores')),
+        getDocs(collection(db, 'estudantes'))
+      ]);
+      if (escolasSnap.status === 'fulfilled') {
+        setSystemEscolasCount(escolasSnap.value.size);
+      }
+      if (usersSnap.status === 'fulfilled') {
+        setSystemUsersCount(usersSnap.value.size);
+      }
+      if (estudantesSnap.status === 'fulfilled') {
+        setSystemEstudantesCount(estudantesSnap.value.size);
+      }
+    } catch (err) {
+      console.warn("Could not load global counts from Firestore:", err);
+    }
+
     setLoading(false);
     setHasLoadedOnce(true);
   }
@@ -1148,7 +1308,7 @@ export default function SuperAdminPortal({
         const newNotif: Notificacao = {
           id: "notif-email-" + Math.random().toString(36).substr(2, 9),
           destinatario_id: 'super_admin',
-          titulo: `✅ E-mail de Boas-vindas Enviado`,
+          titulo: ` E-mail de Boas-vindas Enviado`,
           mensagem: `O e-mail pendente com as credenciais para ${emailData.to} foi enviado com sucesso via ${globalSmtp.smtp_type === 'gmail' ? 'Gmail API' : 'SMTP Manual'}!`,
           tipo: 'sucesso',
           lido: false,
@@ -1243,6 +1403,31 @@ export default function SuperAdminPortal({
       const branchCountries = (tenantForm.paises_sucursais || []).map(c => c.trim()).filter(Boolean);
       const allCountries = Array.from(new Set([originCountry, ...branchCountries]));
 
+      const institutionalPayload = {
+        tipoInstituicao: tenantForm.tipoInstituicao || 'escola',
+        logo_url: tenantForm.logo_url || '',
+        codigo_oficial: tenantForm.codigo_oficial || '',
+        tipo_escola: tenantForm.tipo_escola || '',
+        regime_funcionamento: tenantForm.regime_funcionamento || '',
+        diretor_responsavel: tenantForm.diretor_responsavel || '',
+        nuit: tenantForm.nuit || '',
+        capacidade_total: tenantForm.capacidade_total ? Number(tenantForm.capacidade_total) : 0,
+        regime_avaliacao: tenantForm.regime_avaliacao || '',
+        sigla_registo: tenantForm.sigla_registo || '',
+        universidade_afiliacao: tenantForm.universidade_afiliacao || '',
+        regime_ensino: tenantForm.regime_ensino || '',
+        modalidade_oferta: tenantForm.modalidade_oferta || '',
+        decano_faculdade: tenantForm.decano_faculdade || '',
+        campus_endereco: tenantForm.campus_endereco || '',
+        acreditacao_governamental: tenantForm.acreditacao_governamental || '',
+        sistema_avaliacao: tenantForm.sistema_avaliacao || '',
+        codigo_licenciamento: tenantForm.codigo_licenciamento || '',
+        area_especializacao: tenantForm.area_especializacao || '',
+        instalacoes_oficinas: tenantForm.instalacoes_oficinas || [],
+        parcerias_empresas: tenantForm.parcerias_empresas !== false,
+        modelo_avaliacao: tenantForm.modelo_avaliacao || ''
+      };
+
       if (editingTenant) {
         // Update Tenant
         const updatedData = {
@@ -1258,7 +1443,8 @@ export default function SuperAdminPortal({
           data_vencimento: tenantForm.data_vencimento,
           data_renovacao: new Date().toISOString().split('T')[0],
           idioma_padrao: tenantForm.idioma_padrao,
-          ai_translation_enabled: tenantForm.ai_translation_enabled
+          ai_translation_enabled: tenantForm.ai_translation_enabled,
+          ...institutionalPayload
         };
 
         try {
@@ -1285,7 +1471,7 @@ export default function SuperAdminPortal({
             console.warn("Could not sync automatic provinces on edit:", syncErr);
           }
 
-          await auditLog("Editar Conta", "Tenant", editingTenant.id, `Atualizou cadastro e plano para ${tenantForm.nome}`);
+          await auditLog("Editar Conta", "Tenant", editingTenant.id, `Atualizou cadastro e plano para ${tenantForm.nome} (Tipo: ${tenantForm.tipoInstituicao})`);
           showSystemNotification(`Instituição "${tenantForm.nome}" atualizada com sucesso!`, 'cadastro');
         } catch (dbErr) {
           console.warn("Firestore offline/error, saving update to temporary local database:", dbErr);
@@ -1333,7 +1519,8 @@ export default function SuperAdminPortal({
           telefone: tenantForm.telefone,
           endereco: tenantForm.endereco,
           idioma_padrao: tenantForm.idioma_padrao || 'pt',
-          ai_translation_enabled: tenantForm.ai_translation_enabled !== false
+          ai_translation_enabled: tenantForm.ai_translation_enabled !== false,
+          ...institutionalPayload
         };
 
         const tempPassword = tenantForm.senha || tenantForm.senha_temporaria || "Mudar@123";
@@ -1455,6 +1642,9 @@ export default function SuperAdminPortal({
       // Reset Form
       setTenantForm({
         nome: '',
+        tipoInstituicao: 'escola',
+        pais_origem: 'Moçambique',
+        paises_sucursais: [],
         email_admin: '',
         telefone: '',
         endereco: '',
@@ -1462,6 +1652,8 @@ export default function SuperAdminPortal({
         status: 'ativo',
         data_vencimento: '',
         senha_temporaria: '',
+        senha: '',
+        confirmar_senha: '',
         idioma_padrao: 'pt',
         ai_translation_enabled: false
       });
@@ -1568,7 +1760,7 @@ export default function SuperAdminPortal({
     logSteps.push(
       `C: QUIT`,
       `S: 221 2.0.0 Bye`,
-      `✔️ Teste de conexão SMTP concluído com sucesso!`
+      ` Teste de conexão SMTP concluído com sucesso!`
     );
 
     // Staggered log display
@@ -1708,7 +1900,7 @@ export default function SuperAdminPortal({
       // 1. Add notification inside Firestore 'notificacoes' collection
       await addDoc(collection(db, 'notificacoes'), {
         destinatario_id: 'super_admin',
-        titulo: `🔑 Código OTP de 2-Fatores (${selectedTenantForPasswordReset.nome})`,
+        titulo: ` Código OTP de 2-Fatores (${selectedTenantForPasswordReset.nome})`,
         mensagem: `Foi solicitada alteração de senha da conta administradora ${selectedTenantForPasswordReset.email_admin}. Código OTP: ${code}`,
         tipo: 'alerta',
         lido: false,
@@ -2067,9 +2259,9 @@ export default function SuperAdminPortal({
           data_vencimento: nextExp,
           status: 'ativo'
         });
-        await auditLog("Registrar Pagamento", "Pagamento", genId, `Fatura paga de R$ ${paymentForm.valor} registrada. Assinatura prorrogada até ${nextExp}`);
+        await auditLog("Registrar Pagamento", "Pagamento", genId, `Fatura paga de MZN ${paymentForm.valor} registrada. Assinatura prorrogada até ${nextExp}`);
       } else {
-        await auditLog("Lançar Fatura", "Pagamento", genId, `Fatura no valor de R$ ${paymentForm.valor} emitida para vencimento em ${paymentForm.data_vencimento}`);
+        await auditLog("Lançar Fatura", "Pagamento", genId, `Fatura no valor de MZN ${paymentForm.valor} emitida para vencimento em ${paymentForm.data_vencimento}`);
       }
 
       setIsPaymentModalOpen(false);
@@ -2121,6 +2313,44 @@ export default function SuperAdminPortal({
   const totalRevenue = payments
     .filter(p => p.status === 'Pago')
     .reduce((sum, p) => sum + p.valor, 0);
+
+  // Dynamic monthly revenue calculation from real payments
+  const monthlyRevenueData = useMemo(() => {
+    const monthNames = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+    const now = new Date();
+    const result: { key: string; label: string; total: number; count: number }[] = [];
+    const map: Record<string, { total: number; count: number }> = {};
+
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const label = monthNames[d.getMonth()];
+      result.push({ key, label, total: 0, count: 0 });
+      map[key] = { total: 0, count: 0 };
+    }
+
+    payments.filter(p => p.status === 'Pago').forEach(p => {
+      const dateStr = p.data_vencimento || (p as any).created_at || (p as any).data || '';
+      if (dateStr) {
+        const pKey = dateStr.substring(0, 7);
+        if (map[pKey]) {
+          map[pKey].total += (p.valor || 0);
+          map[pKey].count += 1;
+        }
+      }
+    });
+
+    return result.map(item => ({
+      ...item,
+      total: map[item.key]?.total || 0,
+      count: map[item.key]?.count || 0
+    }));
+  }, [payments]);
+
+  const maxMonthlyRevenue = useMemo(() => {
+    const maxVal = Math.max(...monthlyRevenueData.map(m => m.total), 0);
+    return maxVal > 0 ? maxVal : 1;
+  }, [monthlyRevenueData]);
 
   // Filter Tenants list
   const filteredTenants = tenants.filter(t => {
@@ -2412,7 +2642,7 @@ export default function SuperAdminPortal({
               className="w-full bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200 py-1.5 px-3 rounded-xl font-bold text-center text-[10px] transition-colors cursor-pointer flex items-center justify-center gap-1.5 shrink-0 border border-slate-800"
               title="Abrir Política de Cookies e Privacidade"
             >
-              🛡️ Cookies & Privacidade
+               Cookies & Privacidade
             </button>
           ) : (
             <button
@@ -2421,7 +2651,7 @@ export default function SuperAdminPortal({
               className="p-2 bg-slate-900/80 hover:bg-slate-800 text-indigo-400 rounded-xl transition-colors cursor-pointer shrink-0 border border-slate-800"
               title="Política de Cookies"
             >
-              🛡️
+              
             </button>
           )}
 
@@ -2638,46 +2868,72 @@ export default function SuperAdminPortal({
             {activeTab === 'dashboard' && (
               <div className="space-y-8 animate-fadeIn">
                 {/* Score Cards */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                  <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4">
-                    <div className="bg-emerald-50 text-emerald-600 p-4 rounded-xl">
-                      <Building2 className="w-6 h-6" />
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+                  <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-3.5">
+                    <div className="bg-emerald-50 text-emerald-600 p-3 rounded-xl shrink-0">
+                      <Building2 className="w-5 h-5" />
                     </div>
                     <div>
-                      <p className="text-slate-400 text-xs font-medium uppercase tracking-wider">Clientes Ativos</p>
-                      <h3 className="text-2xl font-bold font-sans text-slate-900">{activeTenants}</h3>
+                      <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Clientes Ativos</p>
+                      <h3 className="text-xl font-bold font-sans text-slate-900">{activeTenants}</h3>
+                      <p className="text-[10px] text-slate-400">de {tenants.length} instituições</p>
                     </div>
                   </div>
 
-                  <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4">
-                    <div className="bg-amber-50 text-amber-600 p-4 rounded-xl">
-                      <ShieldAlert className="w-6 h-6" />
+                  <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-3.5">
+                    <div className="bg-indigo-50 text-indigo-600 p-3 rounded-xl shrink-0">
+                      <GraduationCap className="w-5 h-5" />
                     </div>
                     <div>
-                      <p className="text-slate-400 text-xs font-medium uppercase tracking-wider">Suspensos / A vencer</p>
-                      <h3 className="text-2xl font-bold font-sans text-slate-900">{suspendedTenants}</h3>
+                      <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Unidades / Escolas</p>
+                      <h3 className="text-xl font-bold font-sans text-slate-900">{systemEscolasCount}</h3>
+                      <p className="text-[10px] text-slate-400">Total no sistema</p>
                     </div>
                   </div>
 
-                  <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4">
-                    <div className="bg-indigo-50 text-indigo-600 p-4 rounded-xl">
-                      <Users className="w-6 h-6" />
+                  <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-3.5">
+                    <div className="bg-blue-50 text-blue-600 p-3 rounded-xl shrink-0">
+                      <Users className="w-5 h-5" />
                     </div>
                     <div>
-                      <p className="text-slate-400 text-xs font-medium uppercase tracking-wider">Total de Tenants</p>
-                      <h3 className="text-2xl font-bold font-sans text-slate-900">{tenants.length}</h3>
+                      <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Estudantes</p>
+                      <h3 className="text-xl font-bold font-sans text-slate-900">{systemEstudantesCount}</h3>
+                      <p className="text-[10px] text-slate-400">Matrículas ativas</p>
                     </div>
                   </div>
 
-                  <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4">
-                    <div className="bg-blue-50 text-blue-600 p-4 rounded-xl">
-                      <DollarSign className="w-6 h-6" />
+                  <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-3.5">
+                    <div className="bg-violet-50 text-violet-600 p-3 rounded-xl shrink-0">
+                      <ShieldAlert className="w-5 h-5" />
                     </div>
                     <div>
-                      <p className="text-slate-400 text-xs font-medium uppercase tracking-wider">Faturamento Acumulado</p>
-                      <h3 className="text-2xl font-bold font-sans text-slate-900">
-                        {totalRevenue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                      <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Utilizadores</p>
+                      <h3 className="text-xl font-bold font-sans text-slate-900">{systemUsersCount}</h3>
+                      <p className="text-[10px] text-slate-400">Cadastrados</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-3.5">
+                    <div className="bg-amber-50 text-amber-600 p-3 rounded-xl shrink-0">
+                      <AlertTriangle className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">A Vencer / Suspensos</p>
+                      <h3 className="text-xl font-bold font-sans text-slate-900">{suspendedTenants}</h3>
+                      <p className="text-[10px] text-amber-600 font-semibold">Atenção requerida</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-3.5">
+                    <div className="bg-emerald-50 text-emerald-600 p-3 rounded-xl shrink-0">
+                      <DollarSign className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider truncate">Faturamento Acumulado</p>
+                      <h3 className="text-base font-bold font-sans text-slate-900 truncate" title={`${totalRevenue.toLocaleString('pt-MZ', { style: 'currency', currency: 'MZN' })}`}>
+                        {totalRevenue.toLocaleString('pt-MZ', { style: 'currency', currency: 'MZN' })}
                       </h3>
+                      <p className="text-[10px] text-emerald-600 font-semibold">Moeda: MZN</p>
                     </div>
                   </div>
                 </div>
@@ -2689,45 +2945,42 @@ export default function SuperAdminPortal({
                     <div className="flex items-center justify-between mb-6">
                       <div>
                         <h4 className="text-slate-900 font-sans font-bold text-base">Evolução Mensal do Faturamento</h4>
-                        <p className="text-slate-400 text-xs">Arrecadação consolidada do SaaS por período</p>
+                        <p className="text-slate-400 text-xs">Arrecadação consolidada do SaaS por período (Dados Reais em Meticais - MZN)</p>
                       </div>
                       <span className="bg-emerald-50 text-emerald-700 text-xs font-bold py-1 px-2.5 rounded-lg flex items-center gap-1">
-                        +12% este mês
+                        MZN (Metical)
                       </span>
                     </div>
                     
-                    {/* Visual custom chart representaton using beautiful custom styled elements/SVGs */}
+                    {/* Visual custom chart representation from real monthly payment data */}
                     <div className="h-64 flex items-end gap-3 justify-around pt-6">
-                      <div className="flex flex-col items-center w-full gap-2">
-                        <span className="text-xs font-mono text-slate-500">R$ 5K</span>
-                        <div className="w-12 bg-indigo-200 rounded-t-lg h-32 transition-all hover:bg-indigo-300"></div>
-                        <span className="text-xs text-slate-500">Jan</span>
-                      </div>
-                      <div className="flex flex-col items-center w-full gap-2">
-                        <span className="text-xs font-mono text-slate-500">R$ 6.2K</span>
-                        <div className="w-12 bg-indigo-300 rounded-t-lg h-38 transition-all hover:bg-indigo-400"></div>
-                        <span className="text-xs text-slate-500">Fev</span>
-                      </div>
-                      <div className="flex flex-col items-center w-full gap-2">
-                        <span className="text-xs font-mono text-slate-500">R$ 8.5K</span>
-                        <div className="w-12 bg-indigo-400 rounded-t-lg h-44 transition-all hover:bg-indigo-500"></div>
-                        <span className="text-xs text-slate-500">Mar</span>
-                      </div>
-                      <div className="flex flex-col items-center w-full gap-2">
-                        <span className="text-xs font-mono text-slate-500">R$ 9.1K</span>
-                        <div className="w-12 bg-indigo-500 rounded-t-lg h-48 transition-all hover:bg-indigo-600"></div>
-                        <span className="text-xs text-slate-500">Abr</span>
-                      </div>
-                      <div className="flex flex-col items-center w-full gap-2">
-                        <span className="text-xs font-mono text-slate-500">R$ 11.2K</span>
-                        <div className="w-12 bg-indigo-600 rounded-t-lg h-52 transition-all hover:bg-indigo-700"></div>
-                        <span className="text-xs text-slate-500">Mai</span>
-                      </div>
-                      <div className="flex flex-col items-center w-full gap-2">
-                        <span className="text-xs font-mono text-emerald-600 font-bold">R$ 15.5K</span>
-                        <div className="w-12 bg-emerald-500 rounded-t-lg h-58 transition-all hover:bg-emerald-600"></div>
-                        <span className="text-xs text-slate-700 font-bold">Jun (Atu)</span>
-                      </div>
+                      {monthlyRevenueData.map((m, idx) => {
+                        const isCurrent = idx === monthlyRevenueData.length - 1;
+                        const heightPercent = m.total > 0 ? Math.max(14, Math.round((m.total / maxMonthlyRevenue) * 100)) : 8;
+                        return (
+                          <div key={m.key} className="flex flex-col items-center w-full gap-2">
+                            <span className={`text-[10px] font-mono font-bold ${isCurrent ? 'text-emerald-600' : 'text-slate-500'}`}>
+                              {m.total > 0 
+                                ? (m.total >= 1000 ? `${(m.total / 1000).toFixed(1)}k MZN` : `${m.total} MZN`)
+                                : '0 MZN'}
+                            </span>
+                            <div 
+                              style={{ height: `${heightPercent}%` }}
+                              className={`w-12 rounded-t-lg transition-all ${
+                                isCurrent 
+                                  ? 'bg-emerald-500 hover:bg-emerald-600' 
+                                  : m.total > 0 
+                                    ? 'bg-indigo-600 hover:bg-indigo-700' 
+                                    : 'bg-slate-200 hover:bg-slate-300'
+                              }`}
+                              title={`${m.label}: ${m.total.toLocaleString('pt-MZ', { style: 'currency', currency: 'MZN' })} (${m.count} pagamentos)`}
+                            />
+                            <span className={`text-xs ${isCurrent ? 'text-slate-800 font-bold' : 'text-slate-500'}`}>
+                              {m.label} {isCurrent ? '(Atual)' : ''}
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -2877,26 +3130,7 @@ export default function SuperAdminPortal({
                     <button
                       id="btn_adicionar_conta"
                       type="button"
-                      onClick={() => {
-                        setEditingTenant(null);
-                        setTenantForm({
-                          nome: '',
-                          pais_origem: 'Moçambique',
-                          paises_sucursais: [],
-                          email_admin: '',
-                          telefone: '',
-                          endereco: '',
-                          plano_id: plans[0]?.id || 'plano-basico',
-                          status: 'ativo',
-                          data_vencimento: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-                          senha_temporaria: '',
-                          senha: '',
-                          confirmar_senha: '',
-                          idioma_padrao: 'pt',
-                          ai_translation_enabled: true
-                        });
-                        setIsTenantModalOpen(true);
-                      }}
+                      onClick={openTenantCreate}
                       className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 py-2.5 rounded-xl text-sm shadow-sm flex items-center gap-2 transition-all cursor-pointer shrink-0 active:scale-[0.98]"
                     >
                       <Plus className="w-4.5 h-4.5" />
@@ -2983,9 +3217,19 @@ export default function SuperAdminPortal({
                             </td>
                             <td className="px-6 py-4">
                               <p className="font-bold text-slate-900 dark:text-white">{t.nome}</p>
-                              <span className="text-xs bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 px-2 py-0.5 rounded font-mono font-bold mt-1 inline-block">
-                                /{t.slug}
-                              </span>
+                              <div className="flex items-center gap-1.5 mt-1">
+                                <span className="text-xs bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 px-2 py-0.5 rounded font-mono font-bold inline-block">
+                                  /{t.slug}
+                                </span>
+                                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                                  t.tipoInstituicao === 'universidade' ? 'bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300' :
+                                  t.tipoInstituicao === 'instituto' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' :
+                                  t.tipoInstituicao === 'global' ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' :
+                                  'bg-sky-100 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300'
+                                }`}>
+                                  {INSTITUTION_TYPE_CONFIG[t.tipoInstituicao || 'escola']?.shortLabel || 'Escola'}
+                                </span>
+                              </div>
                             </td>
                             <td className="px-6 py-4">
                               <p>{t.email_admin}</p>
@@ -2993,7 +3237,7 @@ export default function SuperAdminPortal({
                             </td>
                             <td className="px-6 py-4">
                               <span className="font-semibold text-slate-800 dark:text-slate-200">{activePlan?.nome || 'Personalizado'}</span>
-                              <p className="text-xs text-slate-400">R$ {activePlan?.preco}/mês</p>
+                              <p className="text-xs text-slate-400">{activePlan?.preco} MZN/mês</p>
                             </td>
                             <td className="px-6 py-4">
                               <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${
@@ -3011,25 +3255,7 @@ export default function SuperAdminPortal({
                             <td className="px-6 py-4 text-right">
                               <div className="flex items-center justify-end gap-1.5">
                                 <button
-                                  onClick={() => {
-                                    setEditingTenant(t);
-                                    setTenantForm({
-                                      nome: t.nome,
-                                      pais_origem: t.pais_origem || 'Moçambique',
-                                      paises_sucursais: t.paises_sucursais || [],
-                                      email_admin: t.email_admin,
-                                      telefone: t.telefone,
-                                      endereco: t.endereco,
-                                      plano_id: t.plano_id,
-                                      status: (t.status as any),
-                                      data_vencimento: t.data_vencimento,
-                                      senha_temporaria: '',
-                                      idioma_padrao: t.idioma_padrao || 'pt',
-                                      ai_translation_enabled: t.ai_translation_enabled !== false,
-                                      logo_url: t.logo_url || ''
-                                    });
-                                    setIsTenantModalOpen(true);
-                                  }}
+                                  onClick={() => openTenantEdit(t)}
                                   className="p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-medium transition-colors flex items-center gap-1 cursor-pointer"
                                   title="Editar Dados"
                                 >
@@ -3120,25 +3346,7 @@ export default function SuperAdminPortal({
                         <div className="flex items-center gap-1.5 flex-shrink-0">
                           {/* Details Button */}
                           <button
-                            onClick={() => {
-                              setEditingTenant(t);
-                              setTenantForm({
-                                nome: t.nome,
-                                pais_origem: t.pais_origem || 'Moçambique',
-                                paises_sucursais: t.paises_sucursais || [],
-                                email_admin: t.email_admin,
-                                telefone: t.telefone,
-                                endereco: t.endereco,
-                                plano_id: t.plano_id,
-                                status: (t.status as any),
-                                data_vencimento: t.data_vencimento,
-                                senha_temporaria: '',
-                                idioma_padrao: t.idioma_padrao || 'pt',
-                                ai_translation_enabled: t.ai_translation_enabled !== false,
-                                logo_url: t.logo_url || ''
-                              });
-                              setIsTenantModalOpen(true);
-                            }}
+                            onClick={() => openTenantEdit(t)}
                             className="p-1.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 rounded-lg hover:bg-indigo-100 dark:hover:bg-indigo-900/40 text-xs font-semibold flex items-center gap-1 cursor-pointer"
                             title="Visualizar Dados"
                           >
@@ -3703,7 +3911,7 @@ export default function SuperAdminPortal({
                                 `[${new Date().toLocaleTimeString('pt-BR')}] Conectando ao Gmail API Gateway...`,
                                 `[${new Date().toLocaleTimeString('pt-BR')}] Autorizando com Bearer OAuth Token...`,
                                 `[${new Date().toLocaleTimeString('pt-BR')}] Resposta do Gmail: 200 OK (Mensagem Enviada)`,
-                                `[${new Date().toLocaleTimeString('pt-BR')}] ✔️ E-mail de teste real enviado com sucesso para ${globalSmtp.sender_email || globalSmtp.user}!`
+                                `[${new Date().toLocaleTimeString('pt-BR')}]  E-mail de teste real enviado com sucesso para ${globalSmtp.sender_email || globalSmtp.user}!`
                               ]);
                               setTestStatus('success');
                               showSystemNotification("E-mail de teste enviado com sucesso!", "sucesso");
@@ -3717,8 +3925,8 @@ export default function SuperAdminPortal({
                                 console.warn('[Gmail Test] Token expirado ou credenciais inválidas.');
                                 setTestLogs(prev => [
                                   ...prev,
-                                  `[${new Date().toLocaleTimeString('pt-BR')}] ⚠️ O token de acesso do Gmail expirou ou foi revogado (401).`,
-                                  `[${new Date().toLocaleTimeString('pt-BR')}] 👉 Por favor, clique no botão "Conectar com Google" acima para renovar a autorização.`
+                                  `[${new Date().toLocaleTimeString('pt-BR')}]  O token de acesso do Gmail expirou ou foi revogado (401).`,
+                                  `[${new Date().toLocaleTimeString('pt-BR')}]  Por favor, clique no botão "Conectar com Google" acima para renovar a autorização.`
                                 ]);
                                 setTestStatus('failed');
                                 showSystemNotification(
@@ -3729,7 +3937,7 @@ export default function SuperAdminPortal({
                                 console.error("Erro no teste de e-mail Gmail:", error);
                                 setTestLogs(prev => [
                                   ...prev,
-                                  `[${new Date().toLocaleTimeString('pt-BR')}] ❌ Erro ao enviar e-mail via Gmail API: ${error.message || error}`
+                                  `[${new Date().toLocaleTimeString('pt-BR')}]  Erro ao enviar e-mail via Gmail API: ${error.message || error}`
                                 ]);
                                 setTestStatus('failed');
                                 showSystemNotification(`Erro no teste do Gmail: ${error.message || error}`, "erro");
@@ -3781,7 +3989,7 @@ export default function SuperAdminPortal({
                           logSteps.push(
                             `C: QUIT`,
                             `S: 221 2.0.0 Bye`,
-                            `✔️ Teste de conexão SMTP concluído com sucesso!`
+                            ` Teste de conexão SMTP concluído com sucesso!`
                           );
                           for (let i = 0; i < logSteps.length; i++) {
                             await new Promise((resolve) => setTimeout(resolve, 200));
@@ -4149,7 +4357,7 @@ export default function SuperAdminPortal({
                 }}
                 className="text-slate-400 hover:text-slate-600 text-sm cursor-pointer"
               >
-                ✕
+                
               </button>
             </div>
 
@@ -4558,16 +4766,55 @@ export default function SuperAdminPortal({
 
             {/* Form Content - Scrollable Body */}
             <form onSubmit={handleTenantSubmit} className="flex-1 overflow-y-auto p-6 space-y-5">
+              {/* TIPO DE INSTITUIÇÃO (CAMPO ESTRUTURAL OBRIGATÓRIO NO TOPO) */}
+              <div className="bg-slate-50 dark:bg-slate-800/80 p-4 rounded-2xl border-2 border-indigo-200 dark:border-indigo-800/80 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-black text-indigo-900 dark:text-indigo-300 uppercase tracking-wider flex items-center gap-1.5">
+                    <Building2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                    Tipo de Instituição *
+                  </label>
+                  <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider ${
+                    tenantForm.tipoInstituicao === 'universidade' ? 'bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300' :
+                    tenantForm.tipoInstituicao === 'instituto' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300' :
+                    tenantForm.tipoInstituicao === 'global' ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300' :
+                    'bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300'
+                  }`}>
+                    {INSTITUTION_TYPE_CONFIG[tenantForm.tipoInstituicao]?.shortLabel || 'Escola'}
+                  </span>
+                </div>
+                <select
+                  value={tenantForm.tipoInstituicao}
+                  onChange={(e) => handleTipoInstituicaoChange(e.target.value as TipoInstituicao)}
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl p-2.5 text-sm font-bold text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-2xs"
+                >
+                  <option value="escola">Escola (Ensino Primário e Secundário Geral)</option>
+                  <option value="instituto">Instituto (Formação Técnica e Profissional / TVET)</option>
+                  <option value="universidade">Universidade (Ensino Superior Universitário)</option>
+                  <option value="global">Global (Complexo Multi-nível Integrado)</option>
+                </select>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                  {INSTITUTION_TYPE_CONFIG[tenantForm.tipoInstituicao]?.description}
+                </p>
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider mb-1">
-                  Nome da Escola / Instituição *
+                  {tenantForm.tipoInstituicao === 'universidade' ? 'Nome da Faculdade / Instituto Superior *' :
+                   tenantForm.tipoInstituicao === 'instituto' ? 'Nome do Instituto Técnico / Profissional *' :
+                   tenantForm.tipoInstituicao === 'global' ? 'Nome da Instituição Global / Complexo *' :
+                   'Nome da Escola / Instituição *'}
                 </label>
                 <input 
                   type="text"
                   required
                   value={tenantForm.nome}
                   onChange={(e) => setTenantForm({ ...tenantForm, nome: e.target.value })}
-                  placeholder="Ex: Escola Secundária Central"
+                  placeholder={
+                    tenantForm.tipoInstituicao === 'universidade' ? 'Ex: Faculdade de Engenharia e Tecnologias' :
+                    tenantForm.tipoInstituicao === 'instituto' ? 'Ex: Instituto Industrial e Comercial de Maputo' :
+                    tenantForm.tipoInstituicao === 'global' ? 'Ex: Complexo Educacional Politécnico e Universitário' :
+                    'Ex: Escola Secundária Josina Machel'
+                  }
                   className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-850 dark:text-slate-100"
                 />
               </div>
@@ -4750,6 +4997,387 @@ export default function SuperAdminPortal({
                 />
               </div>
 
+              {/* CAMPOS ESPECÍFICOS POR TIPO DE INSTITUIÇÃO */}
+              <div className="bg-slate-50/80 dark:bg-slate-800/40 p-4 rounded-2xl border border-slate-200/90 dark:border-slate-700/80 space-y-4">
+                <div className="flex items-center gap-2 border-b border-slate-200/60 dark:border-slate-700/60 pb-2">
+                  <span className={`w-2 h-2 rounded-full ${
+                    tenantForm.tipoInstituicao === 'universidade' ? 'bg-purple-500' :
+                    tenantForm.tipoInstituicao === 'instituto' ? 'bg-emerald-500' :
+                    tenantForm.tipoInstituicao === 'global' ? 'bg-amber-500' : 'bg-sky-500'
+                  }`} />
+                  <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+                    {INSTITUTION_FORM_SCHEMAS[tenantForm.tipoInstituicao]?.title || 'Especificações da Instituição'}
+                  </h4>
+                </div>
+
+                {/* 1. ESCOLA */}
+                {tenantForm.tipoInstituicao === 'escola' && (
+                  <div className="space-y-3.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                          Código Oficial (MEC) *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={tenantForm.codigo_oficial || ''}
+                          onChange={(e) => setTenantForm({ ...tenantForm, codigo_oficial: e.target.value })}
+                          placeholder="Ex: MEC-MZ-2026-042"
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs text-slate-800 dark:text-slate-200"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                          Tipo de Escola *
+                        </label>
+                        <select
+                          value={tenantForm.tipo_escola || 'Secundária'}
+                          onChange={(e) => setTenantForm({ ...tenantForm, tipo_escola: e.target.value })}
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold text-slate-800 dark:text-slate-200"
+                        >
+                          <option value="Primária">Primária (1ª à 6ª Classe)</option>
+                          <option value="Secundária">Secundária (7ª à 12ª Classe)</option>
+                          <option value="Ambas">Ambas (Primária e Secundária)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                          Regime de Funcionamento *
+                        </label>
+                        <select
+                          value={tenantForm.regime_funcionamento || 'Ambos'}
+                          onChange={(e) => setTenantForm({ ...tenantForm, regime_funcionamento: e.target.value })}
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold text-slate-800 dark:text-slate-200"
+                        >
+                          <option value="Diurno">Diurno</option>
+                          <option value="Noturno">Noturno</option>
+                          <option value="Ambos">Diurno e Noturno (Ambos)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                          Diretor(a) / Responsável *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={tenantForm.diretor_responsavel || ''}
+                          onChange={(e) => setTenantForm({ ...tenantForm, diretor_responsavel: e.target.value })}
+                          placeholder="Nome completo do(a) Diretor(a)"
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs text-slate-800 dark:text-slate-200"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                          NIF / NUIT Institucional *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={tenantForm.nuit || ''}
+                          onChange={(e) => setTenantForm({ ...tenantForm, nuit: e.target.value })}
+                          placeholder="Ex: 400123456"
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs text-slate-800 dark:text-slate-200"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                          Capacidade Total de Alunos
+                        </label>
+                        <input
+                          type="number"
+                          value={tenantForm.capacidade_total || ''}
+                          onChange={(e) => setTenantForm({ ...tenantForm, capacidade_total: e.target.value ? Number(e.target.value) : undefined })}
+                          placeholder="Ex: 1500"
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs text-slate-800 dark:text-slate-200"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-100 dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200/80 dark:border-slate-800">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Regime de Avaliação Curricular</span>
+                      <p className="text-xs font-bold text-slate-700 dark:text-slate-300 mt-0.5">Formativa, Sumativa e Exames Oficiais</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">Padrão oficial do Ministério da Educação e Desenvolvimento Humano.</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. UNIVERSIDADE */}
+                {tenantForm.tipoInstituicao === 'universidade' && (
+                  <div className="space-y-3.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                          Sigla / Código de Registo *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={tenantForm.sigla_registo || ''}
+                          onChange={(e) => setTenantForm({ ...tenantForm, sigla_registo: e.target.value })}
+                          placeholder="Ex: UEM-FET / ISCTEM-ENG"
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs text-slate-800 dark:text-slate-200"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                          Universidade de Afiliação / Tutela
+                        </label>
+                        <input
+                          type="text"
+                          value={tenantForm.universidade_afiliacao || ''}
+                          onChange={(e) => setTenantForm({ ...tenantForm, universidade_afiliacao: e.target.value })}
+                          placeholder="Ex: Universidade Eduardo Mondlane"
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs text-slate-800 dark:text-slate-200"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                          Regime de Ensino Universitário *
+                        </label>
+                        <select
+                          value={tenantForm.regime_ensino || 'Semestral'}
+                          onChange={(e) => setTenantForm({ ...tenantForm, regime_ensino: e.target.value })}
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold text-slate-800 dark:text-slate-200"
+                        >
+                          <option value="Semestral">Semestral (2 Semestres por ano)</option>
+                          <option value="Créditos ECTS">Créditos ECTS / Bolonha</option>
+                          <option value="Anual">Regime Anual</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                          Modalidade da Oferta *
+                        </label>
+                        <select
+                          value={tenantForm.modalidade_oferta || 'Presencial'}
+                          onChange={(e) => setTenantForm({ ...tenantForm, modalidade_oferta: e.target.value })}
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold text-slate-800 dark:text-slate-200"
+                        >
+                          <option value="Presencial">Presencial</option>
+                          <option value="Semipresencial">Semipresencial / B-learning</option>
+                          <option value="EAD">Ensino à Distância (EAD)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                          Decano(a) / Director(a) de Faculdade *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={tenantForm.decano_faculdade || ''}
+                          onChange={(e) => setTenantForm({ ...tenantForm, decano_faculdade: e.target.value })}
+                          placeholder="Prof. Doutor(a) Responsável"
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs text-slate-800 dark:text-slate-200"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                          Acreditação Governamental (CNAQ) *
+                        </label>
+                        <select
+                          value={tenantForm.acreditacao_governamental || 'Acreditada'}
+                          onChange={(e) => setTenantForm({ ...tenantForm, acreditacao_governamental: e.target.value })}
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold text-slate-800 dark:text-slate-200"
+                        >
+                          <option value="Acreditada">Acreditada Oficialmente</option>
+                          <option value="Em Processo">Em Processo de Acreditação</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                        Campus Universitário / Polo Académico
+                      </label>
+                      <input
+                        type="text"
+                        value={tenantForm.campus_endereco || ''}
+                        onChange={(e) => setTenantForm({ ...tenantForm, campus_endereco: e.target.value })}
+                        placeholder="Ex: Campus Principal de Maputo - Bloco C"
+                        className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs text-slate-800 dark:text-slate-200"
+                      />
+                    </div>
+
+                    <div className="bg-slate-100 dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200/80 dark:border-slate-800">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Sistema de Avaliação Superior</span>
+                      <p className="text-xs font-bold text-slate-700 dark:text-slate-300 mt-0.5">Avaliação Contínua, Frequências, Exames Finais e TCC com Júri</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">Modelo universitário oficial de ensino superior.</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* 3. INSTITUTO */}
+                {tenantForm.tipoInstituicao === 'instituto' && (
+                  <div className="space-y-3.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                          Código de Licenciamento Técnico (ANEP/SETEC) *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={tenantForm.codigo_licenciamento || ''}
+                          onChange={(e) => setTenantForm({ ...tenantForm, codigo_licenciamento: e.target.value })}
+                          placeholder="Ex: ANEP-TVET-2026-089"
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs text-slate-800 dark:text-slate-200"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                          Área de Especialização Principal *
+                        </label>
+                        <select
+                          value={tenantForm.area_especializacao || 'Tecnologia'}
+                          onChange={(e) => setTenantForm({ ...tenantForm, area_especializacao: e.target.value })}
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold text-slate-800 dark:text-slate-200"
+                        >
+                          <option value="Indústria">Indústria & Mecânica</option>
+                          <option value="Tecnologia">Tecnologias de Informação & Telecomunicações</option>
+                          <option value="Serviços">Serviços, Gestão & Contabilidade</option>
+                          <option value="Saúde">Saúde & Enfermagem</option>
+                          <option value="Agro-Pecuária">Agro-Pecuária & Recursos Naturais</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                          Regime de Ensino Profissional *
+                        </label>
+                        <select
+                          value={tenantForm.regime_ensino || 'Modular'}
+                          onChange={(e) => setTenantForm({ ...tenantForm, regime_ensino: e.target.value })}
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold text-slate-800 dark:text-slate-200"
+                        >
+                          <option value="Modular">Modular por Competências (QNC/NQF)</option>
+                          <option value="Aprendizagem Baseada em Competências">Aprendizagem Dual / Prática Intensiva</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                          Director(a) do Centro / Instituto *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={tenantForm.diretor_responsavel || ''}
+                          onChange={(e) => setTenantForm({ ...tenantForm, diretor_responsavel: e.target.value })}
+                          placeholder="Nome completo do(a) Gestor(a)"
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs text-slate-800 dark:text-slate-200"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                        Possui Parcerias com Empresas/Mercado? *
+                      </label>
+                      <select
+                        value={tenantForm.parcerias_empresas === false ? 'false' : 'true'}
+                        onChange={(e) => setTenantForm({ ...tenantForm, parcerias_empresas: e.target.value === 'true' })}
+                        className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold text-slate-800 dark:text-slate-200"
+                      >
+                        <option value="true">Sim (Estágios e Inserção Laboral Garantidos)</option>
+                        <option value="false">Não (Em desenvolvimento)</option>
+                      </select>
+                    </div>
+
+                    <div className="bg-slate-100 dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200/80 dark:border-slate-800">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Modelo de Avaliação Profissional</span>
+                      <p className="text-xs font-bold text-slate-700 dark:text-slate-300 mt-0.5">Demonstração Prática por Competência + Estágio Supervisionado</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">Aptidão certificada segundo o Quadro Nacional de Qualificações Profissionais.</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* 4. GLOBAL */}
+                {tenantForm.tipoInstituicao === 'global' && (
+                  <div className="space-y-3.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                          Código de Registo / Licenciamento Geral *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={tenantForm.codigo_oficial || ''}
+                          onChange={(e) => setTenantForm({ ...tenantForm, codigo_oficial: e.target.value })}
+                          placeholder="Ex: GLO-MZ-2026-901"
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs text-slate-800 dark:text-slate-200"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                          Reitor(a) / Administrador(a) Geral *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={tenantForm.diretor_responsavel || ''}
+                          onChange={(e) => setTenantForm({ ...tenantForm, diretor_responsavel: e.target.value })}
+                          placeholder="Nome completo do(a) Responsável"
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs text-slate-800 dark:text-slate-200"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                          NUIT do Complexo *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={tenantForm.nuit || ''}
+                          onChange={(e) => setTenantForm({ ...tenantForm, nuit: e.target.value })}
+                          placeholder="Ex: 400987654"
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs text-slate-800 dark:text-slate-200"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                          Regime Principal de Operação *
+                        </label>
+                        <select
+                          value={tenantForm.regime_ensino || 'Semestral'}
+                          onChange={(e) => setTenantForm({ ...tenantForm, regime_ensino: e.target.value })}
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold text-slate-800 dark:text-slate-200"
+                        >
+                          <option value="Semestral">Semestral (Ensino Superior/Geral)</option>
+                          <option value="Trimestral">Trimestral (Ensino Básico)</option>
+                          <option value="Modular">Modular (Cursos Profissionais)</option>
+                          <option value="Multi-regime">Multi-regime Concorrente</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="bg-amber-50 dark:bg-amber-950/30 p-2.5 rounded-lg border border-amber-200/80 dark:border-amber-800">
+                      <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider block">Política de Avaliação Multi-nível</span>
+                      <p className="text-xs text-amber-800 dark:text-amber-300 mt-0.5">Permite criar escolas, institutos e universidades com regimes e módulos independentes.</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider mb-1">
@@ -4786,7 +5414,7 @@ export default function SuperAdminPortal({
                   <div className="bg-slate-50 dark:bg-slate-800/80 p-4 rounded-xl border border-slate-200 dark:border-slate-700/80 space-y-3.5">
                     <div className="flex items-center justify-between">
                       <label className="block text-xs font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-wider">
-                        🔑 Definição de Senha de Acesso
+                         Definição de Senha de Acesso
                       </label>
                       <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${metrics.badgeColor}`}>
                         {metrics.label} ({metrics.score}%)
@@ -5009,7 +5637,7 @@ export default function SuperAdminPortal({
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Preço Mensal (R$)</label>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Preço Mensal (MZN)</label>
                   <input 
                     type="number"
                     required
@@ -5225,7 +5853,7 @@ export default function SuperAdminPortal({
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Valor Registrado (R$)</label>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Valor Registrado (MZN)</label>
                   <input 
                     type="number"
                     required
@@ -5275,7 +5903,7 @@ export default function SuperAdminPortal({
               </div>
 
               <p className="text-xs text-indigo-600 bg-indigo-50 p-3 rounded-lg leading-relaxed">
-                ℹ️ <strong>Nota:</strong> Marcar o lançamento como <strong>Pago</strong> adicionará automaticamente 30 dias na data de vencimento da instituição correspondente no sistema.
+                ℹ <strong>Nota:</strong> Marcar o lançamento como <strong>Pago</strong> adicionará automaticamente 30 dias na data de vencimento da instituição correspondente no sistema.
               </p>
 
               <div className="flex gap-2 justify-end pt-4 border-t border-slate-100">
@@ -5330,7 +5958,7 @@ export default function SuperAdminPortal({
                 <div>
                   <span className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Valor</span>
                   <p className="font-bold font-mono text-indigo-600 dark:text-indigo-400 text-base">
-                    {viewingPayment.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                    {viewingPayment.valor.toLocaleString('pt-MZ', { style: 'currency', currency: 'MZN' })}
                   </p>
                 </div>
                 <div>
@@ -5456,7 +6084,7 @@ export default function SuperAdminPortal({
                       // Create notification record in Firestore
                       await addDoc(collection(db, 'notificacoes'), {
                         destinatario_id: 'super_admin',
-                        titulo: `🔒 Código 2FA para Descriptografia de Logs (${selectedTenantForLogs.nome})`,
+                        titulo: ` Código 2FA para Descriptografia de Logs (${selectedTenantForLogs.nome})`,
                         mensagem: `Código de verificação 2FA enviado para ${selectedTenantForLogs.email_admin}. Código: ${code}`,
                         tipo: 'alerta',
                         lido: false,
@@ -5664,7 +6292,7 @@ export default function SuperAdminPortal({
               </div>
               <div>
                 <span className="bg-rose-500/10 text-rose-600 dark:text-rose-400 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider font-mono">
-                  🚨 Ação Crítica & Irreversível
+                   Ação Crítica & Irreversível
                 </span>
                 <h3 className="text-lg font-black text-slate-900 dark:text-white font-sans mt-0.5">
                   Excluir Escola / Instituição
