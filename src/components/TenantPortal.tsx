@@ -4,7 +4,6 @@
  */
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { motion } from 'motion/react';
 import { 
   collection, 
   getDocs, 
@@ -1246,6 +1245,35 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const pautas = filteredPautas;
   const publicPautas = useMemo(() => pautas, [pautas]);
   const processos = filteredProcessos;
+
+  const studentsCountByCurso = useMemo(() => {
+    const counts: Record<string, number> = {};
+    rawStudents.forEach(s => {
+      // 1. Direct curso_id
+      if (s.curso_id) {
+        counts[s.curso_id] = (counts[s.curso_id] || 0) + 1;
+        return;
+      }
+      // 2. Via turma's curso_id
+      if (s.turma_id) {
+        const matchingTurma = rawTurmas.find(t => t.id === s.turma_id);
+        if (matchingTurma && (matchingTurma as any).curso_id) {
+          const cId = (matchingTurma as any).curso_id;
+          counts[cId] = (counts[cId] || 0) + 1;
+          return;
+        }
+      }
+      // 3. Match by curso name if available
+      const courseName = (s as any).curso || (s as any).curso_nome;
+      if (courseName) {
+        const matchingCurso = rawCursos.find(c => c.nome?.toLowerCase() === courseName.toLowerCase());
+        if (matchingCurso) {
+          counts[matchingCurso.id] = (counts[matchingCurso.id] || 0) + 1;
+        }
+      }
+    });
+    return counts;
+  }, [rawStudents, rawTurmas, rawCursos]);
 
   // Search/Filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -4969,16 +4997,49 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           tenant_id: currentTenantId,
           updated_at: new Date().toISOString()
         });
+
+        // Sync with classes collection if present
+        const matchingClass = rawClasses.find(c => c.id === cadeiraData.id || c.codigo === cadeiraData.codigo);
+        if (matchingClass) {
+          await updateDoc(doc(db, 'classes', matchingClass.id), {
+            nome: cadeiraData.nome,
+            codigo: cadeiraData.codigo,
+            curso_id: cadeiraData.curso_id || '',
+            curso_nome: cadeiraData.curso_nome || '',
+            ano_curricular: cadeiraData.ano_curricular ? `${cadeiraData.ano_curricular}º Ano` : '1º Ano',
+            periodo_lectivo: cadeiraData.semestre || '1º Semestre',
+            docente_id: cadeiraData.docente_id || '',
+            creditos: cadeiraData.creditos || 6,
+            updated_at: new Date().toISOString()
+          });
+        }
         showSystemNotification("Disciplina/Cadeira atualizada com sucesso!", "sucesso");
       } else {
         const { id, ...dataToSave } = cadeiraData;
-        await addDoc(collection(db, 'cadeiras'), {
+        const newDocRef = await addDoc(collection(db, 'cadeiras'), {
           ...dataToSave,
           tenant_id: currentTenantId,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         });
-        showSystemNotification("Disciplina/Cadeira cadastrada com sucesso!", "sucesso");
+
+        // Also insert into classes collection so it appears immediately in the Cadeiras module
+        await addDoc(collection(db, 'classes'), {
+          nome: dataToSave.nome,
+          codigo: dataToSave.codigo,
+          curso_id: dataToSave.curso_id || '',
+          curso_nome: dataToSave.curso_nome || '',
+          ano_curricular: dataToSave.ano_curricular ? `${dataToSave.ano_curricular}º Ano` : '1º Ano',
+          periodo_lectivo: dataToSave.semestre || '1º Semestre',
+          docente_id: dataToSave.docente_id || '',
+          creditos: dataToSave.creditos || 6,
+          tenant_id: currentTenantId,
+          escola_id: dataToSave.escola_id || schools[0]?.id || '',
+          status_aprovacao: 'aprovado',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        });
+        showSystemNotification("Disciplina/Cadeira cadastrada com sucesso e sincronizada com o módulo de cadeiras!", "sucesso");
       }
       await loadTenantContext();
     } catch (error: any) {
@@ -7656,81 +7717,195 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       } 
       
       else if (modalType === 'pauta') {
-        const gradesList: number[] = [];
-        const checkAndPush = (val: any) => {
-          if (val === 0 || val === '0' || val === 0.0) {
-            gradesList.push(0);
-          } else if (val !== undefined && val !== null && val !== '') {
-            const num = Number(val);
-            if (!isNaN(num)) {
-              gradesList.push(num);
+        let calculatedPauta: any = {};
+
+        if (isUniversidade) {
+          const f1 = pautaForm.frequencia_1 !== '' && pautaForm.frequencia_1 !== undefined && pautaForm.frequencia_1 !== null ? Number(pautaForm.frequencia_1) : null;
+          const f2 = pautaForm.frequencia_2 !== '' && pautaForm.frequencia_2 !== undefined && pautaForm.frequencia_2 !== null ? Number(pautaForm.frequencia_2) : null;
+          const tp = pautaForm.trabalho_pratico !== '' && pautaForm.trabalho_pratico !== undefined && pautaForm.trabalho_pratico !== null ? Number(pautaForm.trabalho_pratico) : null;
+          const exN = pautaForm.exame_normal !== '' && pautaForm.exame_normal !== undefined && pautaForm.exame_normal !== null ? Number(pautaForm.exame_normal) : null;
+          const exR = pautaForm.exame_recurso !== '' && pautaForm.exame_recurso !== undefined && pautaForm.exame_recurso !== null ? Number(pautaForm.exame_recurso) : null;
+          const ects = Number(pautaForm.creditos_ects || 6);
+
+          const listToCheck = [f1, f2, tp, exN, exR].filter(v => v !== null) as number[];
+          for (const val of listToCheck) {
+            if (val < 0 || val > 20) {
+              showSystemNotification("Erro: As notas universitárias devem estar entre 0 e 20 valores.", "erro");
+              setIsSaving(false);
+              return;
             }
           }
-        };
 
-        checkAndPush(pautaForm.avaliacao_1);
-        if (pautaForm.num_avaliacoes >= 2) checkAndPush(pautaForm.avaliacao_2);
-        if (pautaForm.num_avaliacoes >= 3) checkAndPush(pautaForm.avaliacao_3);
+          let mediaFreq: number | null = null;
+          if (f1 !== null && f2 !== null) {
+            if (tp !== null) {
+              mediaFreq = (f1 * 0.4) + (f2 * 0.4) + (tp * 0.2);
+            } else {
+              mediaFreq = (f1 + f2) / 2;
+            }
+          } else if (f1 !== null) {
+            mediaFreq = f1;
+          }
 
-        const examValue = pautaForm.nota_exame !== undefined && pautaForm.nota_exame !== null && pautaForm.nota_exame !== '' 
-          ? Number(pautaForm.nota_exame) 
-          : null;
-        const reavalValue = pautaForm.nota_reavaliacao !== undefined && pautaForm.nota_reavaliacao !== null && pautaForm.nota_reavaliacao !== ''
-          ? Number(pautaForm.nota_reavaliacao)
-          : null;
+          let autoStatus = 'Pendente';
+          let mediaFinal: number | null = mediaFreq;
 
-        for (const g of gradesList) {
-          if (g < 0 || g > 20) {
-            showSystemNotification("Erro: Todas as notas de avaliação devem estar compreendidas entre 0 e 20 valores.", "erro");
+          if (mediaFreq !== null) {
+            if (f1 !== null && f2 !== null) {
+              if (mediaFreq >= 14) {
+                autoStatus = 'Dispensado (Aprovado)';
+              } else if (mediaFreq >= 10) {
+                autoStatus = 'Admitido a Exame';
+              } else {
+                autoStatus = 'Reprovado por Frequência';
+              }
+            } else {
+              autoStatus = 'Frequência em Curso';
+            }
+          }
+
+          if (exN !== null && mediaFreq !== null) {
+            mediaFinal = (mediaFreq + exN) / 2;
+            if (exN >= 10 && mediaFinal >= 10) {
+              autoStatus = 'Aprovado no Exame';
+            } else {
+              autoStatus = 'Reprovado no Exame (Recurso)';
+            }
+          }
+
+          if (exR !== null && mediaFreq !== null) {
+            mediaFinal = (mediaFreq + exR) / 2;
+            if (exR >= 10 && mediaFinal >= 10) {
+              autoStatus = 'Aprovado no Recurso';
+            } else {
+              autoStatus = 'Reprovado no Recurso';
+            }
+          }
+
+          calculatedPauta = {
+            ...pautaForm,
+            frequencia_1: f1 !== null ? Number(f1.toFixed(2)) : '',
+            frequencia_2: f2 !== null ? Number(f2.toFixed(2)) : '',
+            trabalho_pratico: tp !== null ? Number(tp.toFixed(2)) : '',
+            media_frequencia: mediaFreq !== null ? Number(mediaFreq.toFixed(2)) : null,
+            exame_normal: exN !== null ? Number(exN.toFixed(2)) : null,
+            exame_recurso: exR !== null ? Number(exR.toFixed(2)) : null,
+            creditos_ects: ects,
+            semestre: pautaForm.semestre || '1º Semestre',
+            media_final: mediaFinal !== null ? Number(mediaFinal.toFixed(2)) : (mediaFreq !== null ? Number(mediaFreq.toFixed(2)) : 0),
+            nota_media: mediaFinal !== null ? Number(mediaFinal.toFixed(2)) : (mediaFreq !== null ? Number(mediaFreq.toFixed(2)) : 0),
+            situacao: autoStatus,
+            status_estudante: autoStatus,
+            tipo_instituicao_origem: 'universidade',
+            status: pautaForm.status || (editingItem ? editingItem.status : 'rascunho'),
+            data_lancamento: new Date().toISOString().split('T')[0]
+          };
+        } else if (isInstituto) {
+          const at = pautaForm.avaliacao_teorica !== '' && pautaForm.avaliacao_teorica !== undefined && pautaForm.avaliacao_teorica !== null ? Number(pautaForm.avaliacao_teorica) : null;
+          const ap = pautaForm.avaliacao_pratica !== '' && pautaForm.avaliacao_pratica !== undefined && pautaForm.avaliacao_pratica !== null ? Number(pautaForm.avaliacao_pratica) : null;
+          const pi = pautaForm.projecto_integrador !== '' && pautaForm.projecto_integrador !== undefined && pautaForm.projecto_integrador !== null ? Number(pautaForm.projecto_integrador) : null;
+
+          const listToCheck = [at, ap, pi].filter(v => v !== null) as number[];
+          for (const val of listToCheck) {
+            if (val < 0 || val > 20) {
+              showSystemNotification("Erro: As avaliações modulares devem estar entre 0 e 20 valores.", "erro");
+              setIsSaving(false);
+              return;
+            }
+          }
+
+          let totalScore = 0;
+          let totalWeight = 0;
+          if (at !== null) { totalScore += at * 0.3; totalWeight += 0.3; }
+          if (ap !== null) { totalScore += ap * 0.5; totalWeight += 0.5; }
+          if (pi !== null) { totalScore += pi * 0.2; totalWeight += 0.2; }
+
+          const mediaCalc = totalWeight > 0 ? (totalScore / totalWeight) : 0;
+          let compStatus = 'Pendente';
+          if (totalWeight > 0) {
+            if (mediaCalc >= 16) compStatus = 'Apto com Distinção';
+            else if (mediaCalc >= 10) compStatus = 'Apto';
+            else compStatus = 'Ainda Não Apto';
+          }
+
+          calculatedPauta = {
+            ...pautaForm,
+            avaliacao_teorica: at !== null ? Number(at.toFixed(2)) : '',
+            avaliacao_pratica: ap !== null ? Number(ap.toFixed(2)) : '',
+            projecto_integrador: pi !== null ? Number(pi.toFixed(2)) : '',
+            media_final: Number(mediaCalc.toFixed(2)),
+            nota_media: Number(mediaCalc.toFixed(2)),
+            competencia_status: compStatus,
+            situacao: compStatus,
+            status_estudante: compStatus,
+            modulo_periodo: pautaForm.modulo_periodo || 'Módulo 01',
+            tipo_instituicao_origem: 'instituto',
+            status: pautaForm.status || (editingItem ? editingItem.status : 'rascunho'),
+            data_lancamento: new Date().toISOString().split('T')[0]
+          };
+        } else {
+          // Escola / Primário & Secundário
+          const gradesList: number[] = [];
+          const checkAndPush = (val: any) => {
+            if (val === 0 || val === '0' || val === 0.0) {
+              gradesList.push(0);
+            } else if (val !== undefined && val !== null && val !== '') {
+              const num = Number(val);
+              if (!isNaN(num)) {
+                gradesList.push(num);
+              }
+            }
+          };
+
+          checkAndPush(pautaForm.avaliacao_1);
+          if (pautaForm.num_avaliacoes >= 2) checkAndPush(pautaForm.avaliacao_2);
+          if (pautaForm.num_avaliacoes >= 3) checkAndPush(pautaForm.avaliacao_3);
+
+          const examValue = pautaForm.nota_exame !== undefined && pautaForm.nota_exame !== null && pautaForm.nota_exame !== '' 
+            ? Number(pautaForm.nota_exame) 
+            : null;
+          const reavalValue = pautaForm.nota_reavaliacao !== undefined && pautaForm.nota_reavaliacao !== null && pautaForm.nota_reavaliacao !== ''
+            ? Number(pautaForm.nota_reavaliacao)
+            : null;
+
+          for (const g of gradesList) {
+            if (g < 0 || g > 20) {
+              showSystemNotification("Erro: Todas as notas de avaliação devem estar compreendidas entre 0 e 20 valores.", "erro");
+              setIsSaving(false);
+              return;
+            }
+          }
+          if (examValue !== null && (examValue < 0 || examValue > 20)) {
+            showSystemNotification("Erro: A nota de exame deve estar compreendida entre 0 e 20 valores.", "erro");
             setIsSaving(false);
             return;
           }
-        }
-        if (examValue !== null && (examValue < 0 || examValue > 20)) {
-          showSystemNotification("Erro: A nota de exame deve estar compreendida entre 0 e 20 valores.", "erro");
-          setIsSaving(false);
-          return;
-        }
-        if (reavalValue !== null && (reavalValue < 0 || reavalValue > 20)) {
-          showSystemNotification("Erro: A nota de reavaliação deve estar compreendida entre 0 e 20 valores.", "erro");
-          setIsSaving(false);
-          return;
-        }
-
-        const mediaFrequencia = gradesList.length > 0 ? (gradesList.reduce((sum, g) => sum + g, 0) / gradesList.length) : 0;
-        
-        const passGrade = config?.pautas_nota_aprovacao ?? 9.5;
-        const admitGrade = config?.pautas_nota_admissao ?? 9.5;
-
-        let autoStatus = 'Pendente';
-        if (gradesList.length > 0) {
-          if (mediaFrequencia < admitGrade) {
-            autoStatus = 'Reprovado';
-          } else if (mediaFrequencia >= 15) {
-            autoStatus = 'Aprovado';
-          } else {
-            autoStatus = 'Admitido';
+          if (reavalValue !== null && (reavalValue < 0 || reavalValue > 20)) {
+            showSystemNotification("Erro: A nota de reavaliação deve estar compreendida entre 0 e 20 valores.", "erro");
+            setIsSaving(false);
+            return;
           }
-        }
 
-        let mediaFinal = mediaFrequencia;
-        if (examValue !== null) {
-          mediaFinal = (mediaFrequencia + examValue) / 2;
-          if (examValue < passGrade) {
-            autoStatus = 'Reprovado';
-            if (reavalValue !== null) {
-              if (reavalValue < passGrade) {
-                autoStatus = 'Reprovado';
-                mediaFinal = (mediaFrequencia + reavalValue) / 2;
-              } else {
-                autoStatus = 'Aprovado na Reavaliação';
-                mediaFinal = (mediaFrequencia + reavalValue) / 2;
-              }
-            }
-          } else {
-            if (mediaFinal >= passGrade) {
+          const mediaFrequencia = gradesList.length > 0 ? (gradesList.reduce((sum, g) => sum + g, 0) / gradesList.length) : 0;
+          
+          const passGrade = config?.pautas_nota_aprovacao ?? 9.5;
+          const admitGrade = config?.pautas_nota_admissao ?? 9.5;
+
+          let autoStatus = 'Pendente';
+          if (gradesList.length > 0) {
+            if (mediaFrequencia < admitGrade) {
+              autoStatus = 'Reprovado';
+            } else if (mediaFrequencia >= 15) {
               autoStatus = 'Aprovado';
             } else {
+              autoStatus = 'Admitido';
+            }
+          }
+
+          let mediaFinal = mediaFrequencia;
+          if (examValue !== null) {
+            mediaFinal = (mediaFrequencia + examValue) / 2;
+            if (examValue < passGrade) {
               autoStatus = 'Reprovado';
               if (reavalValue !== null) {
                 if (reavalValue < passGrade) {
@@ -7741,26 +7916,42 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   mediaFinal = (mediaFrequencia + reavalValue) / 2;
                 }
               }
+            } else {
+              if (mediaFinal >= passGrade) {
+                autoStatus = 'Aprovado';
+              } else {
+                autoStatus = 'Reprovado';
+                if (reavalValue !== null) {
+                  if (reavalValue < passGrade) {
+                    autoStatus = 'Reprovado';
+                    mediaFinal = (mediaFrequencia + reavalValue) / 2;
+                  } else {
+                    autoStatus = 'Aprovado na Reavaliação';
+                    mediaFinal = (mediaFrequencia + reavalValue) / 2;
+                  }
+                }
+              }
             }
           }
-        }
 
-        const calculatedPauta = {
-          ...pautaForm,
-          avaliacao_1: pautaForm.avaliacao_1 !== '' && pautaForm.avaliacao_1 !== undefined ? Number(pautaForm.avaliacao_1) : '',
-          avaliacao_2: pautaForm.num_avaliacoes >= 2 && pautaForm.avaliacao_2 !== '' && pautaForm.avaliacao_2 !== undefined ? Number(pautaForm.avaliacao_2) : '',
-          avaliacao_3: pautaForm.num_avaliacoes >= 3 && pautaForm.avaliacao_3 !== '' && pautaForm.avaliacao_3 !== undefined ? Number(pautaForm.avaliacao_3) : '',
-          media_avaliacoes: Number(mediaFrequencia.toFixed(2)),
-          nota_exame: examValue !== null ? examValue : null,
-          nota_reavaliacao: reavalValue !== null ? reavalValue : null,
-          media_final: Number(mediaFinal.toFixed(2)),
-          nota_media: Number(mediaFinal.toFixed(2)), // compatibility fallback
-          situacao: autoStatus, // compatibility fallback
-          status_estudante: autoStatus,
-          num_avaliacoes: Number(pautaForm.num_avaliacoes || 3),
-          status: pautaForm.status || (editingItem ? editingItem.status : 'rascunho'),
-          data_lancamento: new Date().toISOString().split('T')[0]
-        };
+          calculatedPauta = {
+            ...pautaForm,
+            avaliacao_1: pautaForm.avaliacao_1 !== '' && pautaForm.avaliacao_1 !== undefined ? Number(pautaForm.avaliacao_1) : '',
+            avaliacao_2: pautaForm.num_avaliacoes >= 2 && pautaForm.avaliacao_2 !== '' && pautaForm.avaliacao_2 !== undefined ? Number(pautaForm.avaliacao_2) : '',
+            avaliacao_3: pautaForm.num_avaliacoes >= 3 && pautaForm.avaliacao_3 !== '' && pautaForm.avaliacao_3 !== undefined ? Number(pautaForm.avaliacao_3) : '',
+            media_avaliacoes: Number(mediaFrequencia.toFixed(2)),
+            nota_exame: examValue !== null ? examValue : null,
+            nota_reavaliacao: reavalValue !== null ? reavalValue : null,
+            media_final: Number(mediaFinal.toFixed(2)),
+            nota_media: Number(mediaFinal.toFixed(2)),
+            situacao: autoStatus,
+            status_estudante: autoStatus,
+            tipo_instituicao_origem: 'escola',
+            num_avaliacoes: Number(pautaForm.num_avaliacoes || 3),
+            status: pautaForm.status || (editingItem ? editingItem.status : 'rascunho'),
+            data_lancamento: new Date().toISOString().split('T')[0]
+          };
+        }
 
         if (editingItem) {
           await updateDoc(doc(db, 'pautas', editingItem.id), calculatedPauta);
@@ -10089,12 +10280,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 Cadastrar Província & Concluir
                               </button>
                               <button
-                                onClick={async () => {
-                                  if (window.confirm("Deseja descartar esta importação pendente?")) {
-                                    await deleteDoc(doc(db, 'importacoes_pendentes', imp.id));
-                                    showSystemNotification("Importação descartada.", "info");
-                                    await loadTenantContext();
-                                  }
+                                onClick={() => {
+                                  showConfirm(
+                                    "Descartar Importação?",
+                                    "Deseja realmente descartar esta importação pendente?",
+                                    async () => {
+                                      await deleteDoc(doc(db, 'importacoes_pendentes', imp.id));
+                                      showSystemNotification("Importação descartada.", "info");
+                                      await loadTenantContext();
+                                    },
+                                    true
+                                  );
                                 }}
                                 className="bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-700 p-1.5 rounded-lg border border-slate-200 transition-all cursor-pointer flex items-center justify-center"
                                 title="Descartar"
@@ -12058,8 +12254,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     <CursosModule
                       tenantTipoInstituicao={tenant?.tipoInstituicao || 'universidade'}
                       schools={schools}
+                      teachers={teachers}
+                      tenantUsers={tenantUsers}
                       cursos={rawCursos}
                       cadeiras={rawCadeiras}
+                      studentsCountByCurso={studentsCountByCurso}
                       onSaveCurso={handleSaveCurso}
                       onDeleteCurso={handleDeleteCurso}
                       onSaveCadeira={handleSaveCadeira}
@@ -12170,11 +12369,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     )}
                                   {hasPermission('classes_escolares', 'excluir') && (
                                     <button 
-                                      onClick={async () => {
-                                        if (confirm(`Tem certeza que deseja excluir a classe "${c.nome}"?`)) {
-                                          await deleteDoc(doc(db, 'classes_escolares', c.id));
-                                          loadTenantContext();
-                                        }
+                                      onClick={() => {
+                                        showConfirm(
+                                          "Excluir Classe",
+                                          `Tem certeza que deseja excluir a classe "${c.nome}"?`,
+                                          async () => {
+                                            await deleteDoc(doc(db, 'classes_escolares', c.id));
+                                            loadTenantContext();
+                                          },
+                                          true
+                                        );
                                       }}
                                       className="text-rose-600 hover:text-rose-900 font-bold text-xs cursor-pointer"
                                     >
@@ -12217,23 +12421,23 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                 return (
                   <div className="space-y-6 animate-fadeIn">
-                    <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-4">
+                    <div className="bg-white dark:bg-[#0b101b] p-6 rounded-2xl border border-slate-200/60 dark:border-slate-800 shadow-xs space-y-4">
                       {/* Sub-tab Switcher Header */}
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
                         <div className="flex items-center gap-2">
                           <div>
-                            <h3 className="font-extrabold text-slate-850 text-lg">Calendário, Horários & Férias</h3>
-                            <p className="text-xs text-slate-400 font-sans">Gerencie a grade horária semanal e o registro de férias das turmas.</p>
+                            <h3 className="font-extrabold text-slate-850 dark:text-slate-100 text-lg">Calendário, Horários & Férias</h3>
+                            <p className="text-xs text-slate-400 dark:text-slate-400 font-sans">Gerencie a grade horária semanal e o registro de férias das turmas.</p>
                           </div>
                           {renderModuleRefreshButton('Calendário')}
                         </div>
-                        <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/50 shadow-inner overflow-x-auto">
+                        <div className="flex items-center bg-slate-100 dark:bg-[#090d16] p-1 rounded-xl border border-slate-200/50 dark:border-slate-800 shadow-inner overflow-x-auto">
                           <button
                             onClick={() => setCalendarSubTab('grade')}
                             className={`px-3 py-1.5 rounded-lg font-bold text-xs tracking-wide transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
                               calendarSubTab === 'grade'
-                                ? 'bg-white text-indigo-600 shadow-3xs'
-                                : 'text-slate-500 hover:text-slate-750'
+                                ? 'bg-white dark:bg-[#1e293b] text-indigo-600 dark:text-indigo-400 shadow-3xs'
+                                : 'text-slate-500 dark:text-slate-400 hover:text-slate-750 dark:hover:text-slate-200'
                             }`}
                           >
                              Grade Semanal
@@ -12242,8 +12446,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             onClick={() => setCalendarSubTab('ferias')}
                             className={`px-3 py-1.5 rounded-lg font-bold text-xs tracking-wide transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
                               calendarSubTab === 'ferias'
-                                ? 'bg-white text-indigo-600 shadow-3xs'
-                                : 'text-slate-500 hover:text-slate-750'
+                                ? 'bg-white dark:bg-[#1e293b] text-indigo-600 dark:text-indigo-400 shadow-3xs'
+                                : 'text-slate-500 dark:text-slate-400 hover:text-slate-750 dark:hover:text-slate-200'
                             }`}
                           >
                              Férias das Turmas
@@ -12252,8 +12456,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             onClick={() => setCalendarSubTab('feriados')}
                             className={`px-3 py-1.5 rounded-lg font-bold text-xs tracking-wide transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
                               calendarSubTab === 'feriados'
-                                ? 'bg-white text-indigo-600 shadow-3xs'
-                                : 'text-slate-500 hover:text-slate-750'
+                                ? 'bg-white dark:bg-[#1e293b] text-indigo-600 dark:text-indigo-400 shadow-3xs'
+                                : 'text-slate-500 dark:text-slate-400 hover:text-slate-750 dark:hover:text-slate-200'
                             }`}
                           >
                              Feriados
@@ -12263,8 +12467,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             onClick={() => setCalendarSubTab('exames')}
                             className={`px-3 py-1.5 rounded-lg font-bold text-xs tracking-wide transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
                               calendarSubTab === 'exames'
-                                ? 'bg-white text-indigo-600 shadow-3xs'
-                                : 'text-slate-500 hover:text-slate-750'
+                                ? 'bg-white dark:bg-[#1e293b] text-indigo-600 dark:text-indigo-400 shadow-3xs'
+                                : 'text-slate-500 dark:text-slate-400 hover:text-slate-750 dark:hover:text-slate-200'
                             }`}
                           >
                              Exames & Avaliações
@@ -12276,7 +12480,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         <>
                           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                             <div>
-                              <h4 className="font-bold text-slate-700 text-sm">Visualização Semanal</h4>
+                              <h4 className="font-bold text-slate-700 dark:text-slate-200 text-sm">Visualização Semanal</h4>
                               <p className="text-[11px] text-slate-400">Filtre por turma para consultar ou agendar as disciplinas e exames.</p>
                             </div>
                             <div className="flex items-center gap-3 flex-wrap self-start sm:self-center">
@@ -12284,7 +12488,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 <div className="flex items-center gap-2">
                                   <select 
                                     id="calendar_turma_filter"
-                                    className="bg-slate-100 border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-sans"
+                                    className="bg-slate-100 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2 text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-sans"
                                     onChange={(e) => {
                                       const val = e.target.value;
                                       setSelectedTurmaFilter(val);
@@ -12301,7 +12505,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               <div className="flex items-center gap-2">
                                 <select 
                                   id="calendar_turno_filter"
-                                  className="bg-slate-100 border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-sans"
+                                  className="bg-slate-100 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2 text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-sans"
                                   onChange={(e) => {
                                     const val = e.target.value as 'manha' | 'tarde' | 'noite';
                                     setSelectedTurn(val);
@@ -12319,7 +12523,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 <div className="relative">
                                   <button
                                     onClick={() => setIsCopyDropdownOpen(!isCopyDropdownOpen)}
-                                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2 px-3 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-3xs border border-slate-200/65"
+                                    className="bg-slate-100 dark:bg-[#090d16] hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold text-xs py-2 px-3 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-3xs border border-slate-200/65 dark:border-slate-800"
                                   >
                                     <Copy className="w-3.5 h-3.5" /> Copiar Agenda
                                   </button>
@@ -12330,8 +12534,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                         className="fixed inset-0 z-10" 
                                         onClick={() => setIsCopyDropdownOpen(false)} 
                                       />
-                                      <div className="absolute right-0 mt-1.5 w-52 rounded-xl bg-white border border-slate-200 shadow-lg py-1.5 z-20 animate-in fade-in slide-in-from-top-1 duration-100">
-                                        <div className="px-3 py-1.5 border-b border-slate-100">
+                                      <div className="absolute right-0 mt-1.5 w-52 rounded-xl bg-white dark:bg-[#0e1422] border border-slate-200 dark:border-slate-800 shadow-lg py-1.5 z-20 animate-in fade-in slide-in-from-top-1 duration-100">
+                                        <div className="px-3 py-1.5 border-b border-slate-100 dark:border-slate-800">
                                           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Copiar esta semana para:</p>
                                         </div>
                                         <button
@@ -12339,7 +12543,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                             setIsCopyDropdownOpen(false);
                                             handleCopySchedule('mes');
                                           }}
-                                          className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 font-semibold transition-colors cursor-pointer flex items-center justify-between"
+                                          className="w-full text-left px-3 py-2 text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 font-semibold transition-colors cursor-pointer flex items-center justify-between"
                                         >
                                           <span>Mês (4 semanas)</span>
                                           <span className="text-[9px] text-slate-400 font-mono">1 mês</span>
@@ -12349,7 +12553,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                             setIsCopyDropdownOpen(false);
                                             handleCopySchedule('trimestre');
                                           }}
-                                          className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 font-semibold transition-colors cursor-pointer flex items-center justify-between"
+                                          className="w-full text-left px-3 py-2 text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 font-semibold transition-colors cursor-pointer flex items-center justify-between"
                                         >
                                           <span>Trimestre</span>
                                           <span className="text-[9px] text-slate-400 font-mono">3 meses</span>
@@ -12359,7 +12563,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                             setIsCopyDropdownOpen(false);
                                             handleCopySchedule('semestre');
                                           }}
-                                          className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 font-semibold transition-colors cursor-pointer flex items-center justify-between"
+                                          className="w-full text-left px-3 py-2 text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 font-semibold transition-colors cursor-pointer flex items-center justify-between"
                                         >
                                           <span>Semestre</span>
                                           <span className="text-[9px] text-slate-400 font-mono">6 meses</span>
@@ -12369,7 +12573,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                             setIsCopyDropdownOpen(false);
                                             handleCopySchedule('ano');
                                           }}
-                                          className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 font-semibold transition-colors cursor-pointer flex items-center justify-between"
+                                          className="w-full text-left px-3 py-2 text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 font-semibold transition-colors cursor-pointer flex items-center justify-between"
                                         >
                                           <span>Ano Inteiro</span>
                                           <span className="text-[9px] text-slate-400 font-mono">1 ano</span>
@@ -12445,7 +12649,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           </div>
 
                           {/* Weekly Navigation Controls */}
-                          <div className="flex justify-center items-center gap-4 py-2.5 border-t border-slate-100 mt-2">
+                          <div className="flex justify-center items-center gap-4 py-2.5 border-t border-slate-100 dark:border-slate-800 mt-2">
                             <button
                               onClick={() => {
                                 setCalendarSelectedDate(prev => {
@@ -12454,13 +12658,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                   return d;
                                 });
                               }}
-                              className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-650 transition-colors cursor-pointer border border-slate-200 shadow-3xs"
+                              className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-650 dark:text-slate-300 transition-colors cursor-pointer border border-slate-200 dark:border-slate-800 shadow-3xs"
                               title="Semana Anterior"
                             >
                               <ChevronLeft className="w-4 h-4" />
                             </button>
                             
-                            <span className="text-xs sm:text-sm font-bold text-indigo-950 font-sans tracking-wide bg-indigo-50/50 border border-indigo-100/80 rounded-xl px-4 py-1.5 shadow-2xs flex items-center gap-2">
+                            <span className="text-xs sm:text-sm font-bold text-indigo-950 dark:text-indigo-200 font-sans tracking-wide bg-indigo-50/50 dark:bg-indigo-950/40 border border-indigo-100/80 dark:border-indigo-800 rounded-xl px-4 py-1.5 shadow-2xs flex items-center gap-2">
                                {formatCalendarDateWeek(calendarSelectedDate)}
                             </span>
 
@@ -12472,7 +12676,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                   return d;
                                 });
                               }}
-                              className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-650 transition-colors cursor-pointer border border-slate-200 shadow-3xs"
+                              className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-650 dark:text-slate-300 transition-colors cursor-pointer border border-slate-200 dark:border-slate-800 shadow-3xs"
                               title="Próxima Semana"
                             >
                               <ChevronRight className="w-4 h-4" />
@@ -12481,10 +12685,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         </>
                       ) : calendarSubTab === 'ferias' ? (
                         <div className="space-y-4 pt-2">
-                          <div className="flex justify-between items-center bg-slate-50/70 border border-slate-150 p-4 rounded-xl">
+                          <div className="flex justify-between items-center bg-slate-50/70 dark:bg-[#090d16] border border-slate-150 dark:border-slate-800 p-4 rounded-xl">
                             <div>
-                              <h4 className="font-bold text-slate-850 text-sm">Registro de Férias e Recessos</h4>
-                              <p className="text-xs text-slate-500 font-sans">Defina períodos de descanso para as turmas. Aulas não poderão ser agendadas durante estes períodos.</p>
+                              <h4 className="font-bold text-slate-850 dark:text-slate-100 text-sm">Registro de Férias e Recessos</h4>
+                              <p className="text-xs text-slate-500 dark:text-slate-400 font-sans">Defina períodos de descanso para as turmas. Aulas não poderão ser agendadas durante estes períodos.</p>
                             </div>
                             {(currentUserRole === 'admin' || currentUserRole === 'director' || loggedInUser?.tipo === 'admin' || loggedInUser?.tipo === 'director') && (
                               <button
@@ -12506,46 +12710,46 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             )}
                           </div>
 
-                          <div className="border border-slate-200/80 rounded-xl overflow-hidden bg-white shadow-2xs">
+                          <div className="border border-slate-200/80 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-[#0b101b] shadow-2xs">
                             <table className="w-full text-left border-collapse text-xs">
                               <thead>
-                                <tr className="bg-slate-50 text-slate-600 font-bold border-b border-slate-150">
+                                <tr className="bg-slate-50 dark:bg-[#090d16] text-slate-600 dark:text-slate-300 font-bold border-b border-slate-150 dark:border-slate-800">
                                   <th className="p-3.5 font-bold">Descrição</th>
                                   <th className="p-3.5 font-bold">Turma Aplicável</th>
                                   <th className="p-3.5 font-bold">Data Início</th>
                                   <th className="p-3.5 font-bold">Data Fim</th>
-                                  <th className="p-3.5 font-bold text-center sticky right-0 bg-slate-50 dark:bg-slate-900 z-10">Ações</th>
+                                  <th className="p-3.5 font-bold text-center sticky right-0 bg-slate-50 dark:bg-[#090d16] z-10">Ações</th>
                                 </tr>
                               </thead>
-                              <tbody className="divide-y divide-slate-100">
+                              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                                 {rawVacations.length > 0 ? (
                                   rawVacations.map((v) => {
                                     const turmaObj = turmas.find(t => t.id === v.turma_id);
                                     const isEditable = currentUserRole === 'admin' || currentUserRole === 'director' || loggedInUser?.tipo === 'admin' || loggedInUser?.tipo === 'director';
 
                                     return (
-                                      <tr key={v.id} className="hover:bg-slate-50/50 transition-colors">
-                                        <td className="p-3.5 font-semibold text-slate-800 flex items-center gap-1.5">
+                                      <tr key={v.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-850/50 transition-colors">
+                                        <td className="p-3.5 font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                                           <span></span> {v.descricao}
                                         </td>
-                                        <td className="p-3.5 text-slate-650 font-medium">
+                                        <td className="p-3.5 text-slate-650 dark:text-slate-300 font-medium">
                                           {v.turma_id === 'todas' || !v.turma_id ? (
-                                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-100 dark:border-indigo-800">
                                                Geral (Todas)
                                             </span>
                                           ) : (
-                                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-250">
+                                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-250 dark:border-amber-800">
                                                {turmaObj?.nome || 'Turma excluída'}
                                             </span>
                                           )}
                                         </td>
-                                        <td className="p-3.5 font-mono text-slate-500 font-semibold">
+                                        <td className="p-3.5 font-mono text-slate-500 dark:text-slate-400 font-semibold">
                                           {new Date(v.data_inicio + 'T12:00:00').toLocaleDateString('pt-PT')}
                                         </td>
-                                        <td className="p-3.5 font-mono text-slate-500 font-semibold">
+                                        <td className="p-3.5 font-mono text-slate-500 dark:text-slate-400 font-semibold">
                                           {new Date(v.data_fim + 'T12:00:00').toLocaleDateString('pt-PT')}
                                         </td>
-                                        <td className="p-3.5 text-center sticky right-0 bg-white dark:bg-slate-900 z-10">
+                                        <td className="p-3.5 text-center sticky right-0 bg-white dark:bg-[#0b101b] z-10">
                                           {isEditable ? (
                                             <div className="flex items-center justify-center gap-2">
                                               <button
@@ -12753,8 +12957,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         <div className="space-y-4">
                           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                             <div>
-                              <h4 className="font-bold text-slate-800 text-sm">Cronograma de Exames & Avaliações</h4>
-                              <p className="text-[11px] text-slate-400">Consulte, pesquise e agende datas oficiais de exames, provas e avaliações contínuas.</p>
+                              <h4 className="font-bold text-slate-800 dark:text-slate-100 text-sm">Cronograma de Exames & Avaliações</h4>
+                              <p className="text-[11px] text-slate-400 dark:text-slate-400">Consulte, pesquise e agende datas oficiais de exames, provas e avaliações contínuas.</p>
                             </div>
                             <div className="flex items-center gap-2 flex-wrap">
                               {hasPermission('disciplinas', 'criar') && (
@@ -12789,13 +12993,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           </div>
 
                           {/* Filters Bar */}
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50/70 p-3 rounded-xl border border-slate-200/60">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50/70 dark:bg-[#090d16] p-3 rounded-xl border border-slate-200/60 dark:border-slate-800">
                             <div>
-                              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Filtrar por Turma</label>
+                              <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Filtrar por Turma</label>
                               <select
                                 value={exameTurmaFilter}
                                 onChange={(e) => setExameTurmaFilter(e.target.value)}
-                                className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                className="w-full bg-white dark:bg-[#0e1422] border border-slate-200 dark:border-slate-800 rounded-lg p-2 text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-amber-500"
                               >
                                 <option value="todos">Todas as Turmas</option>
                                 {turmas.map(t => (
@@ -12805,11 +13009,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             </div>
 
                             <div>
-                              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Tipo de Avaliação</label>
+                              <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Tipo de Avaliação</label>
                               <select
                                 value={exameTipoFilter}
                                 onChange={(e) => setExameTipoFilter(e.target.value)}
-                                className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                className="w-full bg-white dark:bg-[#0e1422] border border-slate-200 dark:border-slate-800 rounded-lg p-2 text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-amber-500"
                               >
                                 <option value="todos">Todos os Tipos</option>
                                 <option value="Exame Normal">Exame Normal</option>
@@ -12823,14 +13027,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             </div>
 
                             <div>
-                              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Buscar Disciplina / Docente</label>
+                              <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Buscar Disciplina / Docente</label>
                               <div className="relative">
                                 <input
                                   type="text"
                                   placeholder="Buscar..."
                                   value={exameSearchTerm}
                                   onChange={(e) => setExameSearchTerm(e.target.value)}
-                                  className="w-full bg-white border border-slate-200 rounded-lg pl-8 pr-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                  className="w-full bg-white dark:bg-[#0e1422] border border-slate-200 dark:border-slate-800 rounded-lg pl-8 pr-3 py-2 text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-amber-500"
                                 />
                                 <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
                               </div>
@@ -12838,10 +13042,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           </div>
 
                           {/* Table of Scheduled Exams */}
-                          <div className="overflow-x-auto border border-slate-200/80 rounded-xl bg-white shadow-2xs">
+                          <div className="overflow-x-auto border border-slate-200/80 dark:border-slate-800 rounded-xl bg-white dark:bg-[#0b101b] shadow-2xs">
                             <table className="w-full text-left border-collapse text-xs">
                               <thead>
-                                <tr className="bg-slate-50/80 text-slate-600 font-bold border-b border-slate-200 text-[11px] uppercase tracking-wider">
+                                <tr className="bg-slate-50/80 dark:bg-[#090d16] text-slate-600 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-800 text-[11px] uppercase tracking-wider">
                                   <th className="p-3.5">Data & Horário</th>
                                   <th className="p-3.5">Turma</th>
                                   <th className="p-3.5">Disciplina</th>
@@ -12850,10 +13054,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                   <th className="p-3.5">Sala</th>
                                   <th className="p-3.5">Peso</th>
                                   <th className="p-3.5">Observações</th>
-                                  <th className="p-3.5 text-center sticky right-0 bg-slate-50 z-10">Ações</th>
+                                  <th className="p-3.5 text-center sticky right-0 bg-slate-50 dark:bg-[#090d16] z-10">Ações</th>
                                 </tr>
                               </thead>
-                              <tbody className="divide-y divide-slate-100">
+                              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                                 {(() => {
                                   const filteredExames = rawExames.filter(e => {
                                     if (exameTurmaFilter !== 'todos' && e.turma_id !== exameTurmaFilter) return false;
@@ -12883,27 +13087,27 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     const isDeletable = hasPermission('disciplinas', 'excluir') || currentUserRole === 'admin' || currentUserRole === 'director';
                                     const turmaObj = turmas.find(t => t.id === ex.turma_id);
 
-                                    let tipoColor = "bg-amber-50 text-amber-800 border-amber-200";
-                                    if (ex.tipo?.includes('Recurso')) tipoColor = "bg-rose-50 text-rose-800 border-rose-200";
-                                    if (ex.tipo?.includes('Extraordinário')) tipoColor = "bg-purple-50 text-purple-800 border-purple-200";
-                                    if (ex.tipo?.includes('Contínua') || ex.tipo?.includes('Teste')) tipoColor = "bg-indigo-50 text-indigo-800 border-indigo-200";
+                                    let tipoColor = "bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800";
+                                    if (ex.tipo?.includes('Recurso')) tipoColor = "bg-rose-50 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border-rose-200 dark:border-rose-800";
+                                    if (ex.tipo?.includes('Extraordinário')) tipoColor = "bg-purple-50 dark:bg-purple-950/60 text-purple-800 dark:text-purple-300 border-purple-200 dark:border-purple-800";
+                                    if (ex.tipo?.includes('Contínua') || ex.tipo?.includes('Teste')) tipoColor = "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-800 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800";
 
                                     return (
-                                      <tr key={ex.id} className="hover:bg-slate-50/50 transition-colors">
-                                        <td className="p-3.5 font-semibold text-slate-850 whitespace-nowrap">
+                                      <tr key={ex.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-850/50 transition-colors">
+                                        <td className="p-3.5 font-semibold text-slate-850 dark:text-slate-100 whitespace-nowrap">
                                           <div className="flex flex-col">
-                                            <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                                            <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                                               <span></span> {new Date(ex.data + 'T12:00:00').toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric' })}
                                             </span>
-                                            <span className="text-[10px] font-mono text-slate-500 mt-0.5">
-                                              ⏰ {ex.hora_inicio} - {ex.hora_fim}
+                                            <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">
+                                              {ex.hora_inicio} - {ex.hora_fim}
                                             </span>
                                           </div>
                                         </td>
-                                        <td className="p-3.5 font-bold text-slate-700">
+                                        <td className="p-3.5 font-bold text-slate-700 dark:text-slate-300">
                                           {turmaObj?.nome || ex.turma_nome || 'Turma Geral'}
                                         </td>
-                                        <td className="p-3.5 font-extrabold text-indigo-900">
+                                        <td className="p-3.5 font-extrabold text-indigo-900 dark:text-indigo-300">
                                           {ex.disciplina_nome}
                                         </td>
                                         <td className="p-3.5">
@@ -12911,19 +13115,19 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                             {ex.tipo || 'Exame Normal'}
                                           </span>
                                         </td>
-                                        <td className="p-3.5 text-slate-700 font-medium">
-                                          ‍ {ex.docente_nome || teachers.find(t => t.id === ex.docente_id)?.nome || '-'}
+                                        <td className="p-3.5 text-slate-700 dark:text-slate-300 font-medium">
+                                          {ex.docente_nome || teachers.find(t => t.id === ex.docente_id)?.nome || '-'}
                                         </td>
-                                        <td className="p-3.5 font-mono font-bold text-slate-600">
+                                        <td className="p-3.5 font-mono font-bold text-slate-600 dark:text-slate-400">
                                            {ex.sala || '-'}
                                         </td>
-                                        <td className="p-3.5 font-bold text-slate-700">
+                                        <td className="p-3.5 font-bold text-slate-700 dark:text-slate-300">
                                           {ex.peso_nota ? `${ex.peso_nota}%` : '100%'}
                                         </td>
-                                        <td className="p-3.5 text-slate-500 font-sans max-w-xs truncate" title={ex.observacoes}>
+                                        <td className="p-3.5 text-slate-500 dark:text-slate-400 font-sans max-w-xs truncate" title={ex.observacoes}>
                                           {ex.observacoes || '-'}
                                         </td>
-                                        <td className="p-3.5 text-center sticky right-0 bg-white z-10">
+                                        <td className="p-3.5 text-center sticky right-0 bg-white dark:bg-[#0b101b] z-10">
                                           <div className="flex items-center justify-center gap-1.5">
                                             {isEditable && (
                                               <button
@@ -12947,7 +13151,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                   setModalType('agendar_exame');
                                                   setIsModalOpen(true);
                                                 }}
-                                                className="p-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 rounded-lg transition-colors cursor-pointer"
+                                                className="p-1.5 bg-slate-50 dark:bg-[#090d16] hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 rounded-lg transition-colors cursor-pointer"
                                                 title="Editar Agendamento"
                                               >
                                                 <Edit className="w-3.5 h-3.5" />
@@ -12971,7 +13175,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                     true
                                                   );
                                                 }}
-                                                className="p-1.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 rounded-lg transition-colors cursor-pointer"
+                                                className="p-1.5 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 border border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-400 rounded-lg transition-colors cursor-pointer"
                                                 title="Excluir Agendamento"
                                               >
                                                 <Trash2 className="w-3.5 h-3.5" />
@@ -12996,11 +13200,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           Nenhuma turma cadastrada. Crie uma turma primeiro para ver o calendário.
                         </div>
                       ) : (
-                        <div className="overflow-x-auto border border-slate-150 rounded-2xl bg-slate-50/50 shadow-2xs">
+                        <div className="overflow-x-auto border border-slate-150 dark:border-slate-800 rounded-2xl bg-slate-50/50 dark:bg-[#0b101b] shadow-2xs">
                         <table className="w-full text-left border-collapse min-w-[700px]">
                           <thead>
-                            <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 text-xs font-bold text-center">
-                              <th className="p-4 border-r border-slate-200 w-32">Horário</th>
+                            <tr className="bg-slate-100 dark:bg-[#090d16] text-slate-700 dark:text-slate-200 border-b border-slate-200 dark:border-slate-800 text-xs font-bold text-center">
+                              <th className="p-4 border-r border-slate-200 dark:border-slate-800 w-32">Horário</th>
                               {Array.from({ length: 7 }, (_, i) => i).map((dayIndex) => {
                                 const currentDayDate = new Date(calendarSelectedDate);
                                 currentDayDate.setDate(calendarSelectedDate.getDate() + dayIndex);
@@ -13011,12 +13215,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 const holiday = rawFeriados.find(f => f.data === currentDateStr || (f.data && f.data.length === 5 && currentDateStr.endsWith(f.data)));
 
                                 return (
-                                  <th key={dayIndex} className={`p-3.5 border-r border-slate-200 last:border-r-0 ${holiday ? 'bg-rose-50/70' : ''}`}>
+                                  <th key={dayIndex} className={`p-3.5 border-r border-slate-200 dark:border-slate-800 last:border-r-0 ${holiday ? 'bg-rose-50/70 dark:bg-rose-950/40 text-rose-950 dark:text-rose-200' : 'text-slate-700 dark:text-slate-200'}`}>
                                     <div className="flex flex-col items-center gap-0.5">
-                                      <span className={holiday ? 'text-rose-950 font-bold' : ''}>{dayName}</span>
-                                      <span className="text-[10px] text-slate-400 font-mono font-medium">({formattedDateHeader})</span>
+                                      <span className={holiday ? 'text-rose-950 dark:text-rose-200 font-bold' : ''}>{dayName}</span>
+                                      <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono font-medium">({formattedDateHeader})</span>
                                       {holiday && (
-                                        <span className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-rose-100 text-rose-800 border border-rose-200 shadow-2xs max-w-[120px] truncate" title={holiday.nome}>
+                                        <span className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-rose-100 dark:bg-rose-900/60 text-rose-800 dark:text-rose-200 border border-rose-200 dark:border-rose-800 shadow-2xs max-w-[120px] truncate" title={holiday.nome}>
                                            {holiday.nome}
                                         </span>
                                       )}
@@ -13121,8 +13325,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 };
 
                                 return (
-                                  <tr key={timeSlot} className="border-b border-slate-150 hover:bg-slate-50/40 transition-colors">
-                                    <td className="p-4 bg-slate-100/50 border-r border-slate-200 font-bold font-mono text-center text-slate-700 text-xs">
+                                  <tr key={timeSlot} className="border-b border-slate-150 dark:border-slate-800 hover:bg-slate-50/40 dark:hover:bg-slate-850/40 transition-colors">
+                                    <td className="p-4 bg-slate-100/50 dark:bg-[#090d16]/80 border-r border-slate-200 dark:border-slate-800 font-bold font-mono text-center text-slate-700 dark:text-slate-300 text-xs">
                                       {timeSlot}
                                     </td>
                                     {Array.from({ length: 7 }, (_, i) => i).map((dayIdx) => {
@@ -13140,10 +13344,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                       );
                                       if (vacation) {
                                         return (
-                                          <td key={dayIdx} className="p-3 border-r border-slate-150 last:border-r-0 text-center bg-amber-50/10">
-                                            <div className="bg-amber-100/40 dark:bg-amber-950/20 border border-amber-200/50 rounded-xl p-2.5 text-left space-y-0.5">
-                                              <p className="font-bold text-amber-900 text-[11px] flex items-center gap-1"> Férias</p>
-                                              <p className="text-[9px] text-amber-700 font-semibold truncate" title={vacation.descricao}>{vacation.descricao}</p>
+                                          <td key={dayIdx} className="p-3 border-r border-slate-150 dark:border-slate-800 last:border-r-0 text-center bg-amber-50/10 dark:bg-amber-950/20">
+                                            <div className="bg-amber-100/40 dark:bg-amber-950/40 border border-amber-200/50 dark:border-amber-800/60 rounded-xl p-2.5 text-left space-y-0.5">
+                                              <p className="font-bold text-amber-900 dark:text-amber-200 text-[11px] flex items-center gap-1">Férias</p>
+                                              <p className="text-[9px] text-amber-700 dark:text-amber-300 font-semibold truncate" title={vacation.descricao}>{vacation.descricao}</p>
                                             </div>
                                           </td>
                                         );
@@ -13156,12 +13360,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                       // 2. Check Holiday without discipline
                                       if (holiday && !disc) {
                                         return (
-                                          <td key={dayIdx} className="p-2.5 border-r border-slate-150 last:border-r-0 text-center bg-rose-50/20">
-                                            <div className="bg-rose-50/90 border border-rose-200 rounded-xl p-2 text-left space-y-0.5 shadow-3xs">
-                                              <p className="font-bold text-rose-900 text-[10px] flex items-center gap-1">
+                                          <td key={dayIdx} className="p-2.5 border-r border-slate-150 dark:border-slate-800 last:border-r-0 text-center bg-rose-50/20 dark:bg-rose-950/20">
+                                            <div className="bg-rose-50/90 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/80 rounded-xl p-2 text-left space-y-0.5 shadow-3xs">
+                                              <p className="font-bold text-rose-900 dark:text-rose-200 text-[10px] flex items-center gap-1">
                                                  {holiday.tipo || 'Feriado'}
                                               </p>
-                                              <p className="text-[9.5px] text-rose-800 font-bold truncate" title={holiday.nome}>
+                                              <p className="text-[9.5px] text-rose-800 dark:text-rose-300 font-bold truncate" title={holiday.nome}>
                                                 {holiday.nome}
                                               </p>
                                             </div>
@@ -13184,7 +13388,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                                       if (exameInSlot) {
                                         return (
-                                          <td key={dayIdx} className="p-2.5 border-r border-slate-150 last:border-r-0 text-center bg-amber-50/30">
+                                          <td key={dayIdx} className="p-2.5 border-r border-slate-150 dark:border-slate-800 last:border-r-0 text-center bg-amber-50/30 dark:bg-amber-950/20">
                                             <div
                                               onClick={() => {
                                                 setEditingItem(exameInSlot);
@@ -13206,16 +13410,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                 setModalType('agendar_exame');
                                                 setIsModalOpen(true);
                                               }}
-                                              className="bg-amber-100/90 border-2 border-amber-400 hover:border-amber-500 hover:bg-amber-200/80 rounded-xl p-2.5 text-left shadow-xs space-y-1 cursor-pointer transition-all hover:shadow-md active:scale-98 text-amber-950"
+                                              className="bg-amber-100/90 dark:bg-amber-950/60 border-2 border-amber-400 dark:border-amber-600 hover:border-amber-500 hover:bg-amber-200/80 dark:hover:bg-amber-900/60 rounded-xl p-2.5 text-left shadow-xs space-y-1 cursor-pointer transition-all hover:shadow-md active:scale-98 text-amber-950 dark:text-amber-100"
                                             >
-                                              <span className="inline-flex items-center gap-1 text-[8.5px] font-extrabold bg-amber-200 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-full">
+                                              <span className="inline-flex items-center gap-1 text-[8.5px] font-extrabold bg-amber-200 dark:bg-amber-900/80 text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-700 px-2 py-0.5 rounded-full">
                                                  {exameInSlot.tipo || 'EXAME'}
                                               </span>
-                                              <p className="font-extrabold text-xs truncate text-amber-950">{exameInSlot.disciplina_nome}</p>
-                                              <p className="text-[9.5px] truncate font-semibold text-amber-800">‍ {exameInSlot.docente_nome || 'Docente'}</p>
-                                              <div className="flex items-center justify-between text-[9px] font-mono text-amber-700 font-bold pt-0.5">
-                                                <span> {exameInSlot.sala || 'Sala 01'}</span>
-                                                <span>⏰ {exameInSlot.hora_inicio}-{exameInSlot.hora_fim}</span>
+                                              <p className="font-extrabold text-xs truncate text-amber-950 dark:text-amber-100">{exameInSlot.disciplina_nome}</p>
+                                              <p className="text-[9.5px] truncate font-semibold text-amber-800 dark:text-amber-300">{exameInSlot.docente_nome || 'Docente'}</p>
+                                              <div className="flex items-center justify-between text-[9px] font-mono text-amber-700 dark:text-amber-400 font-bold pt-0.5">
+                                                <span>{exameInSlot.sala || 'Sala 01'}</span>
+                                                <span>{exameInSlot.hora_inicio}-{exameInSlot.hora_fim}</span>
                                               </div>
                                             </div>
                                           </td>
@@ -13235,23 +13439,23 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                       ) : { conflict: false };
 
                                       return (
-                                        <td key={dayIdx} className={`p-3 border-r border-slate-150 last:border-r-0 text-center ${holiday ? 'bg-rose-50/10' : ''}`}>
+                                        <td key={dayIdx} className={`p-3 border-r border-slate-150 dark:border-slate-800 last:border-r-0 text-center ${holiday ? 'bg-rose-50/10 dark:bg-rose-950/20' : ''}`}>
                                           {disc ? (() => {
                                             const isWeekend = currentDayDate.getDay() === 0 || currentDayDate.getDay() === 6;
                                             const status = disc.status_aprovacao || (isWeekend ? 'pendente' : 'aprovado');
                                             
-                                            let bgClass = "bg-indigo-50/80 border border-indigo-150/60 hover:border-indigo-300 hover:bg-indigo-50 rounded-xl p-3 text-left shadow-3xs space-y-1 cursor-pointer transition-all hover:shadow-xs active:scale-98 text-indigo-950";
+                                            let bgClass = "bg-indigo-50/80 dark:bg-indigo-950/40 border border-indigo-150/60 dark:border-indigo-800/80 hover:border-indigo-300 dark:hover:border-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/40 rounded-xl p-3 text-left shadow-3xs space-y-1 cursor-pointer transition-all hover:shadow-xs active:scale-98 text-indigo-950 dark:text-indigo-200";
                                             let badge = null;
 
                                             if (status === 'pendente') {
-                                              bgClass = "bg-amber-50 border border-amber-200 hover:border-amber-400 hover:bg-amber-100/70 rounded-xl p-3 text-left shadow-3xs space-y-1 cursor-pointer transition-all hover:shadow-xs active:scale-98 text-amber-900";
-                                              badge = <span className="inline-block text-[8px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-md mt-1">⏳ Pendente</span>;
+                                              bgClass = "bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 hover:border-amber-400 dark:hover:border-amber-600 hover:bg-amber-100/70 dark:hover:bg-amber-900/40 rounded-xl p-3 text-left shadow-3xs space-y-1 cursor-pointer transition-all hover:shadow-xs active:scale-98 text-amber-900 dark:text-amber-200";
+                                              badge = <span className="inline-block text-[8px] font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-700 px-1.5 py-0.5 rounded-md mt-1">Pendente</span>;
                                             } else if (status === 'rejeitado') {
-                                              bgClass = "bg-rose-50 border border-rose-250 hover:border-rose-400 hover:bg-rose-100 rounded-xl p-3 text-left shadow-3xs space-y-1 cursor-pointer transition-all hover:shadow-xs active:scale-98 text-rose-900";
-                                              badge = <span className="inline-block text-[8px] font-bold bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded-md mt-1"> Rejeitada</span>;
+                                              bgClass = "bg-rose-50 dark:bg-rose-950/40 border border-rose-250 dark:border-rose-800 hover:border-rose-400 dark:hover:border-rose-600 hover:bg-rose-100 dark:hover:bg-rose-900/40 rounded-xl p-3 text-left shadow-3xs space-y-1 cursor-pointer transition-all hover:shadow-xs active:scale-98 text-rose-900 dark:text-rose-200";
+                                              badge = <span className="inline-block text-[8px] font-bold bg-rose-100 dark:bg-rose-900/60 text-rose-800 dark:text-rose-200 border border-rose-200 dark:border-rose-700 px-1.5 py-0.5 rounded-md mt-1">Rejeitada</span>;
                                             } else if (isWeekend) {
-                                              bgClass = "bg-emerald-50 border border-emerald-250 hover:border-emerald-400 hover:bg-emerald-100 rounded-xl p-3 text-left shadow-3xs space-y-1 cursor-pointer transition-all hover:shadow-xs active:scale-98 text-emerald-900";
-                                              badge = <span className="inline-block text-[8px] font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded-md mt-1"> Aprovada</span>;
+                                              bgClass = "bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-250 dark:border-emerald-800 hover:border-emerald-400 dark:hover:border-emerald-600 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 rounded-xl p-3 text-left shadow-3xs space-y-1 cursor-pointer transition-all hover:shadow-xs active:scale-98 text-emerald-900 dark:text-emerald-200";
+                                              badge = <span className="inline-block text-[8px] font-bold bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-700 px-1.5 py-0.5 rounded-md mt-1">Aprovada</span>;
                                             }
 
                                             return (
@@ -13266,20 +13470,20 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                 className={bgClass}
                                               >
                                                 {holiday && (
-                                                  <span className="inline-block text-[8px] font-extrabold bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded-md mb-1 border border-rose-200 truncate max-w-full" title={holiday.nome}>
+                                                  <span className="inline-block text-[8px] font-extrabold bg-rose-100 dark:bg-rose-900/60 text-rose-800 dark:text-rose-200 px-1.5 py-0.5 rounded-md mb-1 border border-rose-200 dark:border-rose-800 truncate max-w-full" title={holiday.nome}>
                                                      Feriado: {holiday.nome}
                                                   </span>
                                                 )}
                                                 <p className="font-bold text-xs truncate">{disc.nome}</p>
-                                                <p className="text-[10px] truncate font-semibold opacity-90">‍ {teaUsr?.nome || 'Docente'}</p>
-                                                <p className="text-[9px] font-mono opacity-75"> {disc.sala}</p>
+                                                <p className="text-[10px] truncate font-semibold opacity-90">{teaUsr?.nome || 'Docente'}</p>
+                                                <p className="text-[9px] font-mono opacity-75">{disc.sala}</p>
                                                 {badge}
                                               </div>
                                             );
                                           })() : (
                                             slotConflict.conflict ? (
                                               <div 
-                                                className="border border-slate-200/60 bg-slate-100/50 rounded-xl py-3 px-1 text-center text-slate-400 text-[10px] font-mono cursor-not-allowed"
+                                                className="border border-slate-200/60 dark:border-slate-800 bg-slate-100/50 dark:bg-[#090d16]/50 rounded-xl py-3 px-1 text-center text-slate-400 dark:text-slate-500 text-[10px] font-mono cursor-not-allowed"
                                                 title={`Indisponível: ${slotConflict.reason}`}
                                               >
                                                 Indisponível
@@ -13312,13 +13516,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                   setModalType('horario_aula');
                                                   setIsModalOpen(true);
                                                 }}
-                                                className="w-full border border-dashed border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/50 rounded-xl py-3 text-center text-slate-400 hover:text-indigo-600 text-[10px] font-mono cursor-pointer transition-all flex flex-col items-center justify-center gap-0.5 group"
+                                                className="w-full border border-dashed border-slate-200 dark:border-slate-800 hover:border-indigo-400 dark:hover:border-indigo-500 hover:bg-indigo-50/50 dark:hover:bg-indigo-950/30 rounded-xl py-3 text-center text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 text-[10px] font-mono cursor-pointer transition-all flex flex-col items-center justify-center gap-0.5 group"
                                               >
-                                                <span className="font-semibold text-slate-500 group-hover:text-indigo-600">Espaço Vago</span>
-                                                <span className="opacity-0 group-hover:opacity-100 text-[9px] text-indigo-500 transition-opacity font-sans">+ Agendar (45 min)</span>
+                                                <span className="font-semibold text-slate-500 dark:text-slate-400 group-hover:text-indigo-600 dark:group-hover:text-indigo-400">Espaço Vago</span>
+                                                <span className="opacity-0 group-hover:opacity-100 text-[9px] text-indigo-500 dark:text-indigo-400 transition-opacity font-sans">+ Agendar (45 min)</span>
                                               </button>
                                             ) : (
-                                              <div className="border border-dashed border-slate-200 rounded-xl py-3 text-center text-slate-350 text-[10px] font-mono">
+                                              <div className="border border-dashed border-slate-200 dark:border-slate-800 rounded-xl py-3 text-center text-slate-350 dark:text-slate-600 text-[10px] font-mono">
                                                 Espaço Vago
                                               </div>
                                             )
@@ -13340,39 +13544,37 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     {/* Pop-up de Detalhes da Disciplina / Aula */}
                     {selectedClassPopup && (
                       <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
-                        <motion.div
-                          initial={{ opacity: 0, scale: 0.95 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          className="bg-white rounded-2xl border border-slate-200 max-w-sm w-full p-6 shadow-2xl space-y-4"
+                        <div
+                          className="bg-white dark:bg-[#0e1422] rounded-2xl border border-slate-200 dark:border-slate-800 max-w-sm w-full p-6 shadow-2xl space-y-4 animate-in zoom-in-95 fade-in duration-150"
                         >
                           <div className="flex justify-between items-start">
                             <div className="flex items-center gap-2">
-                              <span className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
+                              <span className="p-1.5 bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 rounded-lg">
                                 <BookMarked className="w-4 h-4" />
                               </span>
-                              <h3 className="font-bold text-slate-800 text-sm">Informações da Aula</h3>
+                              <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm">Informações da Aula</h3>
                             </div>
                             <button
                               onClick={() => setSelectedClassPopup(null)}
-                              className="text-slate-400 hover:text-slate-650 transition-colors cursor-pointer"
+                              className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer"
                             >
                               <X className="w-4.5 h-4.5" />
                             </button>
                           </div>
 
-                          <div className="space-y-2.5 text-xs text-slate-650">
-                            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-150 space-y-2.5 text-left">
+                          <div className="space-y-2.5 text-xs text-slate-650 dark:text-slate-300">
+                            <div className="bg-slate-50 dark:bg-[#090d16] p-3.5 rounded-xl border border-slate-150 dark:border-slate-800 space-y-2.5 text-left">
                               <div>
                                 <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Disciplina</span>
-                                <p className="font-bold text-slate-800 text-sm mt-0.5">{selectedClassPopup.classe.nome}</p>
+                                <p className="font-bold text-slate-800 dark:text-slate-100 text-sm mt-0.5">{selectedClassPopup.classe.nome}</p>
                               </div>
                               {(selectedClassPopup.classe as any).materia_topico && (
                                 <div>
                                   <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Matéria / Tópico</span>
                                   <div className="flex items-center gap-1.5 mt-0.5">
-                                    <p className="font-bold text-indigo-700 text-xs">{(selectedClassPopup.classe as any).materia_topico}</p>
+                                    <p className="font-bold text-indigo-700 dark:text-indigo-400 text-xs">{(selectedClassPopup.classe as any).materia_topico}</p>
                                     {(selectedClassPopup.classe as any).extraordinario && (
-                                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
                                          Extraordinário
                                       </span>
                                     )}
@@ -13381,21 +13583,21 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               )}
                               <div>
                                 <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Docente Responsável</span>
-                                <p className="font-semibold text-indigo-900 mt-0.5">‍ {selectedClassPopup.docente?.nome || 'Docente Não Encontrado'}</p>
+                                <p className="font-semibold text-indigo-900 dark:text-indigo-300 mt-0.5">{selectedClassPopup.docente?.nome || 'Docente Não Encontrado'}</p>
                               </div>
-                              <div className="grid grid-cols-2 gap-2 pt-1.5 border-t border-slate-100">
+                              <div className="grid grid-cols-2 gap-2 pt-1.5 border-t border-slate-100 dark:border-slate-800">
                                 <div>
                                   <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Sala</span>
-                                  <p className="font-medium text-slate-700 mt-0.5"> {selectedClassPopup.classe.sala}</p>
+                                  <p className="font-medium text-slate-700 dark:text-slate-300 mt-0.5">{selectedClassPopup.classe.sala}</p>
                                 </div>
                                 <div>
                                   <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Horário</span>
-                                  <p className="font-semibold text-emerald-700 mt-0.5">⏱ {selectedClassPopup.classe.horario}</p>
+                                  <p className="font-semibold text-emerald-700 dark:text-emerald-400 mt-0.5">{selectedClassPopup.classe.horario}</p>
                                 </div>
                               </div>
                               <div>
                                 <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px]">Data da Aula</span>
-                                <p className="font-medium text-slate-700 mt-0.5"> {selectedClassPopup.dataStr}</p>
+                                <p className="font-medium text-slate-700 dark:text-slate-300 mt-0.5">{selectedClassPopup.dataStr}</p>
                               </div>
                               {(() => {
                                 const disc = selectedClassPopup.classe;
@@ -13441,7 +13643,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             if (isWeekend && canApproveWeekendClasses) {
                               const status = disc.status_aprovacao || 'pendente';
                               return (
-                                <div className="flex gap-2 pt-2 border-t border-slate-100">
+                                <div className="flex gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
                                   {status !== 'aprovado' && (
                                     <button
                                       onClick={async () => {
@@ -13606,7 +13808,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               </button>
                             )}
                           </div>
-                        </motion.div>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -13922,16 +14124,27 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             {/* TAB: PAUTAS (NOTAS) */}
             {activeTab === 'pautas' && (
               !hasPermission('pautas') ? renderRestrictedAccess('Lançamento de Pautas') : (
-                <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-6 animate-fadeIn">
-                  <div className="flex justify-between items-center">
+                <div className="bg-white dark:bg-[#0b101b] p-6 rounded-2xl border border-slate-200/60 dark:border-slate-800/80 shadow-xs space-y-6 animate-fadeIn">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="flex items-center gap-2">
                       <div>
-                        <h3 className="font-bold text-slate-800">Lançamento de Pauta Trimestral</h3>
-                        <p className="text-xs text-slate-400">Calculador de média automática integrado e fechamento de notas por trimestre.</p>
+                        <h3 className="font-bold text-slate-800 dark:text-slate-100 text-lg flex items-center gap-2">
+                          <FileText className="w-5 h-5 text-indigo-600" />
+                          {isUniversidade 
+                            ? 'Pauta Semestral & Lançamento de Notas' 
+                            : (isInstituto ? 'Pauta Modular por Competências' : 'Lançamento de Pauta Trimestral')}
+                        </h3>
+                        <p className="text-xs text-slate-400">
+                          {isUniversidade 
+                            ? 'Calculador de médias semestrais, exames normais, recursos e atribuição de créditos ECTS.' 
+                            : (isInstituto 
+                              ? 'Avaliação contínua por competências técnicas (Teórica, Prática e Projeto Integrador).' 
+                              : 'Calculador de média automática integrado e fechamento de notas por trimestre.')}
+                        </p>
                       </div>
                       {renderModuleRefreshButton('Pautas')}
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       {hasPermission('pautas', 'criar') && (
                         <div className="flex items-center gap-2">
                           <button
@@ -13939,71 +14152,343 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               setImportModule('pautas');
                               setImportModalOpen(true);
                             }}
-                            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer"
+                            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer"
                           >
                             <FileSpreadsheet className="w-4 h-4 text-indigo-600" /> Importar Dados
                           </button>
                           <button 
                             onClick={() => {
                               setEditingItem(null);
-                              setPautaForm({
-                                escola_id: schools[0]?.id || '',
-                                estudante_id: students[0]?.id || '',
-                                classe_id: classes[0]?.id || '',
-                                trimestre: '1º Trimestre',
-                                num_avaliacoes: 3,
-                                avaliacao_1: '' as any,
-                                avaliacao_2: '' as any,
-                                avaliacao_3: '' as any,
-                                nota_exame: '' as any,
-                                status_estudante: 'Admitido',
-                                status: 'rascunho',
-                                observacao: ''
-                              });
+                              if (isUniversidade) {
+                                setPautaForm({
+                                  escola_id: schools[0]?.id || '',
+                                  curso_id: rawCursos[0]?.id || '',
+                                  cadeira_id: rawCadeiras[0]?.id || '',
+                                  estudante_id: students[0]?.id || '',
+                                  classe_id: rawCadeiras[0]?.id || classes[0]?.id || '',
+                                  semestre: '1º Semestre',
+                                  frequencia_1: '',
+                                  frequencia_2: '',
+                                  trabalho_pratico: '',
+                                  exame_normal: '',
+                                  exame_recurso: '',
+                                  creditos_ects: 6,
+                                  status_estudante: 'Pendente',
+                                  status: 'rascunho',
+                                  observacao: ''
+                                });
+                              } else if (isInstituto) {
+                                setPautaForm({
+                                  escola_id: schools[0]?.id || '',
+                                  curso_id: rawCursos[0]?.id || '',
+                                  modulo_periodo: 'Módulo 01',
+                                  estudante_id: students[0]?.id || '',
+                                  classe_id: classes[0]?.id || '',
+                                  avaliacao_teorica: '',
+                                  avaliacao_pratica: '',
+                                  projecto_integrador: '',
+                                  status_estudante: 'Pendente',
+                                  status: 'rascunho',
+                                  observacao: ''
+                                });
+                              } else {
+                                setPautaForm({
+                                  escola_id: schools[0]?.id || '',
+                                  estudante_id: students[0]?.id || '',
+                                  classe_id: classes[0]?.id || '',
+                                  trimestre: '1º Trimestre',
+                                  num_avaliacoes: 3,
+                                  avaliacao_1: '' as any,
+                                  avaliacao_2: '' as any,
+                                  avaliacao_3: '' as any,
+                                  nota_exame: '' as any,
+                                  status_estudante: 'Admitido',
+                                  status: 'rascunho',
+                                  observacao: ''
+                                });
+                              }
                               setModalType('pauta');
                               setIsModalOpen(true);
                             }}
-                            className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1 cursor-pointer"
+                            className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1 cursor-pointer shadow-xs"
                           >
-                            <Plus className="w-4 h-4" /> Lançar Avaliação
+                            <Plus className="w-4 h-4" /> 
+                            {isUniversidade ? 'Lançar Nota / Cadeira' : (isInstituto ? 'Lançar Nota Modular' : 'Lançar Avaliação')}
                           </button>
                         </div>
                       )}
                       <button 
                         onClick={() => window.print()}
-                        className="border border-slate-200 hover:bg-slate-50 text-slate-600 p-2 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer"
+                        className="border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 p-2 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer"
                       >
                         <Printer className="w-4 h-4" /> Imprimir Pauta
                       </button>
                     </div>
                   </div>
 
-                <div className="overflow-x-auto border border-slate-150 rounded-xl">
+                <div className="overflow-x-auto border border-slate-150 dark:border-slate-800 rounded-xl bg-white dark:bg-[#0b101b]">
                   <table className="w-full text-left border-collapse min-w-[1000px]">
                     <thead>
-                      <tr className="bg-slate-50 text-slate-500 text-xs font-semibold uppercase border-b border-slate-150">
-                        <th className="px-6 py-4">Estudante</th>
-                        <th className="px-6 py-4">Disciplina / Trimestre</th>
-                        <th className="px-6 py-4 text-center font-bold">Nº Avaliações</th>
-                        <th className="px-6 py-4 text-center font-bold">Avaliação 1</th>
-                        <th className="px-6 py-4 text-center font-bold">Avaliação 2</th>
-                        <th className="px-6 py-4 text-center font-bold">Avaliação 3</th>
-                        <th className="px-6 py-4 text-center font-bold">Exame</th>
-                        <th className="px-6 py-4 text-center font-bold">Média Final</th>
-                        <th className="px-6 py-4 text-center font-bold">Status</th>
-                        <th className="px-6 py-4 text-right sticky right-0 bg-slate-50 dark:bg-slate-900 z-10">Ações</th>
-                      </tr>
+                      {isUniversidade ? (
+                        <tr className="bg-slate-50 dark:bg-[#0e1422] text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase border-b border-slate-150 dark:border-slate-800">
+                          <th className="px-5 py-3.5">Estudante</th>
+                          <th className="px-5 py-3.5">Curso & Cadeira</th>
+                          <th className="px-3 py-3.5 text-center font-bold">1ª Freq</th>
+                          <th className="px-3 py-3.5 text-center font-bold">2ª Freq</th>
+                          <th className="px-3 py-3.5 text-center font-bold">Trab. Prático</th>
+                          <th className="px-3 py-3.5 text-center font-bold">Média Freq</th>
+                          <th className="px-3 py-3.5 text-center font-bold">Exame Normal</th>
+                          <th className="px-3 py-3.5 text-center font-bold">Recurso</th>
+                          <th className="px-4 py-3.5 text-center font-bold">Média Final</th>
+                          <th className="px-3 py-3.5 text-center font-bold">ECTS</th>
+                          <th className="px-4 py-3.5 text-center font-bold">Situação</th>
+                          <th className="px-4 py-3.5 text-right sticky right-0 bg-slate-50 dark:bg-[#0e1422] z-10">Ações</th>
+                        </tr>
+                      ) : isInstituto ? (
+                        <tr className="bg-slate-50 dark:bg-[#0e1422] text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase border-b border-slate-150 dark:border-slate-800">
+                          <th className="px-6 py-3.5">Formando / Estudante</th>
+                          <th className="px-6 py-3.5">Módulo & Qualificação</th>
+                          <th className="px-4 py-3.5 text-center font-bold">Teórica (30%)</th>
+                          <th className="px-4 py-3.5 text-center font-bold">Prática (50%)</th>
+                          <th className="px-4 py-3.5 text-center font-bold">Projeto (20%)</th>
+                          <th className="px-4 py-3.5 text-center font-bold">Média Final</th>
+                          <th className="px-4 py-3.5 text-center font-bold">Competência</th>
+                          <th className="px-6 py-3.5 text-right sticky right-0 bg-slate-50 dark:bg-[#0e1422] z-10">Ações</th>
+                        </tr>
+                      ) : (
+                        <tr className="bg-slate-50 dark:bg-[#0e1422] text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase border-b border-slate-150 dark:border-slate-800">
+                          <th className="px-6 py-4">Estudante</th>
+                          <th className="px-6 py-4">Disciplina / Trimestre</th>
+                          <th className="px-6 py-4 text-center font-bold">Nº Avaliações</th>
+                          <th className="px-6 py-4 text-center font-bold">Avaliação 1</th>
+                          <th className="px-6 py-4 text-center font-bold">Avaliação 2</th>
+                          <th className="px-6 py-4 text-center font-bold">Avaliação 3</th>
+                          <th className="px-6 py-4 text-center font-bold">Exame</th>
+                          <th className="px-6 py-4 text-center font-bold">Média Final</th>
+                          <th className="px-6 py-4 text-center font-bold">Status</th>
+                          <th className="px-6 py-4 text-right sticky right-0 bg-slate-50 dark:bg-slate-900 z-10">Ações</th>
+                        </tr>
+                      )}
                     </thead>
-                    <tbody className="divide-y divide-slate-100 text-slate-700 text-sm">
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-200 text-sm">
                       {pautas.slice((pagePautas - 1) * 25, pagePautas * 25).map(p => {
                         const est = students.find(s => s.id === p.estudante_id);
                         const estUsr = tenantUsers.find(u => u.id === est?.user_id);
                         const cls = classes.find(c => c.id === p.classe_id);
+                        const matchedCad = rawCadeiras.find(cd => cd.id === p.cadeira_id || cd.id === p.classe_id);
+                        const matchedCur = rawCursos.find(c => c.id === p.curso_id || c.id === est?.curso_id || c.id === matchedCad?.curso_id);
+
+                        if (isUniversidade) {
+                          return (
+                            <tr key={p.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-850/50">
+                              <td className="px-5 py-3.5 font-bold text-slate-900 dark:text-slate-100">
+                                <div>{estUsr?.nome || est?.nome || 'Estudante'}</div>
+                                {est?.numero_matricula && <div className="text-[10px] text-slate-400 font-mono">Matrícula: {est.numero_matricula}</div>}
+                              </td>
+                              <td className="px-5 py-3.5">
+                                <p className="font-semibold text-slate-800 dark:text-slate-200">{matchedCad?.nome || cls?.nome || 'Cadeira'}</p>
+                                <p className="text-xs text-indigo-600 dark:text-indigo-400 font-medium">{matchedCur?.nome || 'Curso'} · {p.semestre || '1º Semestre'}</p>
+                              </td>
+                              <td className="px-3 py-3.5 text-center font-mono">{p.frequencia_1 !== undefined && p.frequencia_1 !== null && (p.frequencia_1 as any) !== '' ? p.frequencia_1 : '—'}</td>
+                              <td className="px-3 py-3.5 text-center font-mono">{p.frequencia_2 !== undefined && p.frequencia_2 !== null && (p.frequencia_2 as any) !== '' ? p.frequencia_2 : '—'}</td>
+                              <td className="px-3 py-3.5 text-center font-mono">{p.trabalho_pratico !== undefined && p.trabalho_pratico !== null && (p.trabalho_pratico as any) !== '' ? p.trabalho_pratico : '—'}</td>
+                              <td className="px-3 py-3.5 text-center font-mono font-bold text-slate-800 dark:text-slate-200">{p.media_frequencia !== undefined && p.media_frequencia !== null ? p.media_frequencia : '—'}</td>
+                              <td className="px-3 py-3.5 text-center font-mono">{p.exame_normal !== undefined && p.exame_normal !== null && (p.exame_normal as any) !== '' ? p.exame_normal : '—'}</td>
+                              <td className="px-3 py-3.5 text-center font-mono">{p.exame_recurso !== undefined && p.exame_recurso !== null && (p.exame_recurso as any) !== '' ? p.exame_recurso : '—'}</td>
+                              <td className="px-4 py-3.5 text-center font-black font-mono text-indigo-600 dark:text-indigo-400 text-base">{p.media_final !== undefined ? p.media_final : (p.nota_media || '—')}</td>
+                              <td className="px-3 py-3.5 text-center font-mono font-bold text-slate-600 dark:text-slate-400">{p.creditos_ects || (matchedCad as any)?.creditos || (matchedCad as any)?.creditos_ects || 6}</td>
+                              <td className="px-4 py-3.5 text-center">
+                                <div className="flex flex-col items-center gap-1">
+                                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                                    (p.status_estudante || p.situacao || '').includes('Aprovado') || (p.status_estudante || p.situacao || '').includes('Dispensado')
+                                      ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800' 
+                                      : (p.status_estudante || p.situacao || '').includes('Reprovado')
+                                      ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
+                                      : 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
+                                  }`}>
+                                    {p.status_estudante || p.situacao || 'Pendente'}
+                                  </span>
+                                  {p.status === 'rascunho' ? (
+                                    <span className="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-200 dark:border-amber-800 text-[9px] font-bold px-1.5 py-0.2 rounded">
+                                      Rascunho
+                                    </span>
+                                  ) : (
+                                    <span className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 text-[9px] font-bold px-1.5 py-0.2 rounded">
+                                      Publicado
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3.5 text-right sticky right-0 bg-white dark:bg-[#0b101b] z-10">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  {p.status === 'rascunho' && hasPermission('pautas', 'editar') && (
+                                    <button 
+                                      title="Publicar Pauta"
+                                      onClick={() => handlePublishPauta(p.id)}
+                                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-1 px-2.5 rounded-lg flex items-center gap-1 transition-all cursor-pointer shadow-xs"
+                                    >
+                                      <Send className="w-3 h-3" /> Publicar
+                                    </button>
+                                  )}
+                                  {hasPermission('pautas', 'editar') && p.status !== 'publicado' && (
+                                    <button 
+                                      title="Editar"
+                                      onClick={() => {
+                                        setEditingItem(p);
+                                        setPautaForm({
+                                          ...p,
+                                          escola_id: p.escola_id || '',
+                                          curso_id: p.curso_id || '',
+                                          cadeira_id: p.cadeira_id || p.classe_id || '',
+                                          estudante_id: p.estudante_id,
+                                          classe_id: p.classe_id,
+                                          semestre: p.semestre || '1º Semestre',
+                                          frequencia_1: p.frequencia_1 !== undefined ? p.frequencia_1 : '',
+                                          frequencia_2: p.frequencia_2 !== undefined ? p.frequencia_2 : '',
+                                          trabalho_pratico: p.trabalho_pratico !== undefined ? p.trabalho_pratico : '',
+                                          exame_normal: p.exame_normal !== undefined ? p.exame_normal : '',
+                                          exame_recurso: p.exame_recurso !== undefined ? p.exame_recurso : '',
+                                          creditos_ects: p.creditos_ects || 6,
+                                          status_estudante: p.status_estudante || p.situacao || 'Pendente',
+                                          status: p.status || 'rascunho',
+                                          observacao: p.observacao || ''
+                                        });
+                                        setModalType('pauta');
+                                        setIsModalOpen(true);
+                                      }}
+                                      className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 rounded cursor-pointer border border-slate-200 dark:border-slate-800"
+                                    >
+                                      <Edit className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                  {p.status === 'rascunho' && (
+                                    <button 
+                                      title="Eliminar Rascunho"
+                                      onClick={() => {
+                                        showConfirm(
+                                          "Eliminar Pauta em Rascunho",
+                                          "Tem certeza que deseja eliminar esta pauta em rascunho permanentemente?",
+                                          async () => {
+                                            try {
+                                              await deleteDoc(doc(db, 'pautas', p.id));
+                                              showSystemNotification('Pauta em rascunho eliminada com sucesso.', 'sucesso');
+                                              loadTenantContext();
+                                            } catch (e: any) {
+                                              showSystemNotification(`Erro ao eliminar pauta: ${e.message || e}`, 'erro');
+                                            }
+                                          }
+                                        );
+                                      }}
+                                      className="p-1.5 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 rounded cursor-pointer border border-rose-200 dark:border-rose-800"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                  {p.status === 'publicado' && (
+                                    <span className="text-xs text-slate-400 font-semibold flex items-center gap-1 px-2 py-1 bg-slate-50 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-800 rounded-lg">
+                                      <Lock className="w-3 h-3 text-slate-400" />
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        } else if (isInstituto) {
+                          return (
+                            <tr key={p.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-850/50">
+                              <td className="px-6 py-4 font-bold text-slate-900 dark:text-slate-100">
+                                <div>{estUsr?.nome || est?.nome || 'Formando'}</div>
+                              </td>
+                              <td className="px-6 py-4">
+                                <p className="font-semibold text-slate-800 dark:text-slate-200">{p.modulo_periodo || cls?.nome || 'Módulo'}</p>
+                                <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">{matchedCur?.nome || 'Qualificação Técnica'}</p>
+                              </td>
+                              <td className="px-4 py-4 text-center font-mono">{p.avaliacao_teorica !== undefined && p.avaliacao_teorica !== null && (p.avaliacao_teorica as any) !== '' ? p.avaliacao_teorica : '—'}</td>
+                              <td className="px-4 py-4 text-center font-mono">{p.avaliacao_pratica !== undefined && p.avaliacao_pratica !== null && (p.avaliacao_pratica as any) !== '' ? p.avaliacao_pratica : '—'}</td>
+                              <td className="px-4 py-4 text-center font-mono">{p.projecto_integrador !== undefined && p.projecto_integrador !== null && (p.projecto_integrador as any) !== '' ? p.projecto_integrador : '—'}</td>
+                              <td className="px-4 py-4 text-center font-black font-mono text-emerald-600 dark:text-emerald-400 text-base">{p.media_final !== undefined ? p.media_final : (p.nota_media || '—')}</td>
+                              <td className="px-4 py-4 text-center">
+                                <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                                  (p.competencia_status || p.status_estudante || '').includes('Apto')
+                                    ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                                    : 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
+                                }`}>
+                                  {p.competencia_status || p.status_estudante || 'Pendente'}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 text-right sticky right-0 bg-white dark:bg-[#0b101b] z-10">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  {p.status === 'rascunho' && hasPermission('pautas', 'editar') && (
+                                    <button 
+                                      title="Publicar Pauta"
+                                      onClick={() => handlePublishPauta(p.id)}
+                                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-1.5 px-3 rounded-lg flex items-center gap-1 transition-all cursor-pointer shadow-xs"
+                                    >
+                                      <Send className="w-3.5 h-3.5" /> Publicar
+                                    </button>
+                                  )}
+                                  {hasPermission('pautas', 'editar') && p.status !== 'publicado' && (
+                                    <button 
+                                      title="Editar"
+                                      onClick={() => {
+                                        setEditingItem(p);
+                                        setPautaForm({
+                                          ...p,
+                                          escola_id: p.escola_id || '',
+                                          curso_id: p.curso_id || '',
+                                          modulo_periodo: p.modulo_periodo || 'Módulo 01',
+                                          estudante_id: p.estudante_id,
+                                          classe_id: p.classe_id,
+                                          avaliacao_teorica: p.avaliacao_teorica !== undefined ? p.avaliacao_teorica : '',
+                                          avaliacao_pratica: p.avaliacao_pratica !== undefined ? p.avaliacao_pratica : '',
+                                          projecto_integrador: p.projecto_integrador !== undefined ? p.projecto_integrador : '',
+                                          status_estudante: p.status_estudante || p.competencia_status || 'Pendente',
+                                          status: p.status || 'rascunho',
+                                          observacao: p.observacao || ''
+                                        });
+                                        setModalType('pauta');
+                                        setIsModalOpen(true);
+                                      }}
+                                      className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 rounded cursor-pointer border border-slate-200 dark:border-slate-800"
+                                    >
+                                      <Edit className="w-4 h-4" />
+                                    </button>
+                                  )}
+                                  {p.status === 'rascunho' && (
+                                    <button 
+                                      title="Eliminar Rascunho"
+                                      onClick={() => {
+                                        showConfirm(
+                                          "Eliminar Pauta em Rascunho",
+                                          "Tem certeza que deseja eliminar esta pauta em rascunho permanentemente?",
+                                          async () => {
+                                            try {
+                                              await deleteDoc(doc(db, 'pautas', p.id));
+                                              showSystemNotification('Pauta em rascunho eliminada com sucesso.', 'sucesso');
+                                              loadTenantContext();
+                                            } catch (e: any) {
+                                              showSystemNotification(`Erro ao eliminar pauta: ${e.message || e}`, 'erro');
+                                            }
+                                          }
+                                        );
+                                      }}
+                                      className="p-1 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 rounded cursor-pointer border border-rose-200 dark:border-rose-800 transition-colors"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        }
+
+                        // Escola default row
                         return (
-                          <tr key={p.id} className="hover:bg-slate-50/50">
-                            <td className="px-6 py-4 font-bold text-slate-900">{estUsr?.nome || 'Aluno'}</td>
+                          <tr key={p.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-850/50">
+                            <td className="px-6 py-4 font-bold text-slate-900 dark:text-slate-100">{estUsr?.nome || est?.nome || 'Aluno'}</td>
                             <td className="px-6 py-4">
-                              <p className="font-semibold text-slate-800">{cls?.nome}</p>
+                              <p className="font-semibold text-slate-800 dark:text-slate-200">{cls?.nome}</p>
                               <p className="text-xs text-slate-400">{p.trimestre}</p>
                             </td>
                             <td className="px-6 py-4 text-center font-mono">{p.num_avaliacoes || 3}</td>
@@ -14011,7 +14496,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             <td className="px-6 py-4 text-center font-mono">{p.avaliacao_2 !== undefined && (p.avaliacao_2 as any) !== '' ? p.avaliacao_2 : '—'}</td>
                             <td className="px-6 py-4 text-center font-mono">{p.avaliacao_3 !== undefined && (p.avaliacao_3 as any) !== '' ? p.avaliacao_3 : '—'}</td>
                             <td className="px-6 py-4 text-center font-mono">{p.nota_exame !== undefined && p.nota_exame !== null && (p.nota_exame as any) !== '' ? p.nota_exame : '—'}</td>
-                            <td className="px-6 py-4 text-center font-black font-mono text-indigo-600 text-base">{p.media_final !== undefined ? p.media_final : (p.nota_media || '—')}</td>
+                            <td className="px-6 py-4 text-center font-black font-mono text-indigo-600 dark:text-indigo-400 text-base">{p.media_final !== undefined ? p.media_final : (p.nota_media || '—')}</td>
                             <td className="px-6 py-4 text-center">
                               <div className="flex flex-col items-center gap-1">
                                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
@@ -14066,7 +14551,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                       setModalType('pauta');
                                       setIsModalOpen(true);
                                     }}
-                                    className="p-1 hover:bg-slate-100 text-slate-600 rounded cursor-pointer border border-slate-200"
+                                    className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 rounded cursor-pointer border border-slate-200 dark:border-slate-800"
                                   >
                                     <Edit className="w-4 h-4" />
                                   </button>
@@ -14095,7 +14580,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                   </button>
                                 )}
                                 {p.status === 'publicado' && (
-                                  <span className="text-xs text-slate-400 font-semibold flex items-center gap-1 px-2 py-1 bg-slate-50 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-800 rounded-lg" title="Pauta publicada. As notas não podem mais ser alteradas.">
+                                  <span className="text-xs text-slate-400 font-semibold flex items-center gap-1 px-2 py-1 bg-slate-50 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-800 rounded-lg">
                                     <Lock className="w-3.5 h-3.5 text-slate-400" /> Publicado
                                   </span>
                                 )}
@@ -16357,16 +16842,21 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                 </span>
                                               ) : (
                                                 <button
-                                                  onClick={async () => {
-                                                    if (window.confirm(`Deseja realmente eliminar permanentemente o utilizador "${u.nome}"?`)) {
-                                                      try {
-                                                        await deleteDoc(doc(db, 'users', u.id));
-                                                        showSystemNotification(`Utilizador "${u.nome}" eliminado com sucesso!`, 'cadastro');
-                                                        loadTenantContext();
-                                                      } catch (err: any) {
-                                                        showSystemNotification(`Erro ao eliminar utilizador: ${err.message}`, 'erro');
-                                                      }
-                                                    }
+                                                  onClick={() => {
+                                                    showConfirm(
+                                                      "Eliminar Utilizador",
+                                                      `Deseja realmente eliminar permanentemente o utilizador "${u.nome}"?`,
+                                                      async () => {
+                                                        try {
+                                                          await deleteDoc(doc(db, 'users', u.id));
+                                                          showSystemNotification(`Utilizador "${u.nome}" eliminado com sucesso!`, 'cadastro');
+                                                          loadTenantContext();
+                                                        } catch (err: any) {
+                                                          showSystemNotification(`Erro ao eliminar utilizador: ${err.message}`, 'erro');
+                                                        }
+                                                      },
+                                                      true
+                                                    );
                                                   }}
                                                   className="p-1.5 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 rounded-lg cursor-pointer transition-colors"
                                                   title="Eliminar Utilizador"
@@ -16692,9 +17182,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         <div 
           onClick={(e) => {
             if (e.target === e.currentTarget) {
-              if (window.confirm("Deseja realmente fechar a janela de upgrade de plano?")) {
-                setIsUpgradeModalOpen(false);
-              }
+              showConfirm(
+                "Fechar Janela",
+                "Deseja realmente fechar a janela de upgrade de plano?",
+                () => setIsUpgradeModalOpen(false)
+              );
             }
           }}
           className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto pointer-events-auto"
@@ -16992,21 +17484,26 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
               <button
                 type="button"
-                onClick={async () => {
-                  if (confirm('Tem certeza que deseja eliminar / inutilizar este crachá?')) {
-                    try {
-                      await setDoc(doc(db, 'estudantes', crachaStudent.id), {
-                        cracha_gerado: false,
-                        cracha_inutilizado: true,
-                        cracha_eliminado_em: new Date().toISOString()
-                      }, { merge: true });
-                      showSystemNotification('Crachá eliminado e inutilizado com sucesso!', 'sucesso');
-                      setCrachaStudent(null);
-                      loadTenantContext();
-                    } catch (err: any) {
-                      showSystemNotification(`Erro ao eliminar crachá: ${err.message}`, 'erro');
-                    }
-                  }
+                onClick={() => {
+                  showConfirm(
+                    "Eliminar Crachá",
+                    "Tem certeza que deseja eliminar / inutilizar este crachá?",
+                    async () => {
+                      try {
+                        await setDoc(doc(db, 'estudantes', crachaStudent.id), {
+                          cracha_gerado: false,
+                          cracha_inutilizado: true,
+                          cracha_eliminado_em: new Date().toISOString()
+                        }, { merge: true });
+                        showSystemNotification('Crachá eliminado e inutilizado com sucesso!', 'sucesso');
+                        setCrachaStudent(null);
+                        loadTenantContext();
+                      } catch (err: any) {
+                        showSystemNotification(`Erro ao eliminar crachá: ${err.message}`, 'erro');
+                      }
+                    },
+                    true
+                  );
                 }}
                 className="bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/30 dark:hover:bg-rose-900/40 text-rose-700 dark:text-rose-400 font-bold py-2 px-2.5 rounded-xl transition-all text-[11px] flex items-center justify-center gap-1 cursor-pointer"
                 title="Eliminar / Inutilizar Crachá"
@@ -18370,15 +18867,90 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         <div 
           onClick={(e) => {
             if (e.target === e.currentTarget) {
-              if (!isFormDirty || window.confirm("Deseja realmente fechar? Quaisquer dados preenchidos e alterações não salvas serão perdidos.")) {
+              if (!isFormDirty) {
                 setIsModalOpen(false);
+              } else {
+                showConfirm(
+                  "Descartar alterações?",
+                  "Deseja realmente fechar? Quaisquer dados preenchidos e alterações não salvas serão perdidos.",
+                  () => {
+                    setIsFormDirty(false);
+                    setIsModalOpen(false);
+                  }
+                );
               }
             }
           }}
-          className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs flex justify-end z-50 overflow-hidden pointer-events-auto transition-opacity duration-300"
+          className={`fixed inset-0 z-50 overflow-hidden pointer-events-auto transition-opacity duration-300 ${
+            (modalType === 'student' && !isUniversidade)
+              ? 'bg-[#05070b]/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6' 
+              : 'bg-slate-950/60 backdrop-blur-xs flex justify-end p-0'
+          }`}
         >
-          <div className={`bg-white h-full ${modalType === 'escola_detalhes' || modalType === 'user' ? 'max-w-2xl' : 'max-w-lg'} w-full p-6 shadow-2xl border-l border-slate-200 overflow-y-auto pointer-events-auto flex flex-col justify-between rounded-l-2xl sm:rounded-l-3xl rounded-r-none animate-in slide-in-from-right duration-300`}>
-            <div>
+          <div className={
+            (modalType === 'student' && !isUniversidade)
+              ? 'w-full max-w-3xl bg-[#0b101b] border border-slate-800/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-in zoom-in-95 duration-200 pointer-events-auto'
+              : (modalType === 'student' && isUniversidade)
+                ? 'w-full max-w-3xl bg-[#0b101b] border-l border-slate-800/80 shadow-2xl overflow-hidden flex flex-col h-full pointer-events-auto animate-in slide-in-from-right duration-300'
+                : (modalType === 'teacher' && isUniversidade)
+                  ? 'w-full max-w-xl bg-[#0b101b] text-slate-100 border-l border-slate-800/80 shadow-2xl overflow-y-auto pointer-events-auto flex flex-col justify-between h-full animate-in slide-in-from-right duration-300'
+                  : `bg-white h-full ${modalType === 'escola_detalhes' || modalType === 'user' ? 'max-w-2xl' : 'max-w-lg'} w-full p-6 shadow-2xl border-l border-slate-200 overflow-y-auto pointer-events-auto flex flex-col justify-between rounded-l-2xl sm:rounded-l-3xl rounded-r-none animate-in slide-in-from-right duration-300`
+          }>
+            {modalType === 'student' ? (
+              <div className="px-6 py-4 border-b border-slate-800/60 flex items-center justify-between bg-[#0e1422]/80 backdrop-blur sticky top-0 z-20 shrink-0">
+                <h1 className="text-lg font-semibold tracking-tight text-slate-100">
+                  {editingItem ? 'Editar Estudante' : 'Novo Estudante'}
+                </h1>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!isFormDirty) {
+                      setIsModalOpen(false);
+                    } else {
+                      showConfirm(
+                        "Descartar alterações?",
+                        "Deseja realmente fechar? Quaisquer dados preenchidos e alterações não salvas serão perdidos.",
+                        () => {
+                          setIsFormDirty(false);
+                          setIsModalOpen(false);
+                        }
+                      );
+                    }
+                  }}
+                  className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-100 hover:bg-slate-800/60 transition cursor-pointer"
+                  aria-label="Fechar"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            ) : (modalType === 'teacher' && isUniversidade) ? (
+              <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-800">
+                <h3 className="text-lg font-bold text-slate-100 font-sans">
+                  {editingItem ? 'Editar Docente Universitário' : 'Novo Docente Universitário'}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!isFormDirty) {
+                      setIsModalOpen(false);
+                    } else {
+                      showConfirm(
+                        "Descartar alterações?",
+                        "Deseja realmente fechar? Quaisquer dados preenchidos e alterações não salvas serão perdidos.",
+                        () => {
+                          setIsFormDirty(false);
+                          setIsModalOpen(false);
+                        }
+                      );
+                    }
+                  }}
+                  className="p-1.5 text-slate-400 hover:text-slate-100 hover:bg-slate-800/60 rounded-lg transition-colors cursor-pointer"
+                  title="Fechar Painel"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            ) : (
               <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-150">
                 <h3 className="text-lg font-bold text-slate-900 font-sans">
                   {getHumanizedModalTitle(modalType, !!editingItem)}
@@ -18386,8 +18958,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 <button
                   type="button"
                   onClick={() => {
-                    if (!isFormDirty || window.confirm("Deseja realmente fechar? Quaisquer dados preenchidos e alterações não salvas serão perdidos.")) {
+                    if (!isFormDirty) {
                       setIsModalOpen(false);
+                    } else {
+                      showConfirm(
+                        "Descartar alterações?",
+                        "Deseja realmente fechar? Quaisquer dados preenchidos e alterações não salvas serão perdidos.",
+                        () => {
+                          setIsFormDirty(false);
+                          setIsModalOpen(false);
+                        }
+                      );
                     }
                   }}
                   className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
@@ -18396,8 +18977,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   <X className="w-5 h-5" />
                 </button>
               </div>
-            
-              <form onSubmit={handleSubmit} onChange={() => setIsFormDirty(true)} className="space-y-4">
+            )}
+
+            <form onSubmit={handleSubmit} onChange={() => setIsFormDirty(true)} className={modalType === 'student' ? 'flex flex-col flex-1 min-h-0 overflow-hidden' : 'space-y-4'}>
+              <div className={modalType === 'student' ? 'p-6 overflow-y-auto space-y-8 flex-1' : 'space-y-4'}>
               
               {/* PROVINCIA FORM */}
               {modalType === 'provincia' && (
@@ -18824,58 +19407,64 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               {modalType === 'teacher' && (
                 <>
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">Nome do Docente</label>
+                    <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">{isUniversidade ? 'Nome do Docente Universitário' : 'Nome do Docente'}</label>
                     <input 
                       type="text"
                       required
                       disabled={!!editingItem}
                       value={teacherForm.nome}
                       onChange={(e) => setTeacherForm({ ...teacherForm, nome: e.target.value })}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
+                      placeholder="Ex: Prof. Dr. Armando Costa"
+                      className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                     />
                   </div>
                   {!editingItem && (
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Email para Cadastro</label>
+                      <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">Email Institucional para Cadastro</label>
                       <input 
                         type="email"
                         required
                         value={teacherForm.email}
                         onChange={(e) => setTeacherForm({ ...teacherForm, email: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
+                        placeholder="docente@instituicao.edu"
+                        className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                       />
                     </div>
                   )}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Especialidade Principal</label>
+                      <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">Área / Especialidade</label>
                       <input 
                         type="text"
                         required
                         value={teacherForm.especialidade}
                         onChange={(e) => setTeacherForm({ ...teacherForm, especialidade: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
+                        placeholder="Ex: Engenharia de Software"
+                        className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Nº de Registro Profissional</label>
+                      <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">Nº de Registro Profissional</label>
                       <input 
                         type="text"
                         required
                         value={teacherForm.numero_registro}
                         onChange={(e) => setTeacherForm({ ...teacherForm, numero_registro: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
+                        placeholder="Ex: DOC-2024-89"
+                        className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                       />
                     </div>
                   </div>
                   <div>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">Escola de Alocação</label>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
+                          {isUniversidade ? 'Faculdade de Alocação' : isInstituto ? 'Instituto de Alocação' : 'Escola de Alocação'}
+                        </label>
                         <select 
                           value={teacherForm.escola_id}
                           onChange={(e) => setTeacherForm({ ...teacherForm, escola_id: e.target.value })}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
+                          className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                         >
                           {schools.map(s => (
                             <option key={s.id} value={s.id}>{s.nome}</option>
@@ -18883,13 +19472,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         </select>
                       </div>
                       <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">Data de Admissão</label>
+                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">Data de Admissão</label>
                         <input 
                           type="date"
                           required
                           value={teacherForm.data_admissao || new Date().toISOString().split('T')[0]}
                           onChange={(e) => setTeacherForm({ ...teacherForm, data_admissao: e.target.value })}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm text-slate-700"
+                          className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2 text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                         />
                       </div>
                     </div>
@@ -19603,339 +20192,718 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               {/* PAUTA FORM */}
               {modalType === 'pauta' && (
                 <>
-                  <div className="col-span-2 bg-slate-50 border border-slate-150 rounded-xl p-3 mb-2">
-                    <label className="block text-xs font-extrabold text-slate-500 mb-1 flex items-center gap-1"> Filtrar por Escola</label>
-                    <select
-                      value={selectedPautaSchoolId}
-                      onChange={(e) => {
-                        const schId = e.target.value;
-                        setSelectedPautaSchoolId(schId);
-                        // Auto-select first student and class of this school
-                        const filteredStuds = rawStudents.filter(s => {
-                          const studSchool = s.escola_id || rawTurmas.find(t => t.id === s.turma_id)?.escola_id || '';
-                          return !schId || studSchool === schId;
-                        });
-                        const filteredClasses = classes.filter(c => {
-                          const t = turmas.find(tu => tu.id === c.turma_id);
-                          return !schId || (t && t.escola_id === schId);
-                        });
-                        setPautaForm({
-                          ...pautaForm,
-                          estudante_id: filteredStuds[0]?.id || '',
-                          classe_id: filteredClasses[0]?.id || ''
-                        });
-                      }}
-                      className="w-full bg-white border border-slate-200 rounded-lg p-2.5 text-xs font-bold text-slate-700 cursor-pointer"
-                    >
-                      <option value="">Todas as Escolas</option>
-                      {schools.map(sch => (
-                        <option key={sch.id} value={sch.id}>{sch.nome}</option>
-                      ))}
-                    </select>
-                  </div>
+                  {isUniversidade ? (
+                    /* ================================================================ */
+                    /* FORMULÁRIO UNIVERSITÁRIO: FREQUÊNCIAS, EXAMES, RECURSO E ECTS    */
+                    /* ================================================================ */
+                    <div className="space-y-4">
+                      <div className="bg-[#0e1422] p-4 rounded-xl border border-slate-800 text-slate-100 space-y-3">
+                        <div className="flex items-center gap-2 text-indigo-400 font-bold text-xs uppercase tracking-wider">
+                          <BookOpen className="w-4 h-4" />
+                          <span>Lançamento de Pauta Universitária</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-bold text-slate-300 mb-1">Faculdade / Unidade Orgânica</label>
+                            <select
+                              value={selectedPautaSchoolId}
+                              onChange={(e) => setSelectedPautaSchoolId(e.target.value)}
+                              className="w-full bg-[#090d16] border border-slate-700 rounded-lg p-2.5 text-xs font-semibold text-slate-200"
+                            >
+                              <option value="">Todas as Faculdades</option>
+                              {schools.map(sch => (
+                                <option key={sch.id} value={sch.id}>{sch.nome}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-slate-300 mb-1">Curso de Graduação / Pós-Graduação</label>
+                            <select
+                              value={pautaForm.curso_id || ''}
+                              onChange={(e) => {
+                                const cId = e.target.value;
+                                const firstCadeira = rawCadeiras.find(cd => cd.curso_id === cId || (cd as any).cursoId === cId);
+                                setPautaForm({ 
+                                  ...pautaForm, 
+                                  curso_id: cId,
+                                  cadeira_id: firstCadeira?.id || '',
+                                  classe_id: firstCadeira?.id || pautaForm.classe_id
+                                });
+                              }}
+                              className="w-full bg-[#090d16] border border-slate-700 rounded-lg p-2.5 text-xs font-semibold text-slate-200"
+                            >
+                              <option value="">Selecione o Curso...</option>
+                              {rawCursos
+                                .filter(c => !selectedPautaSchoolId || c.escola_id === selectedPautaSchoolId || (c as any).institutionId === selectedPautaSchoolId)
+                                .map(c => (
+                                  <option key={c.id} value={c.id}>{c.nome} ({c.grau || 'Licenciatura'})</option>
+                                ))}
+                            </select>
+                          </div>
+                        </div>
+                      </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Estudante Avaliado</label>
-                      <select 
-                        value={pautaForm.estudante_id}
-                        onChange={(e) => setPautaForm({ ...pautaForm, estudante_id: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 cursor-pointer font-medium"
-                      >
-                        <option value="">Selecione Estudante...</option>
-                        {rawStudents
-                          .filter(s => {
-                            if (s.ativo === false) return false;
-                            const studSchool = s.escola_id || rawTurmas.find(t => t.id === s.turma_id)?.escola_id || '';
-                            return !selectedPautaSchoolId || studSchool === selectedPautaSchoolId;
-                          })
-                          .map(s => {
-                            const usr = tenantUsers.find(u => u.id === s.user_id);
-                            const studName = usr?.nome || s.nome || `Estudante #${s.numero_matricula || s.id}`;
-                            const turmaObj = rawTurmas.find(t => t.id === s.turma_id);
-                            return (
-                              <option key={s.id} value={s.id}>
-                                {studName} {turmaObj ? `(${turmaObj.nome})` : ''}
-                              </option>
-                            );
-                          })}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Disciplina / Matéria</label>
-                      <select 
-                        value={pautaForm.classe_id}
-                        onChange={(e) => setPautaForm({ ...pautaForm, classe_id: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
-                      >
-                        <option value="">Selecione Disciplina...</option>
-                        {(() => {
-                          const selStud = students.find(s => s.id === pautaForm.estudante_id);
-                          const selTurma = turmas.find(t => t.id === selStud?.turma_id);
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">Cadeira Curricular</label>
+                          <select 
+                            value={pautaForm.cadeira_id || pautaForm.classe_id || ''}
+                            onChange={(e) => {
+                              const cadId = e.target.value;
+                              const matchedCad = rawCadeiras.find(cd => cd.id === cadId);
+                              setPautaForm({ 
+                                ...pautaForm, 
+                                cadeira_id: cadId, 
+                                classe_id: cadId,
+                                creditos_ects: matchedCad?.creditos || 6 
+                              });
+                            }}
+                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm font-semibold text-slate-800 dark:text-slate-100"
+                          >
+                            <option value="">Selecione a Cadeira...</option>
+                            {rawCadeiras
+                              .filter(cd => !pautaForm.curso_id || cd.curso_id === pautaForm.curso_id || (cd as any).cursoId === pautaForm.curso_id)
+                              .map(cd => (
+                                <option key={cd.id} value={cd.id}>
+                                  {cd.codigo ? `[${cd.codigo}] ` : ''}{cd.nome} ({cd.semestre || 'Semestral'})
+                                </option>
+                              ))}
+                          </select>
+                        </div>
 
-                          return classes
-                            .filter(c => {
-                              const t = turmas.find(tu => tu.id === c.turma_id);
-                              if (selectedPautaSchoolId && t && t.escola_id !== selectedPautaSchoolId) return false;
+                        <div>
+                          <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">Estudante Universitário</label>
+                          <select 
+                            value={pautaForm.estudante_id}
+                            onChange={(e) => setPautaForm({ ...pautaForm, estudante_id: e.target.value })}
+                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm font-semibold text-slate-800 dark:text-slate-100"
+                          >
+                            <option value="">Selecione o Estudante...</option>
+                            {rawStudents
+                              .filter(s => {
+                                if (s.ativo === false) return false;
+                                if (selectedPautaSchoolId && s.escola_id && s.escola_id !== selectedPautaSchoolId) return false;
+                                if (pautaForm.curso_id && s.curso_id && s.curso_id !== pautaForm.curso_id) return false;
+                                return true;
+                              })
+                              .map(s => {
+                                const usr = tenantUsers.find(u => u.id === s.user_id);
+                                const studName = usr?.nome || s.nome || `Estudante #${s.numero_matricula || s.id}`;
+                                return (
+                                  <option key={s.id} value={s.id}>
+                                    {studName} {s.numero_matricula ? `· Matrícula: ${s.numero_matricula}` : ''}
+                                  </option>
+                                );
+                              })}
+                          </select>
+                        </div>
+                      </div>
 
-                              // Requirement 4: Discipline academic class matching
-                              if (selTurma && selTurma.classe_escolar_id) {
-                                if (c.classes_associadas_ids && c.classes_associadas_ids.length > 0) {
-                                  if (!c.classes_associadas_ids.includes(selTurma.classe_escolar_id)) return false;
-                                } else if (c.classe_escolar_id) {
-                                  if (c.classe_escolar_id !== selTurma.classe_escolar_id) return false;
-                                }
-                              }
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">Semestre Lectivo</label>
+                          <select 
+                            value={pautaForm.semestre || '1º Semestre'}
+                            onChange={(e) => setPautaForm({ ...pautaForm, semestre: e.target.value })}
+                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm font-semibold text-slate-800 dark:text-slate-100"
+                          >
+                            <option value="1º Semestre">1º Semestre</option>
+                            <option value="2º Semestre">2º Semestre</option>
+                            <option value="Anual">Anual</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">Créditos da Cadeira (ECTS)</label>
+                          <input 
+                            type="number"
+                            min={1}
+                            max={30}
+                            value={pautaForm.creditos_ects || 6}
+                            onChange={(e) => setPautaForm({ ...pautaForm, creditos_ects: Number(e.target.value) })}
+                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm font-semibold text-slate-800 dark:text-slate-100"
+                          />
+                        </div>
+                      </div>
 
-                              return true;
-                            })
-                            .map(c => (
-                              <option key={c.id} value={c.id}>{c.nome}</option>
-                            ));
-                        })()}
-                      </select>
-                    </div>
-                  </div>
+                      {/* Live Feedback Dashboard for University Grades */}
+                      {(() => {
+                        const f1 = pautaForm.frequencia_1 !== '' && pautaForm.frequencia_1 !== undefined && pautaForm.frequencia_1 !== null ? Number(pautaForm.frequencia_1) : null;
+                        const f2 = pautaForm.frequencia_2 !== '' && pautaForm.frequencia_2 !== undefined && pautaForm.frequencia_2 !== null ? Number(pautaForm.frequencia_2) : null;
+                        const tp = pautaForm.trabalho_pratico !== '' && pautaForm.trabalho_pratico !== undefined && pautaForm.trabalho_pratico !== null ? Number(pautaForm.trabalho_pratico) : null;
+                        const exN = pautaForm.exame_normal !== '' && pautaForm.exame_normal !== undefined && pautaForm.exame_normal !== null ? Number(pautaForm.exame_normal) : null;
+                        const exR = pautaForm.exame_recurso !== '' && pautaForm.exame_recurso !== undefined && pautaForm.exame_recurso !== null ? Number(pautaForm.exame_recurso) : null;
 
-                  {/* LOCAL CALCULATIONS FOR PAUTA FORM */}
-                  {(() => {
-                    const gradesList: number[] = [];
-                    const pushIfDefined = (val: any) => {
-                      if (val === 0 || val === '0' || val === 0.0) {
-                        gradesList.push(0);
-                      } else if (val !== undefined && val !== null && val !== '') {
-                        const num = Number(val);
-                        if (!isNaN(num)) {
-                          gradesList.push(num);
-                        }
-                      }
-                    };
-
-                    pushIfDefined(pautaForm.avaliacao_1);
-                    if (pautaForm.num_avaliacoes >= 2) {
-                      pushIfDefined(pautaForm.avaliacao_2);
-                    }
-                    if (pautaForm.num_avaliacoes >= 3) {
-                      pushIfDefined(pautaForm.avaliacao_3);
-                    }
-
-                    const numRealizadas = gradesList.length;
-                    const mediaFrequencia = numRealizadas > 0 
-                      ? (gradesList.reduce((sum, g) => sum + g, 0) / numRealizadas)
-                      : 0;
-
-                    const passGrade = config?.pautas_nota_aprovacao ?? 9.5;
-                    const admitGrade = config?.pautas_nota_admissao ?? 9.5;
-
-                    const isFrequenciaAdmitido = numRealizadas > 0 && mediaFrequencia >= admitGrade && mediaFrequencia < 15;
-                    const hasExam = isFrequenciaAdmitido;
-                    const examValue = pautaForm.nota_exame !== undefined && pautaForm.nota_exame !== null && pautaForm.nota_exame !== '' 
-                      ? Number(pautaForm.nota_exame) 
-                      : null;
-                    const reavalValue = pautaForm.nota_reavaliacao !== undefined && pautaForm.nota_reavaliacao !== null && pautaForm.nota_reavaliacao !== ''
-                      ? Number(pautaForm.nota_reavaliacao)
-                      : null;
-
-                    let autoStatus = numRealizadas === 0 ? 'Pendente' : 'Admitido';
-                    if (numRealizadas > 0) {
-                      if (mediaFrequencia < admitGrade) {
-                        autoStatus = 'Reprovado';
-                      } else if (mediaFrequencia >= 15) {
-                        autoStatus = 'Aprovado';
-                      } else {
-                        autoStatus = 'Admitido';
-                      }
-                    }
-
-                    let mediaFinal = mediaFrequencia;
-                    let enableReavaliacao = false;
-
-                    if (examValue !== null) {
-                      mediaFinal = (mediaFrequencia + examValue) / 2;
-                      if (examValue < passGrade) {
-                        autoStatus = 'Reprovado';
-                        enableReavaliacao = true;
-                        if (reavalValue !== null) {
-                          if (reavalValue < passGrade) {
-                            autoStatus = 'Reprovado';
-                            mediaFinal = (mediaFrequencia + reavalValue) / 2;
+                        let mediaFreq: number | null = null;
+                        if (f1 !== null && f2 !== null) {
+                          if (tp !== null) {
+                            mediaFreq = (f1 * 0.4) + (f2 * 0.4) + (tp * 0.2);
                           } else {
-                            autoStatus = 'Aprovado na Reavaliação';
-                            mediaFinal = (mediaFrequencia + reavalValue) / 2;
+                            mediaFreq = (f1 + f2) / 2;
                           }
+                        } else if (f1 !== null) {
+                          mediaFreq = f1;
                         }
-                      } else {
-                        if (mediaFinal >= passGrade) {
-                          autoStatus = 'Aprovado';
-                        } else {
-                          autoStatus = 'Reprovado';
-                          enableReavaliacao = true;
-                          if (reavalValue !== null) {
-                            if (reavalValue < passGrade) {
-                              autoStatus = 'Reprovado';
-                              mediaFinal = (mediaFrequencia + reavalValue) / 2;
+
+                        let autoStatus = 'Pendente';
+                        let mediaFinal: number | null = mediaFreq;
+
+                        if (mediaFreq !== null) {
+                          if (f1 !== null && f2 !== null) {
+                            if (mediaFreq >= 14) {
+                              autoStatus = 'Dispensado (Aprovado)';
+                            } else if (mediaFreq >= 10) {
+                              autoStatus = 'Admitido a Exame';
                             } else {
-                              autoStatus = 'Aprovado na Reavaliação';
-                              mediaFinal = (mediaFrequencia + reavalValue) / 2;
+                              autoStatus = 'Reprovado por Frequência';
                             }
+                          } else {
+                            autoStatus = 'Frequência em Curso';
                           }
                         }
-                      }
-                    }
 
-                    return (
-                      <>
-                        {/* Beautiful live feedback dashboard */}
-                        <div className="col-span-2 bg-indigo-50 border border-indigo-150 rounded-xl p-4 grid grid-cols-3 gap-4 text-center">
-                          <div>
-                            <p className="text-[10px] uppercase tracking-wider font-extrabold text-indigo-700">Média de Frequência</p>
-                            <p className="text-xl font-black text-indigo-950 mt-1 font-mono">{numRealizadas > 0 ? mediaFrequencia.toFixed(2) : '—'}</p>
-                            <p className="text-[9px] text-indigo-500 font-medium">({numRealizadas} de {pautaForm.num_avaliacoes} avaliações)</p>
-                          </div>
-                          <div>
-                            <p className="text-[10px] uppercase tracking-wider font-extrabold text-indigo-700">Situação Proposta</p>
-                            <p className={`text-xs font-black mt-2 uppercase tracking-wider px-2 py-1 rounded-full inline-block ${
-                              autoStatus.startsWith('Aprovado') ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' :
-                              autoStatus === 'Reprovado' ? 'bg-rose-100 text-rose-800 border border-rose-200' :
-                              'bg-amber-100 text-amber-800 border border-amber-200'
-                            }`}>{autoStatus}</p>
-                          </div>
-                          <div>
-                            <p className="text-[10px] uppercase tracking-wider font-extrabold text-indigo-700">Média Final (Exame)</p>
-                            <p className="text-xl font-black text-indigo-950 mt-1 font-mono">{mediaFinal !== null ? mediaFinal.toFixed(2) : '—'}</p>
-                            <p className="text-[9px] text-indigo-500 font-medium">{hasExam ? (examValue !== null ? 'Com nota de exame' : 'Aguardando exame') : 'Isento de exame'}</p>
-                          </div>
-                        </div>
+                        if (exN !== null && mediaFreq !== null) {
+                          mediaFinal = (mediaFreq + exN) / 2;
+                          if (exN >= 10 && mediaFinal >= 10) {
+                            autoStatus = 'Aprovado no Exame';
+                          } else {
+                            autoStatus = 'Reprovado no Exame (Recurso)';
+                          }
+                        }
 
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-xs font-bold text-slate-500 mb-1">Trimestre Escolar</label>
-                            <select 
-                              value={pautaForm.trimestre}
-                              onChange={(e) => setPautaForm({ ...pautaForm, trimestre: e.target.value as any })}
-                              className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
-                            >
-                              <option value="1º Trimestre">1º Trimestre</option>
-                              <option value="2º Trimestre">2º Trimestre</option>
-                              <option value="3º Trimestre">3º Trimestre</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-xs font-bold text-slate-500 mb-1">Número de Avaliações Programadas</label>
-                            <select 
-                              value={pautaForm.num_avaliacoes}
-                              onChange={(e) => setPautaForm({ ...pautaForm, num_avaliacoes: Number(e.target.value) })}
-                              className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
-                            >
-                              <option value={1}>1 Avaliação</option>
-                              <option value={2}>2 Avaliações</option>
-                              <option value={3}>3 Avaliações</option>
-                            </select>
-                          </div>
-                        </div>
+                        if (exR !== null && mediaFreq !== null) {
+                          mediaFinal = (mediaFreq + exR) / 2;
+                          if (exR >= 10 && mediaFinal >= 10) {
+                            autoStatus = 'Aprovado no Recurso';
+                          } else {
+                            autoStatus = 'Reprovado no Recurso';
+                          }
+                        }
 
-                        <div className="grid grid-cols-3 gap-4 bg-indigo-50/50 p-3 rounded-xl border border-indigo-100">
-                          <div>
-                            <label className="block text-xs font-bold text-indigo-700 mb-1">Avaliação 1 (0-20)</label>
-                            <input 
-                              type="number"
-                              min={0}
-                              max={20}
-                              step="any"
-                              value={pautaForm.avaliacao_1 === undefined || pautaForm.avaliacao_1 === null ? '' : pautaForm.avaliacao_1}
-                              onChange={(e) => setPautaForm({ ...pautaForm, avaliacao_1: clampGradeInput(e.target.value) })}
-                              className="w-full bg-white border border-indigo-200 rounded-lg p-2 text-sm text-indigo-900 focus:ring-1 focus:ring-indigo-400 font-bold"
-                              placeholder="Nota 1"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs font-bold text-indigo-700 mb-1">Avaliação 2 (0-20)</label>
-                            <input 
-                              type="number"
-                              min={0}
-                              max={20}
-                              step="any"
-                              disabled={pautaForm.num_avaliacoes < 2}
-                              value={pautaForm.avaliacao_2 === undefined || pautaForm.avaliacao_2 === null ? '' : pautaForm.avaliacao_2}
-                              onChange={(e) => setPautaForm({ ...pautaForm, avaliacao_2: clampGradeInput(e.target.value) })}
-                              className="w-full bg-white border border-indigo-200 rounded-lg p-2 text-sm text-indigo-900 focus:ring-1 focus:ring-indigo-400 disabled:opacity-50 disabled:bg-slate-100 font-bold"
-                              placeholder={pautaForm.num_avaliacoes < 2 ? "Desativado" : "Nota 2"}
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs font-bold text-indigo-700 mb-1">Avaliação 3 (0-20)</label>
-                            <input 
-                              type="number"
-                              min={0}
-                              max={20}
-                              step="any"
-                              disabled={pautaForm.num_avaliacoes < 3}
-                              value={pautaForm.avaliacao_3 === undefined || pautaForm.avaliacao_3 === null ? '' : pautaForm.avaliacao_3}
-                              onChange={(e) => setPautaForm({ ...pautaForm, avaliacao_3: clampGradeInput(e.target.value) })}
-                              className="w-full bg-white border border-indigo-200 rounded-lg p-2 text-sm text-indigo-900 focus:ring-1 focus:ring-indigo-400 disabled:opacity-50 disabled:bg-slate-100 font-bold"
-                              placeholder={pautaForm.num_avaliacoes < 3 ? "Desativado" : "Nota 3"}
-                            />
-                          </div>
-                        </div>
-
-                        <div className={`grid ${enableReavaliacao ? 'grid-cols-3' : 'grid-cols-2'} gap-4`}>
-                          <div>
-                            <label className="block text-xs font-bold text-slate-500 mb-1">Nota de Exame (0-20)</label>
-                            <input 
-                              type="number"
-                              min={0}
-                              max={20}
-                              step="any"
-                              disabled={!hasExam}
-                              value={!hasExam ? '' : (pautaForm.nota_exame === undefined || pautaForm.nota_exame === null ? '' : pautaForm.nota_exame)}
-                              onChange={(e) => setPautaForm({ ...pautaForm, nota_exame: clampGradeInput(e.target.value) })}
-                              className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm disabled:opacity-50 disabled:bg-slate-100 font-bold"
-                              placeholder={!hasExam ? "Não aplicável" : "Opcional"}
-                            />
-                          </div>
-
-                          {enableReavaliacao && (
+                        return (
+                          <div className="bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200/80 dark:border-indigo-800/60 rounded-xl p-4 grid grid-cols-3 gap-3 text-center">
                             <div>
-                              <label className="block text-xs font-bold text-rose-700 mb-1">Nota de Reavaliação (0-20)</label>
-                              <input 
-                                type="number"
-                                min={0}
-                                max={20}
-                                step="any"
-                                value={pautaForm.nota_reavaliacao === undefined || pautaForm.nota_reavaliacao === null ? '' : pautaForm.nota_reavaliacao}
-                                onChange={(e) => setPautaForm({ ...pautaForm, nota_reavaliacao: clampGradeInput(e.target.value) })}
-                                className="w-full bg-rose-50 border border-rose-300 rounded-lg p-2.5 text-sm font-black text-rose-950 focus:ring-2 focus:ring-rose-400"
-                                placeholder="Nota de recurso"
-                              />
+                              <p className="text-[10px] uppercase tracking-wider font-extrabold text-indigo-700 dark:text-indigo-300">Média de Frequência</p>
+                              <p className="text-xl font-black text-indigo-950 dark:text-indigo-100 mt-1 font-mono">{mediaFreq !== null ? mediaFreq.toFixed(2) : '—'}</p>
+                              <p className="text-[9px] text-indigo-500 font-medium">Frequências 1 e 2 {tp !== null ? '+ TP' : ''}</p>
                             </div>
-                          )}
+                            <div>
+                              <p className="text-[10px] uppercase tracking-wider font-extrabold text-indigo-700 dark:text-indigo-300">Situação Académica</p>
+                              <p className={`text-xs font-black mt-2 uppercase tracking-wider px-2 py-1 rounded-full inline-block ${
+                                autoStatus.includes('Aprovado') || autoStatus.includes('Dispensado')
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-950 dark:text-emerald-200' 
+                                  : autoStatus.includes('Reprovado')
+                                  ? 'bg-rose-100 text-rose-800 border border-rose-300 dark:bg-rose-950 dark:text-rose-200'
+                                  : 'bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-950 dark:text-amber-200'
+                              }`}>{autoStatus}</p>
+                            </div>
+                            <div>
+                              <p className="text-[10px] uppercase tracking-wider font-extrabold text-indigo-700 dark:text-indigo-300">Média Final da Cadeira</p>
+                              <p className="text-xl font-black text-indigo-950 dark:text-indigo-100 mt-1 font-mono">{mediaFinal !== null ? mediaFinal.toFixed(2) : '—'}</p>
+                              <p className="text-[9px] text-indigo-500 font-medium">{pautaForm.creditos_ects || 6} ECTS atribuíveis</p>
+                            </div>
+                          </div>
+                        );
+                      })()}
 
+                      {/* Continuous Assessment Component */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 dark:bg-slate-900/60 p-3.5 rounded-xl border border-slate-200 dark:border-slate-800">
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">1ª Frequência (0-20)</label>
+                          <input 
+                            type="number"
+                            min={0}
+                            max={20}
+                            step="any"
+                            value={pautaForm.frequencia_1 === undefined || pautaForm.frequencia_1 === null ? '' : pautaForm.frequencia_1}
+                            onChange={(e) => setPautaForm({ ...pautaForm, frequencia_1: clampGradeInput(e.target.value) })}
+                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm font-mono font-bold text-slate-800 dark:text-slate-100"
+                            placeholder="Nota F1"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">2ª Frequência (0-20)</label>
+                          <input 
+                            type="number"
+                            min={0}
+                            max={20}
+                            step="any"
+                            value={pautaForm.frequencia_2 === undefined || pautaForm.frequencia_2 === null ? '' : pautaForm.frequencia_2}
+                            onChange={(e) => setPautaForm({ ...pautaForm, frequencia_2: clampGradeInput(e.target.value) })}
+                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm font-mono font-bold text-slate-800 dark:text-slate-100"
+                            placeholder="Nota F2"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Trabalho Prático (Opcional)</label>
+                          <input 
+                            type="number"
+                            min={0}
+                            max={20}
+                            step="any"
+                            value={pautaForm.trabalho_pratico === undefined || pautaForm.trabalho_pratico === null ? '' : pautaForm.trabalho_pratico}
+                            onChange={(e) => setPautaForm({ ...pautaForm, trabalho_pratico: clampGradeInput(e.target.value) })}
+                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm font-mono font-bold text-slate-800 dark:text-slate-100"
+                            placeholder="Nota TP"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Final Exams & Recourse Component */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-amber-50/50 dark:bg-amber-950/20 p-3.5 rounded-xl border border-amber-200/60 dark:border-amber-800/40">
+                        <div>
+                          <label className="block text-xs font-bold text-amber-900 dark:text-amber-200 mb-1">Exame Normal (0-20)</label>
+                          <input 
+                            type="number"
+                            min={0}
+                            max={20}
+                            step="any"
+                            value={pautaForm.exame_normal === undefined || pautaForm.exame_normal === null ? '' : pautaForm.exame_normal}
+                            onChange={(e) => setPautaForm({ ...pautaForm, exame_normal: clampGradeInput(e.target.value) })}
+                            className="w-full bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-700 rounded-lg p-2.5 text-sm font-mono font-bold text-slate-800 dark:text-slate-100"
+                            placeholder="Nota do Exame Normal"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-rose-900 dark:text-rose-200 mb-1">Exame de Recurso (0-20)</label>
+                          <input 
+                            type="number"
+                            min={0}
+                            max={20}
+                            step="any"
+                            value={pautaForm.exame_recurso === undefined || pautaForm.exame_recurso === null ? '' : pautaForm.exame_recurso}
+                            onChange={(e) => setPautaForm({ ...pautaForm, exame_recurso: clampGradeInput(e.target.value) })}
+                            className="w-full bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-700 rounded-lg p-2.5 text-sm font-mono font-bold text-slate-800 dark:text-slate-100"
+                            placeholder="Nota de Recurso"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ) : isInstituto ? (
+                    /* ================================================================ */
+                    /* FORMULÁRIO INSTITUTO TÉCNICO: AVALIAÇÃO MODULAR POR COMPETÊNCIA */
+                    /* ================================================================ */
+                    <div className="space-y-4">
+                      <div className="bg-[#0e1422] p-4 rounded-xl border border-slate-800 text-slate-100 space-y-3">
+                        <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs uppercase tracking-wider">
+                          <Award className="w-4 h-4" />
+                          <span>Lançamento Modular por Competências</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div>
-                            <label className="block text-xs font-bold text-slate-500 mb-1">Situação do Estudante</label>
-                            <select 
-                              disabled
-                              value={autoStatus}
-                              className="w-full bg-slate-100 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 font-extrabold cursor-not-allowed"
+                            <label className="block text-xs font-bold text-slate-300 mb-1">Instituto / Centro de Formação</label>
+                            <select
+                              value={selectedPautaSchoolId}
+                              onChange={(e) => setSelectedPautaSchoolId(e.target.value)}
+                              className="w-full bg-[#090d16] border border-slate-700 rounded-lg p-2.5 text-xs font-semibold text-slate-200"
                             >
-                              <option value="Pendente">Pendente (Auto)</option>
-                              <option value="Admitido">Admitido (Auto)</option>
-                              <option value="Aprovado">Aprovado (Auto)</option>
-                              <option value="Aprovado na Reavaliação">Aprovado na Reavaliação (Auto)</option>
-                              <option value="Reprovado">Reprovado (Auto)</option>
+                              <option value="">Todos os Institutos</option>
+                              {schools.map(sch => (
+                                <option key={sch.id} value={sch.id}>{sch.nome}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-slate-300 mb-1">Qualificação / Curso Técnico</label>
+                            <select
+                              value={pautaForm.curso_id || ''}
+                              onChange={(e) => setPautaForm({ ...pautaForm, curso_id: e.target.value })}
+                              className="w-full bg-[#090d16] border border-slate-700 rounded-lg p-2.5 text-xs font-semibold text-slate-200"
+                            >
+                              <option value="">Selecione o Curso Técnico...</option>
+                              {rawCursos
+                                .filter(c => !selectedPautaSchoolId || c.escola_id === selectedPautaSchoolId)
+                                .map(c => (
+                                  <option key={c.id} value={c.id}>{c.nome} (Nível Técnico)</option>
+                                ))}
                             </select>
                           </div>
                         </div>
-                      </>
-                    );
-                  })()}
+                      </div>
 
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">Observações da Avaliação</label>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">Módulo Curricular</label>
+                          <input 
+                            type="text"
+                            required
+                            placeholder="Ex: Módulo 01 - Eletrotecnia Aplicada"
+                            value={pautaForm.modulo_periodo || ''}
+                            onChange={(e) => setPautaForm({ ...pautaForm, modulo_periodo: e.target.value })}
+                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm font-semibold text-slate-800 dark:text-slate-100"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">Formando / Estudante</label>
+                          <select 
+                            value={pautaForm.estudante_id}
+                            onChange={(e) => setPautaForm({ ...pautaForm, estudante_id: e.target.value })}
+                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm font-semibold text-slate-800 dark:text-slate-100"
+                          >
+                            <option value="">Selecione o Formando...</option>
+                            {rawStudents
+                              .filter(s => {
+                                if (s.ativo === false) return false;
+                                if (selectedPautaSchoolId && s.escola_id && s.escola_id !== selectedPautaSchoolId) return false;
+                                if (pautaForm.curso_id && s.curso_id && s.curso_id !== pautaForm.curso_id) return false;
+                                return true;
+                              })
+                              .map(s => {
+                                const usr = tenantUsers.find(u => u.id === s.user_id);
+                                return (
+                                  <option key={s.id} value={s.id}>
+                                    {usr?.nome || s.nome}
+                                  </option>
+                                );
+                              })}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Live Feedback Dashboard for Technical Institutes */}
+                      {(() => {
+                        const at = pautaForm.avaliacao_teorica !== '' && pautaForm.avaliacao_teorica !== undefined && pautaForm.avaliacao_teorica !== null ? Number(pautaForm.avaliacao_teorica) : null;
+                        const ap = pautaForm.avaliacao_pratica !== '' && pautaForm.avaliacao_pratica !== undefined && pautaForm.avaliacao_pratica !== null ? Number(pautaForm.avaliacao_pratica) : null;
+                        const pi = pautaForm.projecto_integrador !== '' && pautaForm.projecto_integrador !== undefined && pautaForm.projecto_integrador !== null ? Number(pautaForm.projecto_integrador) : null;
+
+                        let totalScore = 0;
+                        let totalWeight = 0;
+                        if (at !== null) { totalScore += at * 0.3; totalWeight += 0.3; }
+                        if (ap !== null) { totalScore += ap * 0.5; totalWeight += 0.5; }
+                        if (pi !== null) { totalScore += pi * 0.2; totalWeight += 0.2; }
+
+                        const mediaCalc = totalWeight > 0 ? (totalScore / totalWeight) : null;
+                        let compStatus = 'Pendente';
+                        if (totalWeight > 0) {
+                          if (mediaCalc !== null && mediaCalc >= 16) compStatus = 'Apto com Distinção';
+                          else if (mediaCalc !== null && mediaCalc >= 10) compStatus = 'Apto';
+                          else compStatus = 'Ainda Não Apto';
+                        }
+
+                        return (
+                          <div className="bg-emerald-50/70 dark:bg-emerald-950/40 border border-emerald-200/80 dark:border-emerald-800/60 rounded-xl p-4 grid grid-cols-2 gap-4 text-center">
+                            <div>
+                              <p className="text-[10px] uppercase tracking-wider font-extrabold text-emerald-800 dark:text-emerald-300">Classificação Final Ponderada</p>
+                              <p className="text-2xl font-black text-emerald-950 dark:text-emerald-100 mt-1 font-mono">{mediaCalc !== null ? mediaCalc.toFixed(2) : '—'}</p>
+                              <p className="text-[9px] text-emerald-600 dark:text-emerald-400 font-medium">Teórica (30%) + Prática (50%) + Projeto (20%)</p>
+                            </div>
+                            <div>
+                              <p className="text-[10px] uppercase tracking-wider font-extrabold text-emerald-800 dark:text-emerald-300">Competência Modular</p>
+                              <p className={`text-xs font-black mt-2 uppercase tracking-wider px-3 py-1.5 rounded-full inline-block ${
+                                compStatus.includes('Apto')
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-950 dark:text-emerald-200' 
+                                  : 'bg-rose-100 text-rose-800 border border-rose-300 dark:bg-rose-950 dark:text-rose-200'
+                              }`}>{compStatus}</p>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Technical Assessment Component */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 dark:bg-slate-900/60 p-3.5 rounded-xl border border-slate-200 dark:border-slate-800">
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Avaliação Teórica (30%)</label>
+                          <input 
+                            type="number"
+                            min={0}
+                            max={20}
+                            step="any"
+                            value={pautaForm.avaliacao_teorica === undefined || pautaForm.avaliacao_teorica === null ? '' : pautaForm.avaliacao_teorica}
+                            onChange={(e) => setPautaForm({ ...pautaForm, avaliacao_teorica: clampGradeInput(e.target.value) })}
+                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm font-mono font-bold text-slate-800 dark:text-slate-100"
+                            placeholder="Nota 0-20"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Avaliação Prática / Laboratório (50%)</label>
+                          <input 
+                            type="number"
+                            min={0}
+                            max={20}
+                            step="any"
+                            value={pautaForm.avaliacao_pratica === undefined || pautaForm.avaliacao_pratica === null ? '' : pautaForm.avaliacao_pratica}
+                            onChange={(e) => setPautaForm({ ...pautaForm, avaliacao_pratica: clampGradeInput(e.target.value) })}
+                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm font-mono font-bold text-slate-800 dark:text-slate-100"
+                            placeholder="Nota 0-20"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Projecto Integrador (20%)</label>
+                          <input 
+                            type="number"
+                            min={0}
+                            max={20}
+                            step="any"
+                            value={pautaForm.projecto_integrador === undefined || pautaForm.projecto_integrador === null ? '' : pautaForm.projecto_integrador}
+                            onChange={(e) => setPautaForm({ ...pautaForm, projecto_integrador: clampGradeInput(e.target.value) })}
+                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm font-mono font-bold text-slate-800 dark:text-slate-100"
+                            placeholder="Nota 0-20"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    /* ================================================================ */
+                    /* FORMULÁRIO ESCOLAR: TRIMESTRES, ACP 1, ACP 2, ACS E EXAME        */
+                    /* ================================================================ */
+                    <div className="space-y-4">
+                      <div className="col-span-2 bg-slate-50 dark:bg-slate-900 border border-slate-150 dark:border-slate-800 rounded-xl p-3 mb-2">
+                        <label className="block text-xs font-extrabold text-slate-500 dark:text-slate-400 mb-1 flex items-center gap-1">Filtrar por Escola</label>
+                        <select
+                          value={selectedPautaSchoolId}
+                          onChange={(e) => {
+                            const schId = e.target.value;
+                            setSelectedPautaSchoolId(schId);
+                            const filteredStuds = rawStudents.filter(s => {
+                              const studSchool = s.escola_id || rawTurmas.find(t => t.id === s.turma_id)?.escola_id || '';
+                              return !schId || studSchool === schId;
+                            });
+                            const filteredClasses = classes.filter(c => {
+                              const t = turmas.find(tu => tu.id === c.turma_id);
+                              return !schId || (t && t.escola_id === schId);
+                            });
+                            setPautaForm({
+                              ...pautaForm,
+                              estudante_id: filteredStuds[0]?.id || '',
+                              classe_id: filteredClasses[0]?.id || ''
+                            });
+                          }}
+                          className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer"
+                        >
+                          <option value="">Todas as Escolas</option>
+                          {schools.map(sch => (
+                            <option key={sch.id} value={sch.id}>{sch.nome}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Estudante Avaliado</label>
+                          <select 
+                            value={pautaForm.estudante_id}
+                            onChange={(e) => setPautaForm({ ...pautaForm, estudante_id: e.target.value })}
+                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm text-slate-700 dark:text-slate-200 cursor-pointer font-medium"
+                          >
+                            <option value="">Selecione Estudante...</option>
+                            {rawStudents
+                              .filter(s => {
+                                if (s.ativo === false) return false;
+                                const studSchool = s.escola_id || rawTurmas.find(t => t.id === s.turma_id)?.escola_id || '';
+                                return !selectedPautaSchoolId || studSchool === selectedPautaSchoolId;
+                              })
+                              .map(s => {
+                                const usr = tenantUsers.find(u => u.id === s.user_id);
+                                const studName = usr?.nome || s.nome || `Estudante #${s.numero_matricula || s.id}`;
+                                const turmaObj = rawTurmas.find(t => t.id === s.turma_id);
+                                return (
+                                  <option key={s.id} value={s.id}>
+                                    {studName} {turmaObj ? `(${turmaObj.nome})` : ''}
+                                  </option>
+                                );
+                              })}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Disciplina / Matéria</label>
+                          <select 
+                            value={pautaForm.classe_id}
+                            onChange={(e) => setPautaForm({ ...pautaForm, classe_id: e.target.value })}
+                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm text-slate-700 dark:text-slate-200"
+                          >
+                            <option value="">Selecione Disciplina...</option>
+                            {classes
+                              .filter(c => {
+                                const t = turmas.find(tu => tu.id === c.turma_id);
+                                if (selectedPautaSchoolId && t && t.escola_id !== selectedPautaSchoolId) return false;
+                                return true;
+                              })
+                              .map(c => (
+                                <option key={c.id} value={c.id}>{c.nome}</option>
+                              ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Calculations feedback */}
+                      {(() => {
+                        const gradesList: number[] = [];
+                        const pushIfDefined = (val: any) => {
+                          if (val === 0 || val === '0' || val === 0.0) {
+                            gradesList.push(0);
+                          } else if (val !== undefined && val !== null && val !== '') {
+                            const num = Number(val);
+                            if (!isNaN(num)) gradesList.push(num);
+                          }
+                        };
+
+                        pushIfDefined(pautaForm.avaliacao_1);
+                        if (pautaForm.num_avaliacoes >= 2) pushIfDefined(pautaForm.avaliacao_2);
+                        if (pautaForm.num_avaliacoes >= 3) pushIfDefined(pautaForm.avaliacao_3);
+
+                        const numRealizadas = gradesList.length;
+                        const mediaFrequencia = numRealizadas > 0 
+                          ? (gradesList.reduce((sum, g) => sum + g, 0) / numRealizadas)
+                          : 0;
+
+                        const passGrade = config?.pautas_nota_aprovacao ?? 9.5;
+                        const admitGrade = config?.pautas_nota_admissao ?? 9.5;
+
+                        const isFrequenciaAdmitido = numRealizadas > 0 && mediaFrequencia >= admitGrade && mediaFrequencia < 15;
+                        const hasExam = isFrequenciaAdmitido;
+                        const examValue = pautaForm.nota_exame !== undefined && pautaForm.nota_exame !== null && pautaForm.nota_exame !== '' 
+                          ? Number(pautaForm.nota_exame) 
+                          : null;
+
+                        let autoStatus = numRealizadas === 0 ? 'Pendente' : 'Admitido';
+                        if (numRealizadas > 0) {
+                          if (mediaFrequencia < admitGrade) autoStatus = 'Reprovado';
+                          else if (mediaFrequencia >= 15) autoStatus = 'Aprovado';
+                          else autoStatus = 'Admitido';
+                        }
+
+                        let mediaFinal = mediaFrequencia;
+                        if (examValue !== null) {
+                          mediaFinal = (mediaFrequencia + examValue) / 2;
+                          if (examValue < passGrade || mediaFinal < passGrade) autoStatus = 'Reprovado';
+                          else autoStatus = 'Aprovado';
+                        }
+
+                        return (
+                          <>
+                            <div className="col-span-2 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-150 dark:border-indigo-800 rounded-xl p-4 grid grid-cols-3 gap-4 text-center">
+                              <div>
+                                <p className="text-[10px] uppercase tracking-wider font-extrabold text-indigo-700 dark:text-indigo-300">Média Contínua</p>
+                                <p className="text-xl font-black text-indigo-950 dark:text-indigo-100 mt-1 font-mono">{numRealizadas > 0 ? mediaFrequencia.toFixed(2) : '—'}</p>
+                                <p className="text-[9px] text-indigo-500 font-medium">({numRealizadas} de {pautaForm.num_avaliacoes || 3} avaliações)</p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] uppercase tracking-wider font-extrabold text-indigo-700 dark:text-indigo-300">Situação</p>
+                                <p className={`text-xs font-black mt-2 uppercase tracking-wider px-2 py-1 rounded-full inline-block ${
+                                  autoStatus.startsWith('Aprovado') ? 'bg-emerald-100 text-emerald-800' :
+                                  autoStatus === 'Reprovado' ? 'bg-rose-100 text-rose-800' :
+                                  'bg-amber-100 text-amber-800'
+                                }`}>{autoStatus}</p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] uppercase tracking-wider font-extrabold text-indigo-700 dark:text-indigo-300">Média Trimestral</p>
+                                <p className="text-xl font-black text-indigo-950 dark:text-indigo-100 mt-1 font-mono">{mediaFinal !== null ? mediaFinal.toFixed(2) : '—'}</p>
+                                <p className="text-[9px] text-indigo-500 font-medium">{hasExam ? (examValue !== null ? 'Com exame' : 'Aguardando exame') : 'Isento'}</p>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Trimestre Escolar</label>
+                                <select 
+                                  value={pautaForm.trimestre}
+                                  onChange={(e) => setPautaForm({ ...pautaForm, trimestre: e.target.value as any })}
+                                  className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm text-slate-700 dark:text-slate-200"
+                                >
+                                  <option value="1º Trimestre">1º Trimestre</option>
+                                  <option value="2º Trimestre">2º Trimestre</option>
+                                  <option value="3º Trimestre">3º Trimestre</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Número de Avaliações</label>
+                                <select 
+                                  value={pautaForm.num_avaliacoes || 3}
+                                  onChange={(e) => setPautaForm({ ...pautaForm, num_avaliacoes: Number(e.target.value) })}
+                                  className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm text-slate-700 dark:text-slate-200"
+                                >
+                                  <option value={1}>1 Avaliação</option>
+                                  <option value={2}>2 Avaliações</option>
+                                  <option value={3}>3 Avaliações</option>
+                                </select>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-4 bg-indigo-50/50 dark:bg-indigo-950/20 p-3 rounded-xl border border-indigo-100 dark:border-indigo-800">
+                              <div>
+                                <label className="block text-xs font-bold text-indigo-700 dark:text-indigo-300 mb-1">ACP 1 (0-20)</label>
+                                <input 
+                                  type="number"
+                                  min={0}
+                                  max={20}
+                                  step="any"
+                                  value={pautaForm.avaliacao_1 === undefined || pautaForm.avaliacao_1 === null ? '' : pautaForm.avaliacao_1}
+                                  onChange={(e) => setPautaForm({ ...pautaForm, avaliacao_1: clampGradeInput(e.target.value) })}
+                                  className="w-full bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-700 rounded-lg p-2 text-sm text-indigo-900 dark:text-indigo-100 font-bold"
+                                  placeholder="Nota 1"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-bold text-indigo-700 dark:text-indigo-300 mb-1">ACP 2 (0-20)</label>
+                                <input 
+                                  type="number"
+                                  min={0}
+                                  max={20}
+                                  step="any"
+                                  disabled={pautaForm.num_avaliacoes < 2}
+                                  value={pautaForm.avaliacao_2 === undefined || pautaForm.avaliacao_2 === null ? '' : pautaForm.avaliacao_2}
+                                  onChange={(e) => setPautaForm({ ...pautaForm, avaliacao_2: clampGradeInput(e.target.value) })}
+                                  className="w-full bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-700 rounded-lg p-2 text-sm text-indigo-900 dark:text-indigo-100 font-bold disabled:opacity-50"
+                                  placeholder="Nota 2"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-bold text-indigo-700 dark:text-indigo-300 mb-1">ACS / Prova (0-20)</label>
+                                <input 
+                                  type="number"
+                                  min={0}
+                                  max={20}
+                                  step="any"
+                                  disabled={pautaForm.num_avaliacoes < 3}
+                                  value={pautaForm.avaliacao_3 === undefined || pautaForm.avaliacao_3 === null ? '' : pautaForm.avaliacao_3}
+                                  onChange={(e) => setPautaForm({ ...pautaForm, avaliacao_3: clampGradeInput(e.target.value) })}
+                                  className="w-full bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-700 rounded-lg p-2 text-sm text-indigo-900 dark:text-indigo-100 font-bold disabled:opacity-50"
+                                  placeholder="Nota 3"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Nota de Exame (0-20)</label>
+                                <input 
+                                  type="number"
+                                  min={0}
+                                  max={20}
+                                  step="any"
+                                  disabled={!hasExam}
+                                  value={!hasExam ? '' : (pautaForm.nota_exame === undefined || pautaForm.nota_exame === null ? '' : pautaForm.nota_exame)}
+                                  onChange={(e) => setPautaForm({ ...pautaForm, nota_exame: clampGradeInput(e.target.value) })}
+                                  className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm disabled:opacity-50 font-bold"
+                                  placeholder={!hasExam ? "Não aplicável" : "Opcional"}
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Situação Proposta</label>
+                                <select 
+                                  disabled
+                                  value={autoStatus}
+                                  className="w-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm text-slate-700 dark:text-slate-300 font-extrabold cursor-not-allowed"
+                                >
+                                  <option value="Pendente">Pendente</option>
+                                  <option value="Admitido">Admitido</option>
+                                  <option value="Aprovado">Aprovado</option>
+                                  <option value="Reprovado">Reprovado</option>
+                                </select>
+                              </div>
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  )}
+
+                  <div className="pt-2">
+                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Observações da Avaliação</label>
                     <textarea 
-                      value={pautaForm.observacao}
+                      value={pautaForm.observacao || ''}
                       onChange={(e) => setPautaForm({ ...pautaForm, observacao: e.target.value })}
-                      placeholder="Descreva observações de desenvolvimento..."
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm h-16 focus:outline-none"
+                      placeholder="Descreva observações de desenvolvimento pedagógico..."
+                      className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm h-16 focus:outline-none text-slate-800 dark:text-slate-200"
                     />
                   </div>
                 </>
@@ -20658,28 +21626,51 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 </>
               )}
 
-              <div className="flex gap-2 justify-end pt-4 border-t border-slate-100">
-                <button 
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium px-4 py-2 rounded-lg text-sm transition-colors cursor-pointer"
-                >
-                  {modalType === 'escola_detalhes' ? 'Fechar' : 'Cancelar'}
-                </button>
-                {modalType !== 'escola_detalhes' && (
-                  <button 
-                    type="submit"
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-medium px-4 py-2 rounded-lg text-sm transition-colors cursor-pointer"
-                  >
-                    Confirmar e Salvar
-                  </button>
+                </div>
+
+                {modalType === 'student' ? (
+                  <div className="px-6 py-4 border-t border-slate-800/60 bg-[#0e1422]/80 backdrop-blur flex items-center justify-end gap-3 sticky bottom-0 z-20 shrink-0">
+                    <button 
+                      type="button"
+                      onClick={() => setIsModalOpen(false)}
+                      className="px-4 py-2.5 text-xs font-medium rounded-lg text-slate-300 hover:text-white hover:bg-slate-800/60 transition cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button 
+                      type="submit"
+                      className="px-5 py-2.5 text-xs font-medium rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm shadow-indigo-600/30 transition cursor-pointer"
+                    >
+                      Guardar Estudante
+                    </button>
+                  </div>
+                ) : (
+                  <div className={`flex gap-2 justify-end pt-4 border-t ${modalType === 'teacher' && isUniversidade ? 'border-slate-800' : 'border-slate-100 dark:border-slate-800'}`}>
+                    <button 
+                      type="button"
+                      onClick={() => setIsModalOpen(false)}
+                      className={`font-medium px-4 py-2 rounded-lg text-sm transition-colors cursor-pointer ${
+                        modalType === 'teacher' && isUniversidade 
+                          ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' 
+                          : 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300'
+                      }`}
+                    >
+                      {modalType === 'escola_detalhes' ? 'Fechar' : 'Cancelar'}
+                    </button>
+                    {modalType !== 'escola_detalhes' && (
+                      <button 
+                        type="submit"
+                        className="bg-indigo-600 hover:bg-indigo-500 text-white font-medium px-4 py-2 rounded-lg text-sm shadow-sm shadow-indigo-600/30 transition-colors cursor-pointer"
+                      >
+                        Confirmar e Salvar
+                      </button>
+                    )}
+                  </div>
                 )}
-              </div>
-            </form>
+              </form>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
 
 
@@ -20833,10 +21824,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
       {/* REAL-TIME IN-APP PUSH TOASTS */}
       {activeToast && (
-        <motion.div 
-          initial={{ opacity: 0, y: 50, scale: 0.9 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          className="fixed bottom-6 right-6 z-[200000] bg-slate-900 dark:bg-slate-950 border border-slate-800 text-white p-4 rounded-2xl shadow-2xl max-w-sm flex gap-3 items-start cursor-pointer hover:bg-slate-850 transition-colors"
+        <div 
+          className="fixed bottom-6 right-6 z-[200000] bg-slate-900 dark:bg-slate-950 border border-slate-800 text-white p-4 rounded-2xl shadow-2xl max-w-sm flex gap-3 items-start cursor-pointer hover:bg-slate-850 transition-colors animate-in slide-in-from-bottom-4 fade-in duration-200"
           onClick={() => setActiveToast(null)}
         >
           <div className="bg-indigo-600 p-2 rounded-xl text-white font-extrabold text-base flex-shrink-0 animate-bounce">
@@ -20847,7 +21836,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             <p className="text-slate-300 font-sans leading-relaxed">{activeToast.mensagem}</p>
             <p className="text-[9px] text-slate-500 font-mono text-right">Toque para fechar</p>
           </div>
-        </motion.div>
+        </div>
       )}
 
       {/* UNSAVED CHANGES GUARD DIALOG */}

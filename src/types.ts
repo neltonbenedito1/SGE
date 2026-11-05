@@ -65,6 +65,7 @@ export interface Curso {
   id: string;
   tenant_id: string;
   institutionId: string;
+  escola_id?: string; // Alias for institutionId
   nome: string;
   codigo: string;
   tipo: 'graduacao' | 'tecnico' | 'classe' | string;
@@ -75,6 +76,8 @@ export interface Curso {
   nivelEnsino: 'escola' | 'instituto' | 'universidade' | 'primario' | 'secundario' | 'superior' | 'profissional' | string;
   area_especializacao?: string;
   faculdade_unidade?: string;
+  diretor_curso_id?: string;
+  diretor_curso_nome?: string;
   descricao?: string;
   ativo: boolean;
   created_at: string;
@@ -85,11 +88,16 @@ export interface Cadeira {
   id: string;
   tenant_id: string;
   institutionId: string;
+  escola_id?: string; // Alias for institutionId
   cursoId?: string;
+  curso_id?: string; // Alias for cursoId
+  curso_nome?: string;
   nome: string;
   codigo: string;
   ano_curricular: number; // 1º Ano, 2º Ano, etc.
   periodo_lectivo: string; // Ex: '1º Semestre', '2º Trimestre', 'Módulo 1', 'Ano 1'
+  semestre?: string; // Alias for periodo_lectivo
+  creditos?: number; // Alias for creditos_ects
   regime_periodo: 'semestre' | 'trimestre' | 'modulo' | 'ano' | string;
   creditos_ects?: number;
   horas_teoricas?: number;
@@ -463,7 +471,11 @@ export interface Pauta {
   turma_id?: string;
   estudante_id: string;
   classe_id: string;
-  trimestre: '1º Trimestre' | '2º Trimestre' | '3º Trimestre';
+  trimestre?: '1º Trimestre' | '2º Trimestre' | '3º Trimestre' | string;
+  semestre?: '1º Semestre' | '2º Semestre' | 'Anual' | string;
+  modulo_periodo?: string;
+  curso_id?: string;
+  cadeira_id?: string;
   nota_prova?: number;
   nota_trabalho?: number;
   nota_participacao?: number;
@@ -471,6 +483,21 @@ export interface Pauta {
   avaliacao_1?: number;
   avaliacao_2?: number;
   avaliacao_3?: number;
+  // Campos Universitários (Cadeiras / Semestres)
+  frequencia_1?: number;
+  frequencia_2?: number;
+  trabalho_pratico?: number;
+  media_frequencia?: number;
+  exame_normal?: number;
+  exame_recurso?: number;
+  creditos_ects?: number;
+  // Campos de Institutos Técnicos (Módulos / Competências)
+  avaliacao_teorica?: number;
+  avaliacao_pratica?: number;
+  projecto_integrador?: number;
+  horas_estagio_cumpridas?: number;
+  competencia_status?: 'Apto' | 'Ainda Não Apto' | 'Apto com Distinção' | string;
+  tipo_instituicao_origem?: 'escola' | 'universidade' | 'instituto' | string;
   nota_tr1?: number;
   media_final?: number;
   nota_exame?: number;

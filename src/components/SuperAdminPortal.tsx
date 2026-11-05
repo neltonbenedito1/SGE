@@ -4205,10 +4205,15 @@ export default function SuperAdminPortal({
                             {rule.id.startsWith('custom_') && (
                               <button
                                 onClick={() => {
-                                  if (window.confirm(`Deseja realmente remover o evento customizado "${rule.label}"?`)) {
-                                    const updated = superRules.filter(r => r.id !== rule.id);
-                                    saveSuperRules(updated);
-                                  }
+                                  showConfirm(
+                                    "Remover Evento",
+                                    `Deseja realmente remover o evento customizado "${rule.label}"?`,
+                                    () => {
+                                      const updated = superRules.filter(r => r.id !== rule.id);
+                                      saveSuperRules(updated);
+                                    },
+                                    true
+                                  );
                                 }}
                                 className="text-rose-500 hover:text-rose-700 p-1 rounded-lg hover:bg-rose-50 cursor-pointer"
                                 title="Remover Evento"
@@ -4226,10 +4231,14 @@ export default function SuperAdminPortal({
                 <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
                   <button
                     onClick={() => {
-                      if (window.confirm("Deseja redefinir todas as regras de notificação para o padrão?")) {
-                        saveSuperRules(DEFAULT_SUPER_RULES);
-                        alert("Configurações redefinidas com sucesso!");
-                      }
+                      showConfirm(
+                        "Redefinir Padrões",
+                        "Deseja redefinir todas as regras de notificação para o padrão?",
+                        () => {
+                          saveSuperRules(DEFAULT_SUPER_RULES);
+                          alert("Configurações redefinidas com sucesso!");
+                        }
+                      );
                     }}
                     className="border border-slate-200 hover:bg-slate-50 text-slate-600 font-bold py-2 px-4 rounded-xl text-xs cursor-pointer"
                   >
@@ -4333,9 +4342,11 @@ export default function SuperAdminPortal({
         <div 
           onClick={(e) => {
             if (e.target === e.currentTarget) {
-              if (window.confirm("Deseja realmente fechar? Alterações não salvas nas configurações de SMTP serão perdidas.")) {
-                setIsSmtpModalOpen(false);
-              }
+              showConfirm(
+                "Fechar Janela",
+                "Deseja realmente fechar? Alterações não salvas nas configurações de SMTP serão perdidas.",
+                () => setIsSmtpModalOpen(false)
+              );
             }
           }}
           className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs flex items-center justify-center p-4 z-[100] overflow-y-auto pointer-events-auto"
@@ -4518,10 +4529,14 @@ export default function SuperAdminPortal({
         <div 
           onClick={(e) => {
             if (e.target === e.currentTarget) {
-              if (window.confirm("Deseja realmente cancelar a redefinição de senha?")) {
-                setIsPasswordResetModalOpen(false);
-                setSelectedTenantForPasswordReset(null);
-              }
+              showConfirm(
+                "Cancelar Redefinição",
+                "Deseja realmente cancelar a redefinição de senha?",
+                () => {
+                  setIsPasswordResetModalOpen(false);
+                  setSelectedTenantForPasswordReset(null);
+                }
+              );
             }
           }}
           className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs flex items-center justify-center p-4 z-[100] overflow-y-auto pointer-events-auto"
@@ -4632,9 +4647,11 @@ export default function SuperAdminPortal({
         <div 
           onClick={(e) => {
             if (e.target === e.currentTarget) {
-              if (window.confirm("Deseja realmente cancelar o envio da notificação?")) {
-                setIsSendNotifModalOpen(false);
-              }
+              showConfirm(
+                "Cancelar Envio",
+                "Deseja realmente cancelar o envio da notificação?",
+                () => setIsSendNotifModalOpen(false)
+              );
             }
           }}
           className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs flex items-center justify-center p-4 z-[100] overflow-y-auto pointer-events-auto"
@@ -4726,10 +4743,14 @@ export default function SuperAdminPortal({
           <div 
             className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs transition-opacity duration-300 animate-in fade-in"
             onClick={() => {
-              if (window.confirm("Deseja realmente fechar? Quaisquer dados preenchidos e alterações não salvas serão perdidos.")) {
-                setIsTenantModalOpen(false);
-                setEditingTenant(null);
-              }
+              showConfirm(
+                "Descartar Alterações",
+                "Deseja realmente fechar? Quaisquer dados preenchidos e alterações não salvas serão perdidos.",
+                () => {
+                  setIsTenantModalOpen(false);
+                  setEditingTenant(null);
+                }
+              );
             }}
           />
 
@@ -4753,10 +4774,14 @@ export default function SuperAdminPortal({
               <button
                 type="button"
                 onClick={() => {
-                  if (window.confirm("Deseja realmente fechar? Quaisquer dados preenchidos e alterações não salvas serão perdidos.")) {
-                    setIsTenantModalOpen(false);
-                    setEditingTenant(null);
-                  }
+                  showConfirm(
+                    "Descartar Alterações",
+                    "Deseja realmente fechar? Quaisquer dados preenchidos e alterações não salvas serão perdidos.",
+                    () => {
+                      setIsTenantModalOpen(false);
+                      setEditingTenant(null);
+                    }
+                  );
                 }}
                 className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
               >
@@ -5600,10 +5625,14 @@ export default function SuperAdminPortal({
         <div 
           onClick={(e) => {
             if (e.target === e.currentTarget) {
-              if (window.confirm("Deseja realmente fechar? Quaisquer dados preenchidos e alterações não salvas serão perdidos.")) {
-                setIsPlanModalOpen(false);
-                setEditingPlan(null);
-              }
+              showConfirm(
+                "Descartar Alterações",
+                "Deseja realmente fechar? Quaisquer dados preenchidos e alterações não salvas serão perdidos.",
+                () => {
+                  setIsPlanModalOpen(false);
+                  setEditingPlan(null);
+                }
+              );
             }
           }}
           className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs flex items-center justify-center p-4 z-[100] overflow-y-auto pointer-events-auto"
@@ -5826,9 +5855,11 @@ export default function SuperAdminPortal({
         <div 
           onClick={(e) => {
             if (e.target === e.currentTarget) {
-              if (window.confirm("Deseja realmente fechar? Quaisquer dados preenchidos e alterações não salvas serão perdidos.")) {
-                setIsPaymentModalOpen(false);
-              }
+              showConfirm(
+                "Descartar Alterações",
+                "Deseja realmente fechar? Quaisquer dados preenchidos e alterações não salvas serão perdidos.",
+                () => setIsPaymentModalOpen(false)
+              );
             }
           }}
           className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs flex items-center justify-center p-4 z-[100] overflow-y-auto pointer-events-auto"

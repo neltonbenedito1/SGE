@@ -24,9 +24,8 @@ import {
   Building,
   ArrowLeftRight,
   Library,
-  X
+  X,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
 import { Livro, Edicao, PermissaoBiblioteca, HistoricoLeitura, Avaliacao, Escola } from '../types';
 import { collection, doc, setDoc, getDocs, addDoc, deleteDoc, query, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -882,15 +881,10 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
       </div>
 
       {/* MAIN RENDER TABS */}
-      <AnimatePresence mode="wait">
+      <>
         {/* TAB 1: ACERVO CATALOG */}
         {activeSubTab === 'catalogo' && !selectedLivro && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="space-y-6"
-          >
+          <div className="space-y-6 animate-in fade-in duration-200">
             {/* Search and Filters */}
             <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-xs flex flex-col md:flex-row gap-3">
               <div className="relative flex-1">
@@ -942,11 +936,10 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                   const rating = getAverageRating(l.id);
                   const school = schools.find(s => s.id === l.escola_origem);
                   return (
-                    <motion.div
+                    <div
                       key={l.id}
-                      whileHover={{ y: -4 }}
                       onClick={() => setSelectedLivro(l)}
-                      className="bg-white rounded-xl border border-slate-150 overflow-hidden shadow-xs hover:shadow-md transition-all cursor-pointer flex flex-col h-full"
+                      className="bg-white rounded-xl border border-slate-150 overflow-hidden shadow-xs hover:shadow-md hover:-translate-y-1 transition-all cursor-pointer flex flex-col h-full"
                     >
                       {/* Cover visualization */}
                       <div className="relative h-48 bg-gradient-to-br from-indigo-850 to-indigo-950 flex flex-col justify-between p-4 text-white shrink-0 overflow-hidden">
@@ -1026,20 +1019,18 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                           </div>
                         </div>
                       </div>
-                    </motion.div>
+                    </div>
                   );
                 })}
               </div>
             )}
-          </motion.div>
+          </div>
         )}
 
         {/* DETAILS PANEL VIEW */}
         {selectedLivro && !activeEditionToRead && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.98 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-2xl border border-slate-150 p-6 shadow-xs space-y-6"
+          <div
+            className="bg-white rounded-2xl border border-slate-150 p-6 shadow-xs space-y-6 animate-in zoom-in-95 fade-in duration-150"
           >
             {/* Header back button */}
             <div className="flex justify-between items-center border-b border-slate-100 pb-4">
@@ -1214,16 +1205,14 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                 </div>
               </div>
             </div>
-          </motion.div>
+          </div>
         )}
 
         {/* INTERACTIVE INTERNAL PDF READER */}
         {activeEditionToRead && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="w-full max-w-5xl h-[92vh] flex flex-col bg-white dark:bg-slate-900 rounded-2xl shadow-2xl overflow-hidden border border-slate-700/50"
+            <div
+              className="w-full max-w-5xl h-[92vh] flex flex-col bg-white dark:bg-slate-900 rounded-2xl shadow-2xl overflow-hidden border border-slate-700/50 animate-in zoom-in-95 fade-in duration-150"
             >
               <InternalPdfViewer
                 pdfUrl={activeEditionToRead.edicao.pdf_url}
@@ -1233,16 +1222,14 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                 onPageChange={(pageNum, totalPages) => handlePageChange(pageNum, totalPages)}
                 onClose={() => setActiveEditionToRead(null)}
               />
-            </motion.div>
+            </div>
           </div>
         )}
 
         {/* TAB 3: READING HISTORY */}
         {activeSubTab === 'historico' && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-white rounded-2xl border border-slate-150 p-6 shadow-xs space-y-6"
+          <div
+            className="bg-white rounded-2xl border border-slate-150 p-6 shadow-xs space-y-6 animate-in fade-in duration-200"
           >
             <div>
               <h2 className="text-base font-bold text-slate-800">Meu Progresso de Leitura</h2>
@@ -1286,17 +1273,15 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                 );
               })}
             </div>
-          </motion.div>
+          </div>
         )}
-      </AnimatePresence>
+      </>
 
       {/* MODAL 1: CADASTRO DE NOVO LIVRO */}
       {isBookModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-2xl border border-slate-200 max-w-lg w-full p-6 shadow-2xl overflow-y-auto max-h-[90vh]"
+          <div
+            className="bg-white rounded-2xl border border-slate-200 max-w-lg w-full p-6 shadow-2xl overflow-y-auto max-h-[90vh] animate-in zoom-in-95 fade-in duration-150"
           >
             <div className="flex justify-between items-center border-b border-slate-100 pb-3 mb-4">
               <h3 className="text-base font-bold text-slate-800">Cadastrar Livro Transversal</h3>
@@ -1543,17 +1528,15 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                 </button>
               </div>
             </form>
-          </motion.div>
+          </div>
         </div>
       )}
 
       {/* MODAL 2: ADIÇÃO DE EDICÃO (PDF) */}
       {isEditionModalOpen && selectedLivro && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-6 shadow-2xl"
+          <div
+            className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-6 shadow-2xl animate-in zoom-in-95 fade-in duration-150"
           >
             <div className="flex justify-between items-center border-b border-slate-100 pb-3 mb-4">
               <div>
@@ -1627,17 +1610,15 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                 </button>
               </div>
             </form>
-          </motion.div>
+          </div>
         </div>
       )}
 
       {/* MODAL 3: LEAVING A REVIEW / STAR RATING */}
       {isReviewModalOpen && selectedLivro && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-2xl border border-slate-200 max-w-sm w-full p-6 shadow-2xl"
+          <div
+            className="bg-white rounded-2xl border border-slate-200 max-w-sm w-full p-6 shadow-2xl animate-in zoom-in-95 fade-in duration-150"
           >
             <div className="flex justify-between items-center border-b border-slate-100 pb-3 mb-4">
               <h3 className="text-base font-bold text-slate-800">Avaliar Livro</h3>
@@ -1697,17 +1678,15 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                 </button>
               </div>
             </form>
-          </motion.div>
+          </div>
         </div>
       )}
 
       {/* CONFIRMATION DELETE MODAL */}
       {confirmDeleteData && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-2xl border border-slate-200 max-w-sm w-full p-6 shadow-2xl space-y-4"
+          <div
+            className="bg-white rounded-2xl border border-slate-200 max-w-sm w-full p-6 shadow-2xl space-y-4 animate-in zoom-in-95 fade-in duration-150"
           >
             <div className="flex items-start gap-3">
               <div className="p-2 bg-rose-50 text-rose-600 rounded-full shrink-0">
@@ -1750,7 +1729,7 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                     try {
                       await addDoc(collection(db, 'notificacoes'), {
                         destinatario_id: 'admin',
-                        titulo: ' Livro Removido do Acervo',
+                        titulo: 'Livro Removido do Acervo',
                         mensagem: `O utilizador "${currentUserName}" excluiu o livro "${data.title}" e todas as suas edições/avaliações associadas da Biblioteca.`,
                         tipo: 'alerta',
                         lido: false,
@@ -1770,7 +1749,7 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                     try {
                       await addDoc(collection(db, 'notificacoes'), {
                         destinatario_id: 'admin',
-                        titulo: ' Edição de Livro Removida',
+                        titulo: 'Edição de Livro Removida',
                         mensagem: `O utilizador "${currentUserName}" excluiu a edição "${data.title}" da Biblioteca.`,
                         tipo: 'alerta',
                         lido: false,
@@ -1789,7 +1768,7 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                 Confirmar Exclusão
               </button>
             </div>
-          </motion.div>
+          </div>
         </div>
       )}
 

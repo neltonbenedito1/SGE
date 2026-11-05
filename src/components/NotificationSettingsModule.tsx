@@ -490,6 +490,7 @@ export const NotificationSettingsModule: React.FC<NotificationSettingsModuleProp
 
   // Track open Category Selection Dropdowns per action (actionId)
   const [openCategoryDropdownId, setOpenCategoryDropdownId] = useState<string | null>(null);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // Sync state to parent config whenever modules change
   useEffect(() => {
@@ -600,10 +601,7 @@ export const NotificationSettingsModule: React.FC<NotificationSettingsModuleProp
 
   // Reset to Factory Defaults
   const handleResetDefaults = () => {
-    if (window.confirm('Deseja realmente restaurar todas as configurações de notificações para os padrões do sistema?')) {
-      setModules(INITIAL_MODULE_NOTIFICATIONS);
-      if (notify) notify('Configurações de notificações restauradas para o padrão.', 'sucesso');
-    }
+    setShowResetConfirm(true);
   };
 
   // Map icon strings to Lucide icon elements
@@ -1177,6 +1175,37 @@ export const NotificationSettingsModule: React.FC<NotificationSettingsModuleProp
           })
         )}
       </div>
+
+      {showResetConfirm && (
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 z-[9999] animate-in fade-in duration-200">
+          <div className="bg-[#0b101b] border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl text-slate-100">
+            <h3 className="text-base font-bold text-slate-100 mb-2">Restaurar Padrões de Notificação?</h3>
+            <p className="text-xs text-slate-400 mb-5 leading-relaxed">
+              Deseja realmente restaurar todas as configurações de notificações para os padrões do sistema? Esta ação redefinirá os canais e destinatários de todos os módulos.
+            </p>
+            <div className="flex justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setShowResetConfirm(false)}
+                className="px-4 py-2 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setModules(INITIAL_MODULE_NOTIFICATIONS);
+                  if (notify) notify('Configurações de notificações restauradas para o padrão.', 'sucesso');
+                  setShowResetConfirm(false);
+                }}
+                className="px-4 py-2 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-xs transition-colors cursor-pointer"
+              >
+                Confirmar e Restaurar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

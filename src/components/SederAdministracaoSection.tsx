@@ -68,6 +68,7 @@ export function SederAdministracaoSection({
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
 
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+  const [isResetConfirmModalOpen, setIsResetConfirmModalOpen] = useState(false);
   const [confirmAck, setConfirmAck] = useState(false);
   const [confirmText, setConfirmText] = useState('');
 
@@ -413,9 +414,7 @@ export function SederAdministracaoSection({
   };
 
   const handleResetSuperadmin = async () => {
-    if (!window.confirm("Atenção: Deseja realmente remover o superadministrador atual e reativar a definição de um novo superadministrador através do bootstrap inicial? A sua sessão será terminada imediatamente.")) {
-      return;
-    }
+    setIsResetConfirmModalOpen(false);
     setLoading(true);
     setErrorMsg('');
     try {
@@ -995,7 +994,7 @@ export function SederAdministracaoSection({
             <button
               type="button"
               disabled={loading}
-              onClick={handleResetSuperadmin}
+              onClick={() => setIsResetConfirmModalOpen(true)}
               className="px-5 py-3 bg-rose-900/80 hover:bg-rose-800 border border-rose-700/80 text-rose-100 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-lg hover:shadow-rose-950/60 flex items-center gap-2"
             >
               <ShieldAlert className="w-4 h-4 text-rose-400" />
@@ -1005,7 +1004,46 @@ export function SederAdministracaoSection({
         </div>
       )}
 
-      {/* Confirmation Modal for Ownership Transfer */}
+      {/* Confirmation Modal for Reset Superadmin */}
+      {isResetConfirmModalOpen && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-rose-800/80 w-full max-w-lg rounded-3xl p-6 sm:p-8 shadow-2xl text-slate-100 relative space-y-5">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-rose-500/20 border border-rose-500/30 rounded-2xl text-rose-400">
+                <AlertOctagon className="w-7 h-7" />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-white">
+                  Revogar Superadmin & Reativar Bootstrap?
+                </h3>
+                <p className="text-xs text-rose-300">Atenção: Esta ação reinicializará o sistema.</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Deseja realmente remover o superadministrador atual e reativar a definição de um novo superadministrador através do bootstrap inicial? A sua sessão será terminada imediatamente.
+            </p>
+
+            <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setIsResetConfirmModalOpen(false)}
+                className="px-4 py-2.5 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 text-xs font-bold transition-all cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleResetSuperadmin}
+                className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-lg shadow-rose-900/40 transition-all cursor-pointer flex items-center gap-2"
+              >
+                <ShieldAlert className="w-4 h-4" />
+                <span>Confirmar e Reinicializar</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {isConfirmModalOpen && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-4 animate-in fade-in duration-200">
           <div className="bg-slate-900 border border-rose-800/80 w-full max-w-lg rounded-3xl p-6 sm:p-8 shadow-2xl text-slate-100 relative space-y-5">

@@ -1,7 +1,7 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * Componente Unificado e Responsivo de Matrícula de Estudantes com 4 Níveis de Ensino
+ * Componente Unificado e Responsivo de Matrícula de Estudantes - Redesign Minimalista Dark Slate
  */
 
 import React, { useState, useMemo } from 'react';
@@ -14,11 +14,7 @@ import {
   Check, 
   Upload, 
   User as UserIcon,
-  HelpCircle,
-  Clock,
-  HeartPulse,
-  Home,
-  FileCheck,
+  ChevronDown,
   X
 } from 'lucide-react';
 import { 
@@ -48,7 +44,7 @@ export interface StudentRegistrationFormProps {
   cursos?: Curso[];
   cadeiras?: Cadeira[];
   tenantTipoInstituicao?: TipoInstituicao;
-  allowedLevels?: NivelEnsino[]; // Níveis autorizados para a escola/instituição
+  allowedLevels?: NivelEnsino[];
   onPhotoUploaded?: (base64: string) => void;
   onPhotoRemoved?: () => void;
   students?: any[];
@@ -73,25 +69,35 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
   salas = [],
   isUniversidade = false
 }) => {
-  const isSingleLevelInstitution = tenantTipoInstituicao !== 'global' && (tenantTipoInstituicao === 'universidade' || tenantTipoInstituicao === 'instituto' || allowedLevels.length <= 1);
+  // Seletor de nível de ensino estritamente ocultado para instituições com tipo único
+  // Só aparece se for Global com múltiplos níveis configurados
+  const isSingleLevelInstitution = tenantTipoInstituicao !== 'global';
 
   React.useEffect(() => {
     if (isSingleLevelInstitution) {
       let target: NivelEnsino = 'secundario';
       if (tenantTipoInstituicao === 'universidade') target = 'superior';
       else if (tenantTipoInstituicao === 'instituto') target = 'profissional';
-      else if (allowedLevels.length > 0) target = allowedLevels[0];
+      else if (tenantTipoInstituicao === 'escola') {
+        target = allowedLevels.includes('secundario') ? 'secundario' : (allowedLevels[0] || 'secundario');
+      } else if (allowedLevels.length > 0) {
+        target = allowedLevels[0];
+      }
 
       if (formData.nivelEnsino !== target) {
         setFormData(prev => ({ ...prev, nivelEnsino: target }));
       }
     }
-  }, [isSingleLevelInstitution, tenantTipoInstituicao, allowedLevels]);
+  }, [isSingleLevelInstitution, tenantTipoInstituicao, allowedLevels, formData.nivelEnsino, setFormData]);
 
-  const currentNivel: NivelEnsino = (formData.nivelEnsino as NivelEnsino) || 'secundario';
+  const currentNivel: NivelEnsino = (formData.nivelEnsino as NivelEnsino) || (
+    tenantTipoInstituicao === 'universidade' ? 'superior' :
+    tenantTipoInstituicao === 'instituto' ? 'profissional' : 'secundario'
+  );
+  
   const schema: StudentLevelSchema = STUDENT_LEVEL_SCHEMAS[currentNivel] || STUDENT_LEVEL_SCHEMAS.secundario;
 
-  // Filtragem estrita de instituições compatíveis com o nível de ensino selecionado (Regra 4.1 e 8.3)
+  // Filtragem estrita de instituições compatíveis com o nível de ensino selecionado
   const compatibleSchools = useMemo(() => {
     const list = schools.filter(s => {
       const sType: TipoInstituicao = 
@@ -132,7 +138,7 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
     }, {} as Record<string, Cadeira[]>);
   }, [selectedCursoCadeiras]);
 
-  // Selected Turma & Real-time Vacancies (Regra 2.3)
+  // Turma selecionada e cálculo em tempo real de lotação e vagas
   const selectedTurma = useMemo(() => {
     return turmas.find(t => t.id === formData.turma_id);
   }, [turmas, formData.turma_id]);
@@ -168,7 +174,7 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
     const currentReg = formData.regime || 'Diurno';
     const otherReg = currentReg === 'Diurno' ? 'Nocturno' : 'Diurno';
     
-    // Check same turma in other regime
+    // Verificar mesma turma em outro turno
     const otherRegEnrolled = students.filter(s => {
       if (s.id === formData.id || s.ativo === false) return false;
       return s.turma_id === formData.turma_id && s.regime === otherReg;
@@ -178,7 +184,7 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
       suggestions.push(`O regime ${otherReg} possui ${otherRegVagas} vagas disponíveis nesta mesma turma.`);
     }
 
-    // Check other turmas in same school
+    // Verificar outras turmas na mesma escola
     const otherTurmas = turmas.filter(t => t.id !== formData.turma_id && (!formData.escola_id || t.escola_id === formData.escola_id));
     for (const ot of otherTurmas.slice(0, 2)) {
       const cap = Number((ot as any).capacidade) || 30;
@@ -209,7 +215,6 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
   const handleLevelChange = (newLevel: NivelEnsino) => {
     if (newLevel === currentNivel) return;
 
-    // Se já existem dados preenchidos além dos básicos, pedir confirmação
     const hasData = Object.keys(formData).some(k => 
       !['nivelEnsino', 'escola_id', 'turma_id', 'ano_lectivo', 'genero'].includes(k) && !!formData[k]
     );
@@ -224,7 +229,6 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
   const confirmSwitch = () => {
     if (confirmSwitchModal.targetLevel) {
       setFormData(prev => ({
-        // Preserva os dados comuns essenciais
         nome: prev.nome || '',
         data_nascimento: prev.data_nascimento || '',
         genero: prev.genero || 'Masculino',
@@ -270,25 +274,24 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
   };
 
   return (
-    <div className="space-y-6 text-left">
-      {/* 1. SELETOR / DROPDOWN DE NÍVEL DE ENSINO (Ocultado quando a instituição tem um único tipo de ensino - Regra 2.1) */}
+    <div className="space-y-8 text-left text-slate-100">
+      {/* 0. SELETOR DE NÍVEL DE ENSINO (Apenas para instituições Globais com mais de um tipo de ensino) */}
       {!isSingleLevelInstitution && (
-        <div className="bg-slate-50 dark:bg-slate-900/60 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3">
+        <div className="bg-[#0e1422]/60 p-4 rounded-xl border border-slate-800 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+              <label className="block text-xs font-semibold text-slate-200">
                 Nível de Ensino / Tipo de Matrícula <span className="text-rose-500">*</span>
               </label>
               <p className="text-[11px] text-slate-400">
-                Selecione o nível de ensino para carregar o formulário e requisitos oficiais específicos.
+                Selecione o nível de ensino para carregar os requisitos curriculares correspondentes.
               </p>
             </div>
-            <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider bg-${schema.badgeColor}-100 text-${schema.badgeColor}-700 border border-${schema.badgeColor}-200 self-start sm:self-auto`}>
+            <span className="text-[10px] font-semibold px-2.5 py-1 rounded-full uppercase tracking-wider bg-indigo-950/60 text-indigo-300 border border-indigo-800/50 self-start sm:self-auto">
               {schema.badgeLabel}
             </span>
           </div>
 
-          {/* Dropdown com os 4 níveis */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
             {(['primario', 'secundario', 'superior', 'profissional'] as NivelEnsino[])
               .filter(lvl => allowedLevels.includes(lvl))
@@ -302,19 +305,19 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
                     onClick={() => handleLevelChange(lvl)}
                     className={`p-3 rounded-xl border text-left flex flex-col justify-between transition-all cursor-pointer ${
                       isSelected
-                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-500/20'
-                        : 'bg-white dark:bg-slate-950 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-800 hover:border-indigo-400 hover:bg-indigo-50/60 dark:hover:bg-slate-900'
+                        ? 'bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-600/30'
+                        : 'bg-[#090d16] text-slate-300 border-slate-800 hover:border-indigo-500/50 hover:bg-[#131b2e]'
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1.5">
-                      {lvl === 'primario' && <BookOpen className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-sky-500'}`} />}
-                      {lvl === 'secundario' && <GraduationCap className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-indigo-500'}`} />}
-                      {lvl === 'superior' && <Building2 className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-purple-500'}`} />}
-                      {lvl === 'profissional' && <Wrench className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-emerald-500'}`} />}
+                      {lvl === 'primario' && <BookOpen className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-sky-400'}`} />}
+                      {lvl === 'secundario' && <GraduationCap className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-indigo-400'}`} />}
+                      {lvl === 'superior' && <Building2 className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-purple-400'}`} />}
+                      {lvl === 'profissional' && <Wrench className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-emerald-400'}`} />}
                       {isSelected && <Check className="w-3.5 h-3.5 text-white" />}
                     </div>
                     <div>
-                      <span className="block text-xs font-bold leading-tight">{info.title}</span>
+                      <span className="block text-xs font-semibold leading-tight">{info.title}</span>
                       <span className={`block text-[10px] mt-0.5 ${isSelected ? 'text-indigo-100' : 'text-slate-400'}`}>
                         {info.badgeLabel}
                       </span>
@@ -326,16 +329,15 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
         </div>
       )}
 
-      {/* 2. FOTOGRAFIA DO ESTUDANTE */}
-      <div className="flex flex-col items-center justify-center border-b border-slate-100 dark:border-slate-800 pb-4">
-        <label className="block text-xs font-bold text-slate-500 mb-2">Fotografia do Aluno</label>
-        <div className="flex flex-col items-center gap-3">
+      {/* 1. SEÇÃO DE FOTOGRAFIA DO ALUNO */}
+      <div className="flex flex-col sm:flex-row items-center gap-5 p-4 rounded-xl bg-[#0e1422]/50 border border-slate-800/50">
+        <div className="relative group">
           {formData.foto_url ? (
-            <div className="relative group">
+            <div className="relative">
               <img 
                 src={formData.foto_url} 
                 alt="Estudante" 
-                className="w-24 h-24 object-cover rounded-full border-2 border-indigo-200 shadow-sm"
+                className="w-20 h-20 object-cover rounded-full border-2 border-indigo-500/60 shadow-inner"
                 referrerPolicy="no-referrer"
               />
               <button
@@ -344,19 +346,22 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
                   updateField('foto_url', '');
                   if (onPhotoRemoved) onPhotoRemoved();
                 }}
-                className="absolute -top-1 -right-1 bg-rose-500 hover:bg-rose-600 text-white rounded-full p-1.5 shadow-md transition-all cursor-pointer"
+                className="absolute -top-1 -right-1 bg-rose-500 hover:bg-rose-600 text-white rounded-full p-1 shadow-md transition-all cursor-pointer"
                 title="Remover Fotografia"
               >
-                <X className="w-3.5 h-3.5" />
+                <X className="w-3 h-3" />
               </button>
             </div>
           ) : (
-            <div className="w-24 h-24 bg-slate-50 dark:bg-slate-900 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-full flex flex-col items-center justify-center text-slate-400">
-              <UserIcon className="w-8 h-8 text-slate-300" />
-              <span className="text-[9px] mt-1 font-bold uppercase text-slate-400">Sem Foto</span>
+            <div className="w-20 h-20 rounded-full border-2 border-dashed border-slate-700 flex flex-col items-center justify-center bg-[#090d16] text-slate-400 shadow-inner overflow-hidden">
+              <UserIcon className="w-6 h-6 mb-1 text-slate-500" />
+              <span className="text-[9px] font-medium uppercase tracking-wider text-slate-500">Sem Foto</span>
             </div>
           )}
-          
+        </div>
+        <div className="flex-1 text-center sm:text-left space-y-1.5">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Fotografia do Aluno</h2>
+          <p className="text-xs text-slate-500">Carregue uma imagem em formato PNG ou JPG com pelo menos 400x400px.</p>
           <div>
             <input 
               type="file"
@@ -378,22 +383,25 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
             />
             <label 
               htmlFor="student-photo-dynamic-input"
-              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold shadow-2xs transition-all cursor-pointer inline-flex items-center gap-1"
+              className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-medium rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm shadow-indigo-600/30 transition cursor-pointer"
             >
-              <Upload className="w-3 h-3 text-slate-400" /> Carregar Foto
+              <Upload className="w-3.5 h-3.5" /> Carregar Foto
             </label>
           </div>
         </div>
       </div>
 
-      {/* 3. DADOS DE ENQUADRAMENTO ESCOLAR / TURMA (Vínculo multi-tenant essencial) */}
-      <div className="bg-slate-50/70 dark:bg-slate-900/40 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 space-y-3">
-        <h4 className="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
-          <Building2 className="w-4 h-4" /> Alocação Institucional & Turma
-        </h4>
+      {/* 2. ALOCAÇÃO INSTITUCIONAL & TURMA */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 pb-2 border-b border-slate-800/60">
+          <Building2 className="w-4 h-4 text-indigo-400" />
+          <h3 className="text-xs font-bold tracking-wider uppercase text-indigo-400">Alocação Institucional & Turma</h3>
+        </div>
+
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+          {/* Instituição / Unidade de Ensino */}
+          <div className="space-y-1.5">
+            <label className="block text-xs font-medium text-slate-300">
               Instituição / Unidade de Ensino <span className="text-rose-500">*</span>
             </label>
             <select
@@ -416,7 +424,7 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
                   curso_nome: firstCurso?.nome || prev.curso_nome || ''
                 }));
               }}
-              className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm text-slate-700 dark:text-slate-200 font-semibold disabled:opacity-60"
+              className="w-full bg-[#090d16] border border-slate-800 rounded-lg px-3.5 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition disabled:opacity-60"
             >
               <option value="">-- Selecionar Instituição Compatível --</option>
               {compatibleSchools.map(s => (
@@ -425,13 +433,14 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
                 </option>
               ))}
             </select>
-            <p className="text-[10px] text-slate-400 mt-1">
+            <p className="text-[11px] text-slate-500">
               Filtrado estritamente para o nível {currentNivel}.
             </p>
           </div>
 
-          <div>
-            <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+          {/* Curso / Qualificação Formativa */}
+          <div className="space-y-1.5">
+            <label className="block text-xs font-medium text-slate-300">
               Curso / Qualificação Formativa {availableCursos.length > 0 && <span className="text-rose-500">*</span>}
             </label>
             <select
@@ -453,7 +462,7 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
                   primeiro_periodo_cadeiras_ids: firstPeriodCadeiras.map(c => c.id)
                 }));
               }}
-              className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm text-slate-700 dark:text-slate-200 font-semibold disabled:opacity-60"
+              className="w-full bg-[#090d16] border border-slate-800 rounded-lg px-3.5 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition disabled:opacity-60"
             >
               <option value="">-- Selecionar Curso / Qualificação --</option>
               {availableCursos.map(c => (
@@ -463,81 +472,51 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
               ))}
             </select>
 
-            {/* Quick interactive course selector cards with contrast-adjusted hover (theme aware) */}
-            {availableCursos.length > 0 && !isEditing && (
-              <div className="mt-2.5 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {availableCursos.slice(0, 6).map(c => {
-                  const isSelected = formData.curso_id === c.id;
-                  return (
-                    <div
-                      key={c.id}
-                      onClick={() => {
-                        const cCadeiras = cadeiras.filter(cad => cad.cursoId === c.id);
-                        const firstPeriodName = cCadeiras[0]?.periodo_lectivo || '1º Semestre';
-                        const firstPeriodCadeiras = cCadeiras.filter(cad => 
-                          cad.periodo_lectivo === firstPeriodName && cad.tipo_disciplina === 'obrigatoria'
-                        );
-                        setFormData(prev => ({
-                          ...prev,
-                          curso_id: c.id,
-                          curso: c.nome,
-                          curso_nome: c.nome,
-                          primeiro_periodo_cadeiras_ids: firstPeriodCadeiras.map(x => x.id)
-                        }));
-                      }}
-                      className={`p-2.5 rounded-xl border text-left cursor-pointer transition-all duration-150 ${
-                        isSelected
-                          ? 'bg-indigo-50 dark:bg-indigo-950/60 border-indigo-500 shadow-xs ring-1 ring-indigo-500'
-                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:bg-indigo-50/70 dark:hover:bg-slate-800/90 hover:border-indigo-300 dark:hover:border-slate-700'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-mono text-[10px] font-bold text-indigo-600 dark:text-indigo-400">
-                          {c.codigo || 'CURSO'}
-                        </span>
-                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                          {c.grau || c.tipo}
-                        </span>
-                      </div>
-                      <p className={`text-xs font-bold mt-1 line-clamp-1 transition-colors ${
-                        isSelected ? 'text-indigo-900 dark:text-indigo-200' : 'text-slate-800 dark:text-slate-200'
-                      }`}>
-                        {c.nome}
-                      </p>
-                    </div>
-                  );
-                })}
+            {/* Selected Course Indicator Pill / Tag (Replaces redundant floating cards) */}
+            {selectedCurso && (
+              <div className="pt-1">
+                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-950/40 border border-indigo-900/50 text-xs">
+                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>
+                  <span className="font-mono text-indigo-400 font-semibold">{selectedCurso.codigo || 'CURSO'}</span>
+                  <span className="text-slate-500">•</span>
+                  <span className="text-slate-300">{selectedCurso.grau || selectedCurso.tipo || 'Curso'}</span>
+                  <span className="text-slate-500">•</span>
+                  <span className="text-slate-400 font-medium truncate max-w-[200px]">{selectedCurso.nome}</span>
+                </div>
               </div>
             )}
           </div>
 
-          {/* Regime de Estudos (Diurno / Nocturno) - Regra 2.3 */}
-          <div>
-            <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+          {/* Regime de Estudos */}
+          <div className="space-y-1.5">
+            <label className="block text-xs font-medium text-slate-300">
               Regime de Estudos <span className="text-rose-500">*</span>
             </label>
             <select
               value={formData.regime || 'Diurno'}
               onChange={(e) => updateField('regime', e.target.value)}
-              className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm text-slate-700 dark:text-slate-200 font-semibold"
+              className="w-full bg-[#090d16] border border-slate-800 rounded-lg px-3.5 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
             >
               <option value="Diurno">Diurno</option>
               <option value="Nocturno">Nocturno</option>
+              <option value="Pós-Laboral">Pós-Laboral</option>
             </select>
           </div>
 
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="block text-xs font-bold text-slate-600 dark:text-slate-400">
+          {/* Turma Destino */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-medium text-slate-300">
                 Turma Destino <span className="text-rose-500">*</span>
               </label>
               {formData.turma_id && (
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${
                   isLotacaoEsgotada 
-                    ? 'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800' 
-                    : 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                    ? 'bg-rose-500/10 border border-rose-500/20 text-rose-400' 
+                    : 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
                 }`}>
-                  {isLotacaoEsgotada ? '0 Vagas Disponíveis' : `${vagasDisponiveis} vagas disponíveis (Lotação: ${enrolledCount}/${turmaCapacidade})`}
+                  <span className={`w-1.5 h-1.5 rounded-full ${isLotacaoEsgotada ? 'bg-rose-400' : 'bg-emerald-400'}`}></span>
+                  {isLotacaoEsgotada ? '0 vagas disponíveis' : `${vagasDisponiveis} vagas disponíveis (Lotação: ${enrolledCount}/${turmaCapacidade})`}
                 </span>
               )}
             </div>
@@ -546,7 +525,7 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
               disabled={isEditing || !formData.escola_id}
               required
               onChange={(e) => updateField('turma_id', e.target.value)}
-              className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm text-slate-700 dark:text-slate-200 font-semibold disabled:opacity-60"
+              className="w-full bg-[#090d16] border border-slate-800 rounded-lg px-3.5 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition disabled:opacity-60"
             >
               <option value="">-- Selecionar Turma --</option>
               {turmas
@@ -556,18 +535,18 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
                 ))}
             </select>
 
-            {/* Aviso de Lotação Esgotada com Sugestão de Alternativas (Regra 2.3) */}
+            {/* Aviso e Alternativas de Lotação Esgotada */}
             {isLotacaoEsgotada && (
-              <div className="mt-2 p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 rounded-xl space-y-1.5 text-xs text-rose-800 dark:text-rose-200">
-                <div className="font-bold flex items-center gap-1.5 text-rose-700 dark:text-rose-300">
+              <div className="mt-2 p-3 bg-rose-950/40 border border-rose-900/60 rounded-xl space-y-1.5 text-xs text-rose-200">
+                <div className="font-semibold flex items-center gap-1.5 text-rose-300">
                   <AlertCircle className="w-4 h-4 shrink-0" /> Vagas esgotadas para a combinação selecionada
                 </div>
-                <p className="text-[11px] text-rose-600 dark:text-rose-300">
+                <p className="text-[11px] text-rose-300">
                   Esta turma atingiu a capacidade máxima ({turmaCapacidade} alunos) no regime {formData.regime || 'Diurno'}.
                 </p>
                 {alternativeSuggestions.length > 0 && (
-                  <div className="mt-2 pt-2 border-t border-rose-200/80 dark:border-rose-800 text-[11px] text-slate-700 dark:text-slate-300 space-y-1">
-                    <span className="font-bold text-slate-900 dark:text-white block">Alternativas sugeridas com vagas disponíveis:</span>
+                  <div className="mt-2 pt-2 border-t border-rose-900/60 text-[11px] text-slate-300 space-y-1">
+                    <span className="font-semibold text-white block">Alternativas sugeridas com vagas disponíveis:</span>
                     <ul className="list-disc list-inside space-y-0.5">
                       {alternativeSuggestions.map((sug, i) => (
                         <li key={i}>{sug}</li>
@@ -579,8 +558,9 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
             )}
           </div>
 
-          <div>
-            <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+          {/* Nº de Matrícula */}
+          <div className="space-y-1.5">
+            <label className="block text-xs font-medium text-slate-300">
               Nº de Matrícula <span className="text-rose-500">*</span>
             </label>
             <input
@@ -589,15 +569,17 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
               value={formData.numero_matricula || ''}
               onChange={(e) => updateField('numero_matricula', e.target.value)}
               placeholder="Ex: 2026-MAT-001"
-              className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm text-slate-800 dark:text-slate-100"
+              className="w-full bg-[#090d16] border border-slate-800 rounded-lg px-3.5 py-2.5 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
             />
           </div>
 
-          <div>
+          {/* Encarregado / Responsável Vinculado */}
+          <div className="space-y-1.5">
             <SearchableDropdown
               label="Encarregado / Responsável Vinculado"
-              placeholder="Selecione o responsável..."
+              placeholder="Selecione o responsável vinculado..."
               searchPlaceholder="Pesquisar por nome ou e-mail..."
+              theme="dark"
               value={formData.pai_id || ''}
               options={tenantUsers
                 .filter((u: any) => !formData.escola_id || !u.escola_id || u.escola_id === formData.escola_id)
@@ -611,27 +593,27 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
           </div>
         </div>
 
-        {/* PLANO CURRICULAR EM FORMATO DE ACORDEÃO INTERATIVO (Regra 8.3) */}
+        {/* 3. PLANO CURRICULAR & GRADE DE DISCIPLINAS */}
         {selectedCurso && (
-          <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-800 space-y-3">
+          <div className="mt-6 pt-5 border-t border-slate-800/60 space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
-                  <BookOpen className="w-4 h-4" />
-                  Plano Curricular & Grade de Disciplinas &bull; {selectedCurso.nome}
-                </span>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Estrutura curricular oficial agrupada por períodos. O estudante será matriculado automaticamente no 1º período.
+                <h4 className="text-xs font-bold tracking-wider uppercase text-slate-300 flex items-center gap-2">
+                  <GraduationCap className="w-4 h-4 text-indigo-400" />
+                  Plano Curricular &bull; {selectedCurso.nome.toUpperCase()}
+                </h4>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Grade formativa oficial. O estudante será pré-inscrito nas disciplinas do 1º período.
                 </p>
               </div>
 
-              <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 self-start sm:self-auto flex items-center gap-1">
-                <Check className="w-3 h-3" /> Auto-inscrição Activa no 1º Período
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-xs font-medium text-emerald-400 self-start sm:self-auto">
+                <Check className="w-3.5 h-3.5" /> Auto-inscrição Activa no 1º Período
               </span>
             </div>
 
             {selectedCursoCadeiras.length === 0 ? (
-              <div className="p-4 bg-slate-100 dark:bg-slate-900 rounded-xl text-center text-xs text-slate-400">
+              <div className="p-4 bg-[#0e1422]/60 border border-slate-800 rounded-xl text-center text-xs text-slate-400">
                 Nenhuma disciplina cadastrada na grade curricular deste curso ainda.
               </div>
             ) : (
@@ -645,51 +627,54 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
                   return (
                     <div 
                       key={period} 
-                      className={`rounded-xl border transition-all ${
-                        isFirstPeriod 
-                          ? 'border-indigo-300 dark:border-indigo-800 bg-indigo-50/30 dark:bg-indigo-950/20' 
-                          : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950'
-                      }`}
+                      className="border border-slate-800 rounded-xl overflow-hidden bg-[#0e1422]/60"
                     >
                       <button
                         type="button"
                         onClick={() => togglePeriodAccordion(period)}
-                        className="w-full p-3 flex items-center justify-between text-left cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900 rounded-xl"
+                        className="w-full px-4 py-3.5 flex items-center justify-between text-left hover:bg-slate-800/30 transition cursor-pointer"
                       >
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-xs text-slate-800 dark:text-slate-100">
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs font-semibold text-slate-200">
                             {period} ({cadList.length} Disciplinas)
                           </span>
                           {isFirstPeriod && (
-                            <span className="text-[9px] font-mono font-bold px-2 py-0.2 rounded-full bg-indigo-600 text-white">
-                              1º Período &bull; Inscrição Automática
+                            <span className="px-2.5 py-0.5 rounded-md text-[11px] font-medium bg-indigo-600 text-white">
+                              1º Período • Inscrição Automática
                             </span>
                           )}
                         </div>
-                        <div className="flex items-center gap-2 text-xs text-slate-400">
-                          {totalCreditsPeriod > 0 && <span className="font-mono text-[10px]">{totalCreditsPeriod} ECTS</span>}
-                          <span>{isExpanded ? '▲' : '▼'}</span>
+                        <div className="flex items-center gap-3">
+                          {totalCreditsPeriod > 0 && (
+                            <span className="font-mono text-xs text-slate-400 font-medium">
+                              {totalCreditsPeriod} ECTS
+                            </span>
+                          )}
+                          <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
                         </div>
                       </button>
 
                       {isExpanded && (
-                        <div className="p-3 pt-0 border-t border-slate-100 dark:border-slate-800/60 divide-y divide-slate-100 dark:divide-slate-800/40 text-xs">
+                        <div className="px-4 pb-3 pt-1 border-t border-slate-800/60 divide-y divide-slate-800/40">
                           {cadList.map(cad => (
-                            <div key={cad.id} className="py-2 flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-2">
-                                <span className="font-mono text-[10px] font-bold text-indigo-600 dark:text-indigo-400 px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-900">
-                                  {cad.codigo}
+                            <div 
+                              key={cad.id} 
+                              className="py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-[#131b2e]/40 px-2 rounded-lg transition-colors"
+                            >
+                              <div className="flex items-center gap-3">
+                                <span className="px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 font-mono text-[11px] font-medium border border-indigo-900/50">
+                                  {cad.codigo || 'DISC'}
                                 </span>
-                                <span className="font-medium text-slate-800 dark:text-slate-200">{cad.nome}</span>
+                                <span className="font-medium text-slate-200">{cad.nome}</span>
                               </div>
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-3">
                                 {cad.creditos_ects && (
-                                  <span className="text-[10px] font-mono text-slate-400">{cad.creditos_ects} ECTS</span>
+                                  <span className="font-mono text-slate-400 text-[11px]">{cad.creditos_ects} ECTS</span>
                                 )}
-                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
                                   cad.tipo_disciplina === 'obrigatoria' 
-                                    ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400' 
-                                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                                    ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' 
+                                    : 'bg-slate-800 text-slate-400 border border-slate-700'
                                 }`}>
                                   {cad.tipo_disciplina === 'obrigatoria' ? 'Obrigatória' : 'Opcional'}
                                 </span>
@@ -708,17 +693,21 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
       </div>
 
       {/* 4. SEÇÕES DINÂMICAS DO ESQUEMA ESPECÍFICO */}
-      {schema.sections.map((section) => {
+      {schema.sections.map((section, sIdx) => {
+        const sectionLetter = String.fromCharCode(65 + sIdx); // 'A', 'B', 'C', ...
         return (
-          <div key={section.id} className="space-y-4 pt-2 border-t border-slate-150 dark:border-slate-800">
-            <div>
-              <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">
+          <div key={section.id} className="space-y-4 pt-2">
+            <div className="flex items-center gap-2 pb-2 border-b border-slate-800/60">
+              <span className="w-6 h-6 rounded-md bg-indigo-600/20 text-indigo-400 flex items-center justify-center text-xs font-bold">
+                {sectionLetter}
+              </span>
+              <h3 className="text-xs font-bold tracking-wider uppercase text-slate-300">
                 {section.title}
-              </h4>
-              {section.description && (
-                <p className="text-[11px] text-slate-400 mt-0.5">{section.description}</p>
-              )}
+              </h3>
             </div>
+            {section.description && (
+              <p className="text-[11px] text-slate-500 -mt-2">{section.description}</p>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {section.fields.filter(isFieldVisible).map((field) => {
@@ -727,15 +716,15 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
 
                 if (field.type === 'checkbox') {
                   return (
-                    <div key={field.id} className={`flex items-center gap-2.5 ${colSpanClass}`}>
+                    <div key={field.id} className={`flex items-center gap-2.5 ${colSpanClass} pt-2`}>
                       <input
                         type="checkbox"
                         id={`field_${field.id}`}
                         checked={!!formData[field.id]}
                         onChange={(e) => updateField(field.id, e.target.checked)}
-                        className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                        className="w-4 h-4 rounded border-slate-700 bg-[#090d16] text-indigo-600 focus:ring-indigo-500 focus:ring-offset-0 cursor-pointer"
                       />
-                      <label htmlFor={`field_${field.id}`} className="text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer select-none">
+                      <label htmlFor={`field_${field.id}`} className="text-xs font-medium text-slate-300 cursor-pointer select-none">
                         {field.label} {required && <span className="text-rose-500">*</span>}
                       </label>
                     </div>
@@ -744,8 +733,8 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
 
                 if (field.type === 'select') {
                   return (
-                    <div key={field.id} className={colSpanClass}>
-                      <label htmlFor={`field_${field.id}`} className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                    <div key={field.id} className={`space-y-1.5 ${colSpanClass}`}>
+                      <label htmlFor={`field_${field.id}`} className="block text-xs font-medium text-slate-300">
                         {field.label} {required && <span className="text-rose-500">*</span>}
                       </label>
                       <select
@@ -753,7 +742,7 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
                         value={formData[field.id] || ''}
                         required={required}
                         onChange={(e) => updateField(field.id, e.target.value)}
-                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                        className="w-full bg-[#090d16] border border-slate-800 rounded-lg px-3.5 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
                       >
                         <option value="">-- Selecionar --</option>
                         {field.options?.map(opt => (
@@ -766,8 +755,8 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
 
                 if (field.type === 'textarea') {
                   return (
-                    <div key={field.id} className={colSpanClass}>
-                      <label htmlFor={`field_${field.id}`} className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                    <div key={field.id} className={`space-y-1.5 ${colSpanClass}`}>
+                      <label htmlFor={`field_${field.id}`} className="block text-xs font-medium text-slate-300">
                         {field.label} {required && <span className="text-rose-500">*</span>}
                       </label>
                       <textarea
@@ -777,15 +766,15 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
                         required={required}
                         placeholder={field.placeholder}
                         onChange={(e) => updateField(field.id, e.target.value)}
-                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                        className="w-full bg-[#090d16] border border-slate-800 rounded-lg px-3.5 py-2.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
                       />
                     </div>
                   );
                 }
 
                 return (
-                  <div key={field.id} className={colSpanClass}>
-                    <label htmlFor={`field_${field.id}`} className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+                  <div key={field.id} className={`space-y-1.5 ${colSpanClass}`}>
+                    <label htmlFor={`field_${field.id}`} className="block text-xs font-medium text-slate-300">
                       {field.label} {required && <span className="text-rose-500">*</span>}
                     </label>
                     <input
@@ -795,7 +784,7 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
                       placeholder={field.placeholder}
                       value={formData[field.id] || ''}
                       onChange={(e) => updateField(field.id, e.target.value)}
-                      className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      className="w-full bg-[#090d16] border border-slate-800 rounded-lg px-3.5 py-2.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
                     />
                   </div>
                 );
@@ -806,25 +795,25 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
       })}
 
       {/* 5. OPÇÕES DE COBRANÇA E ACESSO AO PORTAL */}
-      <div className="border-t border-slate-150 dark:border-slate-800 pt-4 space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
+      <div className="p-4 rounded-xl bg-[#0e1422]/50 border border-slate-800/60 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <label className="flex items-center gap-3 cursor-pointer">
             <input 
               type="checkbox"
               id="student_faturado_cb"
               checked={!!formData.faturado}
               onChange={(e) => updateField('faturado', e.target.checked)}
-              className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer"
+              className="w-4 h-4 rounded border-slate-700 bg-[#090d16] text-indigo-600 focus:ring-indigo-500 focus:ring-offset-0 cursor-pointer"
             />
-            <label htmlFor="student_faturado_cb" className="text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer select-none">
-              Estudante Faturado (Gera cobranças e propinas)
-            </label>
-          </div>
+            <span className="text-xs font-medium text-slate-200">
+              Estudante Faturado (Gera cobranças e propinas periódicas)
+            </span>
+          </label>
           {formData.faturado && (
             <select 
               value={formData.periodo_facturacao || 'Mensal'}
               onChange={(e) => updateField('periodo_facturacao', e.target.value)}
-              className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-1.5 text-xs font-bold text-slate-700 dark:text-slate-200"
+              className="bg-[#090d16] border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 transition"
             >
               <option value="Mensal">Mensal</option>
               <option value="Semestral">Semestral</option>
@@ -833,22 +822,24 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
           )}
         </div>
 
-        <div className="flex items-center gap-2">
-          <input 
-            type="checkbox"
-            id="student_usuario_cb"
-            checked={!!formData.usuario_sistema}
-            onChange={(e) => updateField('usuario_sistema', e.target.checked)}
-            className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer"
-          />
-          <label htmlFor="student_usuario_cb" className="text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer select-none">
-            Habilitar Acesso do Estudante ao Portal
+        <div className="pt-3 border-t border-slate-800/40">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input 
+              type="checkbox"
+              id="student_usuario_cb"
+              checked={!!formData.usuario_sistema}
+              onChange={(e) => updateField('usuario_sistema', e.target.checked)}
+              className="w-4 h-4 rounded border-slate-700 bg-[#090d16] text-indigo-600 focus:ring-indigo-500 focus:ring-offset-0 cursor-pointer"
+            />
+            <span className="text-xs font-medium text-slate-200">
+              Habilitar Acesso do Estudante ao Portal Académico
+            </span>
           </label>
         </div>
 
         {formData.usuario_sistema && (
-          <div className="p-3 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
-            <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1">
+          <div className="pt-2">
+            <label className="block text-xs font-medium text-slate-300 mb-1.5">
               Senha Temporária de Primeiro Acesso
             </label>
             <input
@@ -857,7 +848,7 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
               placeholder="Defina uma senha provisória"
               value={formData.senha_temporaria || ''}
               onChange={(e) => updateField('senha_temporaria', e.target.value)}
-              className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-2 text-sm text-slate-800 dark:text-slate-100"
+              className="w-full bg-[#090d16] border border-slate-800 rounded-lg px-3.5 py-2.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
             />
           </div>
         )}
@@ -865,29 +856,29 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
 
       {/* MODAL DE CONFIRMAÇÃO DE MUDANÇA DE NÍVEL */}
       {confirmSwitchModal.isOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 animate-in zoom-in-95 duration-150">
-            <div className="flex items-center gap-3 text-amber-600">
+        <div className="fixed inset-0 z-50 bg-[#05070b]/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#0b101b] p-6 rounded-2xl max-w-md w-full border border-slate-800 shadow-2xl space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3 text-amber-500">
               <AlertCircle className="w-6 h-6 shrink-0" />
-              <h4 className="text-base font-bold text-slate-800 dark:text-slate-100">
+              <h4 className="text-base font-semibold text-slate-100">
                 Alterar Nível de Ensino?
               </h4>
             </div>
-            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-              Você já preencheu campos neste formulário. Ao trocar de nível para <strong>{STUDENT_LEVEL_SCHEMAS[confirmSwitchModal.targetLevel!]?.title}</strong>, os campos específicos do nível anterior que não se aplicam serão limpos. Os dados pessoais comuns (nome, nascimento, residência) serão preservados.
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Você já preencheu campos neste formulário. Ao trocar de nível para <strong className="text-slate-200">{STUDENT_LEVEL_SCHEMAS[confirmSwitchModal.targetLevel!]?.title}</strong>, os campos específicos do nível anterior que não se aplicam serão limpos. Os dados pessoais comuns (nome, nascimento, residência) serão preservados.
             </p>
             <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"
                 onClick={() => setConfirmSwitchModal({ isOpen: false, targetLevel: null })}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 cursor-pointer"
+                className="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 transition cursor-pointer"
               >
                 Cancelar
               </button>
               <button
                 type="button"
                 onClick={confirmSwitch}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-500 shadow-md shadow-indigo-500/20 cursor-pointer"
+                className="px-4 py-2 rounded-xl text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm shadow-indigo-600/30 transition cursor-pointer"
               >
                 Confirmar e Alterar
               </button>

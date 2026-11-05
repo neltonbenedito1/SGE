@@ -103,35 +103,47 @@ export function SuperAdminFinancePanel({
       setStripeNotification({ msg: "ID de Assinatura Stripe não encontrado.", type: "err" });
       return;
     }
-    if (!confirm("Tem certeza de que deseja cancelar esta assinatura no Stripe?")) return;
-
-    const res = await cancelStripeSubscription(subscriptionId, true);
-    if (res.success) {
-      setStripeNotification({ msg: "Assinatura Stripe cancelada com sucesso.", type: "ok" });
-      if (tenantId) {
-        try {
-          await updateDoc(doc(db, "tenants", tenantId), { subscriptionStatus: "canceled" });
-          await onReloadTenants();
-        } catch (err) {
-          console.error("Error updating tenant status in DB:", err);
+    setFinanceConfirmModal({
+      isOpen: true,
+      title: "Cancelar Assinatura Stripe",
+      message: "Tem certeza de que deseja cancelar esta assinatura no Stripe?",
+      onConfirm: async () => {
+        setFinanceConfirmModal(prev => ({ ...prev, isOpen: false }));
+        const res = await cancelStripeSubscription(subscriptionId, true);
+        if (res.success) {
+          setStripeNotification({ msg: "Assinatura Stripe cancelada com sucesso.", type: "ok" });
+          if (tenantId) {
+            try {
+              await updateDoc(doc(db, "tenants", tenantId), { subscriptionStatus: "canceled" });
+              await onReloadTenants();
+            } catch (err) {
+              console.error("Error updating tenant status in DB:", err);
+            }
+          }
+        } else {
+          setStripeNotification({ msg: res.error || "Erro ao cancelar assinatura no Stripe", type: "err" });
         }
       }
-    } else {
-      setStripeNotification({ msg: res.error || "Erro ao cancelar assinatura no Stripe", type: "err" });
-    }
+    });
   };
 
   const handleRefundPayment = async (paymentIntentId: string) => {
     if (!paymentIntentId) return;
-    if (!confirm("Confirmar reembolso total via Stripe para esta transação?")) return;
-
-    const res = await refundStripeCharge(paymentIntentId);
-    if (res.success) {
-      setStripeNotification({ msg: `Reembolso efetuado no Stripe (Refund ID: ${res.refundId})`, type: "ok" });
-      await onReloadPayments();
-    } else {
-      setStripeNotification({ msg: res.error || "Erro ao processar reembolso", type: "err" });
-    }
+    setFinanceConfirmModal({
+      isOpen: true,
+      title: "Reembolso Stripe",
+      message: "Confirmar reembolso total via Stripe para esta transação?",
+      onConfirm: async () => {
+        setFinanceConfirmModal(prev => ({ ...prev, isOpen: false }));
+        const res = await refundStripeCharge(paymentIntentId);
+        if (res.success) {
+          setStripeNotification({ msg: `Reembolso efetuado no Stripe (Refund ID: ${res.refundId})`, type: "ok" });
+          await onReloadPayments();
+        } else {
+          setStripeNotification({ msg: res.error || "Erro ao processar reembolso", type: "err" });
+        }
+      }
+    });
   };
   
   // Modals and forms
@@ -151,10 +163,22 @@ export function SuperAdminFinancePanel({
   const [adjustValue, setAdjustValue] = useState("");
   const [adjustReason, setAdjustReason] = useState("");
 
-  // Search/Filters for history
   const [selectedPaymentIds, setSelectedPaymentIds] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState("todos");
   const [activeActionRowId, setActiveActionRowId] = useState<string | null>(null);
+
+  // System Confirmation Modal State
+  const [financeConfirmModal, setFinanceConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void | Promise<void>;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {}
+  });
 
   // Forms states
   const [bankForm, setBankForm] = useState({
@@ -240,16 +264,23 @@ export function SuperAdminFinancePanel({
 
   // Delete Bank Account
   const handleDeleteBankAccount = async (id: string, name: string) => {
-    if (!window.confirm(`Excluir conta bancária do ${name}?`)) return;
-    try {
-      await deleteDoc(doc(db, "super_admin_bank_accounts", id));
-      await onAddLog("Excluir Conta Bancária", "SuperAdminBankAccount", id, `Conta do ${name} excluída.`);
-      loadFinanceConfigs();
-    } catch (err: any) {
-      window.dispatchEvent(new CustomEvent('sge-global-alert', {
-        detail: { title: 'Erro ao Excluir Conta', message: 'Erro ao excluir conta: ' + err.message, type: 'error' }
-      }));
-    }
+    setFinanceConfirmModal({
+      isOpen: true,
+      title: "Excluir Conta Bancária",
+      message: `Deseja realmente excluir permanentemente a conta bancária do ${name}?`,
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, "super_admin_bank_accounts", id));
+          await onAddLog("Excluir Conta Bancária", "SuperAdminBankAccount", id, `Conta do ${name} excluída.`);
+          loadFinanceConfigs();
+          setFinanceConfirmModal(prev => ({ ...prev, isOpen: false }));
+        } catch (err: any) {
+          window.dispatchEvent(new CustomEvent('sge-global-alert', {
+            detail: { title: 'Erro ao Excluir Conta', message: 'Erro ao excluir conta: ' + err.message, type: 'error' }
+          }));
+        }
+      }
+    });
   };
 
   // Add Gateway Credentials
@@ -284,16 +315,23 @@ export function SuperAdminFinancePanel({
 
   // Delete Gateway config
   const handleDeleteGateway = async (id: string, name: string) => {
-    if (!window.confirm(`Excluir chaves do gateway ${name}?`)) return;
-    try {
-      await deleteDoc(doc(db, "super_admin_gateways", id));
-      await onAddLog("Excluir Gateway", "SuperAdminGateway", id, `Credenciais do gateway ${name} removidas.`);
-      loadFinanceConfigs();
-    } catch (err: any) {
-      window.dispatchEvent(new CustomEvent('sge-global-alert', {
-        detail: { title: 'Erro em Gateway', message: 'Erro ao remover gateway: ' + err.message, type: 'error' }
-      }));
-    }
+    setFinanceConfirmModal({
+      isOpen: true,
+      title: "Excluir Credenciais de Gateway",
+      message: `Deseja realmente excluir permanentemente as credenciais do gateway ${name}?`,
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, "super_admin_gateways", id));
+          await onAddLog("Excluir Gateway", "SuperAdminGateway", id, `Credenciais do gateway ${name} removidas.`);
+          loadFinanceConfigs();
+          setFinanceConfirmModal(prev => ({ ...prev, isOpen: false }));
+        } catch (err: any) {
+          window.dispatchEvent(new CustomEvent('sge-global-alert', {
+            detail: { title: 'Erro em Gateway', message: 'Erro ao remover gateway: ' + err.message, type: 'error' }
+          }));
+        }
+      }
+    });
   };
 
   // Process Subscription Adjustments (discounts, manual extensions, free trials)
@@ -1360,6 +1398,34 @@ export function SuperAdminFinancePanel({
                 Processar Ajuste no Contrato
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* System Confirmation Popup Modal */}
+      {financeConfirmModal.isOpen && (
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 z-[9999] animate-in fade-in duration-200">
+          <div className="bg-[#0b101b] border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl text-slate-100">
+            <h3 className="text-base font-bold text-slate-100 mb-2">{financeConfirmModal.title}</h3>
+            <p className="text-xs text-slate-400 mb-5 leading-relaxed">
+              {financeConfirmModal.message}
+            </p>
+            <div className="flex justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setFinanceConfirmModal(prev => ({ ...prev, isOpen: false }))}
+                className="px-4 py-2 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => financeConfirmModal.onConfirm()}
+                className="px-4 py-2 text-xs font-semibold rounded-lg bg-rose-600 hover:bg-rose-500 text-white shadow-xs transition-colors cursor-pointer"
+              >
+                Confirmar Exclusão
+              </button>
+            </div>
           </div>
         </div>
       )}
