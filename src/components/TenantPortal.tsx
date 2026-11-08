@@ -50,8 +50,11 @@ import {
   Curso,
   Cadeira,
   InscricaoCadeira,
-  TipoInstituicao
+  TipoInstituicao,
+  CustomForm,
+  CustomFormField
 } from '../types';
+import { CustomFieldsRenderer } from './CustomFieldsRenderer';
 import { CursosModule } from './tenant/CursosModule';
 import { ProcessoAlunoFicha } from './tenant/ProcessoAlunoFicha';
 import { useInstitutionFeatures, getInstitutionConfig } from '../config/institutionTypes';
@@ -615,6 +618,35 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [editingDocente, setEditingDocente] = useState<Docente | null>(null);
   const [tenantUsers, setTenantUsers] = useState<User[]>([]);
   const [pendingImports, setPendingImports] = useState<any[]>([]);
+  const [customForms, setCustomForms] = useState<CustomForm[]>([]);
+
+  const escolaCustomFields = useMemo(() => {
+    const form = customForms.find(f => f.codigo === 'cadastro_escola' && f.status === 'ativo');
+    return form?.campos || [];
+  }, [customForms]);
+
+  const docenteCustomFields = useMemo(() => {
+    const form = customForms.find(f => f.codigo === 'cadastro_docente' && f.status === 'ativo');
+    return form?.campos || [];
+  }, [customForms]);
+
+  const estudanteCustomFields = useMemo(() => {
+    const form = customForms.find(f => f.codigo === 'cadastro_estudante' && f.status === 'ativo');
+    return form?.campos || [];
+  }, [customForms]);
+
+  const refreshCustomForms = useCallback(async () => {
+    if (!currentTenantId) return;
+    try {
+      const snap = await getDocs(query(collection(db, 'custom_forms'), where('tenant_id', '==', currentTenantId)));
+      const formsList: CustomForm[] = [];
+      snap.forEach(d => formsList.push({ ...d.data() as CustomForm, id: d.id }));
+      setCustomForms(formsList);
+    } catch (e) {
+      console.warn('Erro ao atualizar formulários customizados:', e);
+    }
+  }, [currentTenantId]);
+
   const [config, setConfig] = useState<TenantConfig | null>(null);
   const [loading, setLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -1896,7 +1928,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 periodo_facturacao: target.periodo_facturacao || 'Mensal',
                 foto_url: target.foto_url || '',
                 usuario_sistema: target.usuario_sistema || false,
-                senha_temporaria: target.senha_temporaria || ''
+                senha_temporaria: target.senha_temporaria || '',
+                dados_customizados: (target as any).dados_customizados || {}
               });
               setModalType('student');
               setIsModalOpen(true);
@@ -3238,7 +3271,29 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
   // Dynamic Forms State
   const [provinciaForm, setProvinciaForm] = useState(() => getSavedFormDraft('draft_provincia', { nome: '', codigo: '' }));
-  const [escolaForm, setEscolaForm] = useState(() => getSavedFormDraft('draft_escola', { 
+  const [escolaForm, setEscolaForm] = useState<{
+    nome: string; 
+    provincia_id: string; 
+    endereco: string; 
+    telefone: string; 
+    email: string; 
+    diretor_id: string; 
+    diretor_pedagogico_id: string; 
+    data_fundacao: string; 
+    ativo: boolean; 
+    latitude: string; 
+    longitude: string; 
+    logo_url: string; 
+    tipo_instituicao: 'Escola' | 'Faculdade' | 'Instituto';
+    controlar_assiduidade: boolean; 
+    regime_manha: boolean;
+    regime_tarde: boolean;
+    regime_noite: boolean;
+    tolerancia_manha: string; 
+    tolerancia_tarde: string; 
+    tolerancia_noite: string;
+    dados_customizados?: Record<string, any>;
+  }>(() => getSavedFormDraft('draft_escola', { 
     nome: '', 
     provincia_id: '', 
     endereco: '', 
@@ -3258,7 +3313,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     regime_noite: true,
     tolerancia_manha: '07:15', 
     tolerancia_tarde: '12:15', 
-    tolerancia_noite: '18:15' 
+    tolerancia_noite: '18:15',
+    dados_customizados: {} as Record<string, any>
   }));
   const [teacherForm, setTeacherForm] = useState<{
     nome: string;
@@ -3292,7 +3348,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     residencia_bairro: '',
     contacto_emergencia_nome: '',
     contacto_emergencia_telefone: '',
-    ano_lectivo: '2026'
+    ano_lectivo: '2026',
+    dados_customizados: {} as Record<string, any>
   }));
   const [turmaForm, setTurmaForm] = useState<any>(() => getSavedFormDraft('draft_turma', { nome: '', escola_id: '', ano_letivo: '2026', nivel: 'Primário', docente_id: '', capacidade_max: 30, classe_escolar_id: '', curso_id: '', curso_nome: '' }));
   const [classeForm, setClasseForm] = useState<any>(() => getSavedFormDraft('draft_classe', { nome: '', turma_id: '', docente_id: '', horario: '', sala: '', data: new Date().toISOString().split('T')[0], dia_semana: getDiaSemanaFromDate(new Date().toISOString().split('T')[0]), codigo: '', escola_id: '', classe_escolar_id: '', professores_responsaveis: [] }));
@@ -4629,6 +4686,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         cursosSnap,
         cadeirasSnap,
         inscricoesSnap,
+        customFormsSnap,
       ] = await Promise.all([
         safeQuery(getDocs(query(collection(db, 'provincias'), ...qParams))),
         safeQuery(getDocs(query(collection(db, 'escolas'), ...qParams))),
@@ -4657,6 +4715,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         safeQuery(getDocs(query(collection(db, 'cursos'), ...qParams))),
         safeQuery(getDocs(query(collection(db, 'cadeiras'), ...qParams))),
         safeQuery(getDocs(query(collection(db, 'inscricoes_cadeiras'), ...qParams))),
+        safeQuery(getDocs(query(collection(db, 'custom_forms'), where('tenant_id', '==', currentTenantId)))),
       ]);
 
       const provList: Provincia[] = [];
@@ -4766,6 +4825,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         inscricoesSnap.forEach(d => inscricoesList.push({ ...d.data() as InscricaoCadeira, id: d.id }));
       }
       setInscricoes(inscricoesList);
+
+      const formsList: CustomForm[] = [];
+      if (customFormsSnap) {
+        customFormsSnap.forEach(d => formsList.push({ ...d.data() as CustomForm, id: d.id }));
+      }
+      setCustomForms(formsList);
 
       if (portalCache.allPlans) {
         setAllPlans(portalCache.allPlans);
@@ -5298,7 +5363,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 periodo_facturacao: s.periodo_facturacao || 'Mensal',
                 foto_url: s.foto_url || '',
                 usuario_sistema: s.usuario_sistema || false,
-                senha_temporaria: s.senha_temporaria || ''
+                senha_temporaria: s.senha_temporaria || '',
+                dados_customizados: (s as any).dados_customizados || {}
               });
               setModalType('student');
               setIsModalOpen(true);
@@ -6918,7 +6984,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             ...(studentForm as any).alergias_condicoes ? { alergias_condicoes: (studentForm as any).alergias_condicoes } : {},
             ...(studentForm as any).contacto_emergencia ? { contacto_emergencia: (studentForm as any).contacto_emergencia } : {},
             ...(studentForm as any).telefone_emergencia ? { telefone_emergencia: (studentForm as any).telefone_emergencia } : {},
-            ...(studentForm as any).documentos_entregues ? { documentos_entregues: (studentForm as any).documentos_entregues } : {}
+            ...(studentForm as any).documentos_entregues ? { documentos_entregues: (studentForm as any).documentos_entregues } : {},
+            ...(studentForm as any).dados_customizados ? { dados_customizados: (studentForm as any).dados_customizados } : {}
           }, { merge: true });
           if (editingItem.user_id) {
             await setDoc(doc(db, 'users', editingItem.user_id), {
@@ -6988,7 +7055,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             ...(studentForm as any).alergias_condicoes ? { alergias_condicoes: (studentForm as any).alergias_condicoes } : {},
             ...(studentForm as any).contacto_emergencia ? { contacto_emergencia: (studentForm as any).contacto_emergencia } : {},
             ...(studentForm as any).telefone_emergencia ? { telefone_emergencia: (studentForm as any).telefone_emergencia } : {},
-            ...(studentForm as any).documentos_entregues ? { documentos_entregues: (studentForm as any).documentos_entregues } : {}
+            ...(studentForm as any).documentos_entregues ? { documentos_entregues: (studentForm as any).documentos_entregues } : {},
+            ...(studentForm as any).dados_customizados ? { dados_customizados: (studentForm as any).dados_customizados } : {}
           } as any;
           await setDoc(doc(db, 'estudantes', estGenId), newEstudante);
           await registerUserInFirebaseAuth(studentEmail, studentPwd);
@@ -10577,7 +10645,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                           controlar_assiduidade: s.controlar_assiduidade || false,
                                           tolerancia_manha: s.tolerancia_manha || '07:15',
                                           tolerancia_tarde: s.tolerancia_tarde || '12:15',
-                                          tolerancia_noite: s.tolerancia_noite || '18:15'
+                                          tolerancia_noite: s.tolerancia_noite || '18:15',
+                                          dados_customizados: s.dados_customizados || {}
                                         });
                                         setModalType('escola');
                                         setIsModalOpen(true);
@@ -17134,6 +17203,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             {activeTab === 'configuracao' && config && (
               !hasPermission('configuracoes') ? renderRestrictedAccess('Configurações Académicas') : (
                 <ModuloConfiguracoes
+                  tenantId={currentTenantId}
+                  onFormulariosUpdated={refreshCustomForms}
                   config={config}
                   onSaveConfig={async (updatedConfig) => {
                     setConfig(updatedConfig);
@@ -19292,8 +19363,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                     {escolaForm.controlar_assiduidade && (
                       <div className="bg-indigo-50/40 dark:bg-indigo-950/20 border border-indigo-100/50 dark:border-indigo-900/30 rounded-xl p-4 mt-3 space-y-3 text-left">
-                        <div className="font-bold text-xs text-indigo-900 dark:text-indigo-300 flex items-center gap-1">
-                          ⏱ Tolerância e Horários Limites de Assiduidade
+                        <div className="font-bold text-xs text-indigo-900 dark:text-indigo-300 flex items-center gap-1.5">
+                          <Clock className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                          <span>Tolerância e Horários Limites de Assiduidade</span>
                         </div>
                         <p className="text-[10px] text-indigo-800 dark:text-indigo-400 leading-relaxed">
                           Defina o horário limite de validação para cada regime habilitado. Estudantes que tentarem validar a presença após o horário limite serão marcados como faltosos automaticamente.
@@ -19343,6 +19415,25 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       </div>
                     )}
                   </div>
+
+                  {escolaCustomFields.length > 0 && (
+                    <div className="border-t border-slate-100 dark:border-slate-800 pt-4 mt-2 space-y-3">
+                      <div className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        Campos Adicionais Personalizados
+                      </div>
+                      <CustomFieldsRenderer
+                        fields={escolaCustomFields}
+                        values={escolaForm.dados_customizados || {}}
+                        onChange={(fieldId, val) => setEscolaForm(prev => ({
+                          ...prev,
+                          dados_customizados: {
+                            ...(prev.dados_customizados || {}),
+                            [fieldId]: val
+                          }
+                        }))}
+                      />
+                    </div>
+                  )}
                 </>
               )}
 
@@ -19504,6 +19595,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   allowedLevels={['primario', 'secundario', 'superior', 'profissional']}
                   onPhotoUploaded={(b64) => setStudentForm(prev => ({ ...prev, foto_url: b64 }))}
                   onPhotoRemoved={() => setStudentForm(prev => ({ ...prev, foto_url: '' }))}
+                  customFields={estudanteCustomFields}
                 />
               )}
 
@@ -22386,6 +22478,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         schools={schools}
         tenantUsers={tenantUsers}
         isSaving={isSaving}
+        customFields={docenteCustomFields}
       />
 
       {/* FICHA ACADÉMICA COMPLETA DO ESTUDANTE (9 ABAS) */}

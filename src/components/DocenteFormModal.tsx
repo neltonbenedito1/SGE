@@ -18,7 +18,8 @@ import {
   Sparkles,
   Info
 } from 'lucide-react';
-import { Docente, Escola, FormacaoAcademica, User as UserType } from '../types';
+import { Docente, Escola, FormacaoAcademica, User as UserType, CustomFormField } from '../types';
+import { CustomFieldsRenderer } from './CustomFieldsRenderer';
 
 interface DocenteFormModalProps {
   isOpen: boolean;
@@ -28,6 +29,7 @@ interface DocenteFormModalProps {
   schools: Escola[];
   tenantUsers?: UserType[];
   isSaving?: boolean;
+  customFields?: CustomFormField[];
 }
 
 const MOZAMBIQUE_PROVINCES = [
@@ -144,9 +146,11 @@ export default function DocenteFormModal({
   editingDocente,
   schools,
   tenantUsers = [],
-  isSaving = false
+  isSaving = false,
+  customFields = []
 }: DocenteFormModalProps) {
-  const [activeTab, setActiveTab] = useState<'pessoal' | 'profissional' | 'academica'>('pessoal');
+  const [activeTab, setActiveTab] = useState<'pessoal' | 'profissional' | 'academica' | 'custom'>('pessoal');
+  const [customData, setCustomData] = useState<Record<string, any>>({});
 
   // 1.1 Informações Pessoais
   const [nome, setNome] = useState('');
@@ -228,6 +232,7 @@ export default function DocenteFormModal({
           pais: 'Moçambique'
         }]);
       }
+      setCustomData(editingDocente.dados_customizados || {});
     } else {
       // Reset
       setNome('');
@@ -242,6 +247,7 @@ export default function DocenteFormModal({
       setEndereco('');
       setCidadeProvincia('Maputo Cidade');
       setFotoUrl('');
+      setCustomData({});
 
       const autoGenCode = `DOC-${Math.floor(1000 + Math.random() * 9000)}`;
       setCodigoDocente(autoGenCode);
@@ -315,6 +321,7 @@ export default function DocenteFormModal({
 
       formacoes_academicas: formacoes.filter(f => f.curso.trim() || f.instituicao.trim()),
       dados_em_falta: dadosEmFalta,
+      dados_customizados: customData,
       updated_at: new Date().toISOString()
     };
 
@@ -457,6 +464,24 @@ export default function DocenteFormModal({
               Obrigatória
             </span>
           </button>
+
+          {customFields && customFields.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('custom')}
+              className={`pb-3 px-3 text-xs font-bold flex items-center gap-2 transition-all border-b-2 cursor-pointer ${
+                activeTab === 'custom'
+                  ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400 dark:border-indigo-400'
+                  : 'border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400'
+              }`}
+            >
+              <Sparkles className="w-4 h-4" />
+              4. Campos Personalizados
+              <span className="text-[10px] font-extrabold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 px-1.5 py-0.2 rounded">
+                {customFields.length}
+              </span>
+            </button>
+          )}
         </div>
 
         {/* Missing Data Warning Banner (Non-blocking notification) */}
@@ -976,6 +1001,28 @@ export default function DocenteFormModal({
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* TAB 4: CAMPOS PERSONALIZADOS DO DOCENTE */}
+          {activeTab === 'custom' && (
+            <div className="space-y-4 animate-in fade-in duration-150">
+              <div className="border-b border-slate-150 dark:border-slate-800 pb-3">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                  Informações Adicionais do Docente
+                </h4>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Preencha os campos adicionais configurados para o cadastro de docentes.
+                </p>
+              </div>
+
+              <CustomFieldsRenderer
+                fields={customFields}
+                values={customData}
+                onChange={(fieldId, val) => {
+                  setCustomData(prev => ({ ...prev, [fieldId]: val }));
+                }}
+              />
             </div>
           )}
 

@@ -244,6 +244,7 @@ export interface Escola {
   nuit?: string;
   diretor_nome?: string;
   contacto?: string;
+  dados_customizados?: Record<string, any>;
 }
 
 export interface FormacaoAcademica {
@@ -290,6 +291,7 @@ export interface Docente {
   // 1.3 Formação Académica (Pelo menos uma obrigatória no cadastro)
   formacoes_academicas?: FormacaoAcademica[];
   dados_em_falta?: string[];
+  dados_customizados?: Record<string, any>;
   created_at?: string;
   updated_at?: string;
 }
@@ -351,6 +353,7 @@ export interface Estudante {
   cracha_atualizado_em?: string;
   cracha_eliminado_em?: string;
   qr_code_data?: string;
+  dados_customizados?: Record<string, any>;
 }
 
 export interface FaturaEstudante {
@@ -878,6 +881,46 @@ export interface LogErro {
   created_at: string;
 }
 
+// Custom Forms / Formulários Customizados
+export type CustomFieldTipo = 
+  | 'texto_curto'
+  | 'dropdown'
+  | 'data'
+  | 'checkbox'
+  | 'texto_longo'
+  | 'numero'
+  | 'telefone_ddd'
+  | 'titulo'
+  | 'upload_arquivo'
+  | 'upload_foto';
 
+export interface CustomFormField {
+  id: string;
+  tipo: CustomFieldTipo;
+  label: string;
+  placeholder?: string;
+  obrigatorio: boolean;
+  opcoes?: string[]; // for dropdown
+  ddd_padrao?: string; // for telefone_ddd (default '+258')
+  formatos_permitidos?: ('pdf' | 'xlsx')[]; // for upload_arquivo
+  tamanho_maximo_mb?: number;
+  texto_ajuda?: string;
+  ordem: number;
+  largura?: '1/2' | 'full';
+  valor_padrao?: any;
+}
 
+export type CustomFormStatus = 'ativo' | 'suspenso' | 'rascunho';
 
+export interface CustomForm {
+  id: string;
+  tenant_id: string;
+  codigo: 'cadastro_escola' | 'cadastro_docente' | 'cadastro_estudante' | string;
+  nome: string;
+  descricao?: string;
+  entidade: 'escola' | 'docente' | 'estudante' | 'outro';
+  status: CustomFormStatus;
+  campos: CustomFormField[];
+  created_at: string;
+  updated_at: string;
+}

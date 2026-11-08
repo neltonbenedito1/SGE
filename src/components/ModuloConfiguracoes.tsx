@@ -28,12 +28,15 @@ import {
   Check,
   FileText,
   Bell,
-  BookMarked
+  BookMarked,
+  LayoutTemplate
 } from 'lucide-react';
 import { TenantConfig, IntervaloHorario } from '../types';
 import { LANGUAGES } from '../lib/translation';
+import { FormulariosCustomizadosModule } from './FormulariosCustomizadosModule';
 
 interface ModuloConfiguracoesProps {
+  tenantId?: string;
   config: TenantConfig;
   onSaveConfig: (updatedConfig: TenantConfig) => Promise<void>;
   onResetSection?: (sectionKey: string) => void;
@@ -48,6 +51,7 @@ interface ModuloConfiguracoesProps {
   worldCountries?: { name: string; code: string }[];
   onSyncHolidays?: (country: string) => Promise<void>;
   existingClasses?: any[];
+  onFormulariosUpdated?: () => void;
 }
 
 export const DEFAULT_INTERVALOS: IntervaloHorario[] = [
@@ -57,6 +61,7 @@ export const DEFAULT_INTERVALOS: IntervaloHorario[] = [
 ];
 
 export const ModuloConfiguracoes: React.FC<ModuloConfiguracoesProps> = ({
+  tenantId,
   config,
   onSaveConfig,
   showNotification,
@@ -69,7 +74,8 @@ export const ModuloConfiguracoes: React.FC<ModuloConfiguracoesProps> = ({
   onToggleAiTranslation,
   worldCountries = [],
   onSyncHolidays,
-  existingClasses = []
+  existingClasses = [],
+  onFormulariosUpdated
 }) => {
   const [activeSection, setActiveSection] = useState<string>('geral');
   const [searchQuery, setSearchQuery] = useState('');
@@ -109,6 +115,7 @@ export const ModuloConfiguracoes: React.FC<ModuloConfiguracoesProps> = ({
     { id: 'biblioteca', label: 'Biblioteca Escolar', icon: BookOpen, desc: 'Prazos de empréstimo, limites de livros, multas de atraso e permissões.' },
     { id: 'estudantes', label: 'Turmas, Alunos & Matrículas', icon: GraduationCap, desc: 'Capacidade padrão de turmas, máscara de matrícula e idade mínima.' },
     { id: 'docentes', label: 'Docentes & Carga Horária', icon: Users, desc: 'Limites de carga horária semanal e quantidade máxima de turmas.' },
+    { id: 'formularios_customizados', label: 'Formulários customizados', icon: LayoutTemplate, desc: 'Personalize campos nos formulários de cadastro de escolas, docentes e estudantes com arrastar e soltar.' },
     { id: 'disciplinas', label: 'Disciplinas & Matriz Curricular', icon: BookMarked, desc: 'Carga horária padrão semanal e formato de matriz curricular.' },
     { id: 'relatorios', label: 'Relatórios & Documentos Oficiais', icon: FileText, desc: 'Cabeçalho e rodapé oficial de pautas/certificados e formato de exportação.' },
     { id: 'notificacoes', label: 'Comunicados & Notificações', icon: Bell, desc: 'Canais ativos de aviso e modelos padronizados de mensagens.' },
@@ -490,24 +497,26 @@ export const ModuloConfiguracoes: React.FC<ModuloConfiguracoesProps> = ({
                 {currentSectionMeta.desc}
               </p>
             </div>
-            <div className="flex items-center gap-2 shrink-0 flex-wrap">
-              <button
-                type="button"
-                onClick={handleResetCurrentSection}
-                className="border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5 transition-colors cursor-pointer min-h-[38px]"
-                title="Restaurar valores padrão desta seção"
-              >
-                <RotateCcw className="w-3.5 h-3.5" /> Restaurar Padrão
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveCurrentSection}
-                disabled={isSaving || !canEdit}
-                className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-3.5 py-1.5 rounded-lg text-xs flex items-center gap-1.5 transition-colors cursor-pointer min-h-[38px]"
-              >
-                <Save className="w-3.5 h-3.5" /> Salvar Seção
-              </button>
-            </div>
+            {activeSection !== 'formularios_customizados' && (
+              <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleResetCurrentSection}
+                  className="border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5 transition-colors cursor-pointer min-h-[38px]"
+                  title="Restaurar valores padrão desta seção"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" /> Restaurar Padrão
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveCurrentSection}
+                  disabled={isSaving || !canEdit}
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-3.5 py-1.5 rounded-lg text-xs flex items-center gap-1.5 transition-colors cursor-pointer min-h-[38px]"
+                >
+                  <Save className="w-3.5 h-3.5" /> Salvar Seção
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Erros de Validação da Seção */}
@@ -1696,6 +1705,16 @@ export const ModuloConfiguracoes: React.FC<ModuloConfiguracoesProps> = ({
                 </div>
               </div>
             </div>
+          )}
+
+          {/* TAB: FORMULÁRIOS CUSTOMIZADOS */}
+          {activeSection === 'formularios_customizados' && (
+            <FormulariosCustomizadosModule
+              tenantId={tenantId || config.tenant_id || ''}
+              showNotification={(msg, type) => showNotification(msg, type === 'alerta' ? 'erro' : type as any)}
+              canEdit={canEdit}
+              onFormulariosUpdated={onFormulariosUpdated}
+            />
           )}
         </div>
       </div>

@@ -15,7 +15,8 @@ import {
   Upload, 
   User as UserIcon,
   ChevronDown,
-  X
+  X,
+  Sparkles
 } from 'lucide-react';
 import { 
   NivelEnsino, 
@@ -29,10 +30,12 @@ import {
   User, 
   Curso, 
   Cadeira, 
-  TipoInstituicao 
+  TipoInstituicao,
+  CustomFormField 
 } from '../types';
 import { isInstitutionCompatibleWithLevel } from '../config/institutionTypes';
 import { SearchableDropdown } from './SearchableDropdown';
+import { CustomFieldsRenderer } from './CustomFieldsRenderer';
 
 export interface StudentRegistrationFormProps {
   formData: Record<string, any>;
@@ -43,6 +46,7 @@ export interface StudentRegistrationFormProps {
   tenantUsers: User[];
   cursos?: Curso[];
   cadeiras?: Cadeira[];
+  customFields?: CustomFormField[];
   tenantTipoInstituicao?: TipoInstituicao;
   allowedLevels?: NivelEnsino[];
   onPhotoUploaded?: (base64: string) => void;
@@ -61,6 +65,7 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
   tenantUsers,
   cursos = [],
   cadeiras = [],
+  customFields = [],
   tenantTipoInstituicao = 'escola',
   allowedLevels = ['primario', 'secundario', 'superior', 'profissional'],
   onPhotoUploaded,
@@ -853,6 +858,31 @@ export const StudentRegistrationForm: React.FC<StudentRegistrationFormProps> = (
           </div>
         )}
       </div>
+
+      {/* CAMPOS PERSONALIZADOS DO FORMULÁRIO DE ESTUDANTE */}
+      {customFields && customFields.length > 0 && (
+        <div className="space-y-4 pt-6 border-t border-slate-800">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-indigo-400" />
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+              Campos Personalizados do Estudante
+            </h3>
+          </div>
+          <CustomFieldsRenderer
+            fields={customFields}
+            values={formData.dados_customizados || {}}
+            onChange={(fieldId, val) => {
+              setFormData(prev => ({
+                ...prev,
+                dados_customizados: {
+                  ...(prev.dados_customizados || {}),
+                  [fieldId]: val
+                }
+              }));
+            }}
+          />
+        </div>
+      )}
 
       {/* MODAL DE CONFIRMAÇÃO DE MUDANÇA DE NÍVEL */}
       {confirmSwitchModal.isOpen && (
