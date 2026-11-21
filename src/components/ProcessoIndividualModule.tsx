@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { 
   FolderOpen, 
   User, 
@@ -100,6 +101,7 @@ export default function ProcessoIndividualModule({
 
   // Search & Filter states
   const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearchQuery = useDebouncedValue(searchQuery, 250);
   const [statusFilter, setStatusFilter] = useState<'todos' | 'completo' | 'incompleto'>('todos');
   const [escolaFilter, setEscolaFilter] = useState<string>('todos');
 
@@ -124,11 +126,11 @@ export default function ProcessoIndividualModule({
 
   // --- FILTERED ALUNOS DOSSIERS ---
   const filteredStudents = useMemo(() => {
+    const q = debouncedSearchQuery.trim().toLowerCase();
     return students.filter(s => {
       const usr = tenantUsers.find(u => u.id === s.user_id);
       const studentName = (usr?.nome || s.nome || '').toLowerCase();
       const studentMat = (s.numero_matricula || '').toLowerCase();
-      const q = searchQuery.toLowerCase();
 
       const matchesSearch = !q || studentName.includes(q) || studentMat.includes(q);
       const matchesEscola = escolaFilter === 'todos' || s.escola_id === escolaFilter;
@@ -139,27 +141,26 @@ export default function ProcessoIndividualModule({
       const hasMorada = !!s.morada;
       const isComplete = hasBI && hasPai && hasMae && hasMorada;
 
-      const matchesStatus = statusFilter === 'todos' || 
-        (statusFilter === 'completo' && isComplete) || 
+      const matchesStatus = statusFilter === 'todos' ||
+        (statusFilter === 'completo' && isComplete) ||
         (statusFilter === 'incompleto' && !isComplete);
 
       return matchesSearch && matchesEscola && matchesStatus;
     });
-  }, [students, tenantUsers, searchQuery, escolaFilter, statusFilter]);
+  }, [students, tenantUsers, debouncedSearchQuery, escolaFilter, statusFilter]);
 
   // --- FILTERED DOCENTES DOSSIERS ---
   const filteredTeachers = useMemo(() => {
+    const q = debouncedSearchQuery.trim().toLowerCase();
     return teachers.filter(t => {
       const usr = tenantUsers.find(u => u.id === t.user_id);
       const teacherName = (usr?.nome || t.nome || '').toLowerCase();
       const teacherCode = (t.codigo_docente || t.numero_registro || '').toLowerCase();
       const teacherEsp = (t.especialidade || '').toLowerCase();
-      const q = searchQuery.toLowerCase();
 
       const matchesSearch = !q || teacherName.includes(q) || teacherCode.includes(q) || teacherEsp.includes(q);
       const matchesEscola = escolaFilter === 'todos' || t.escola_id === escolaFilter;
 
-      // Check completeness for teacher
       const hasBI = !!t.documento_identificacao;
       const hasNuit = !!t.nuit;
       const hasEmail = !!t.email || !!usr?.email;
@@ -167,13 +168,13 @@ export default function ProcessoIndividualModule({
       const hasFormacao = !!(t.formacoes_academicas && t.formacoes_academicas.length > 0 && t.formacoes_academicas.some(f => f.curso));
       const isComplete = hasBI && hasNuit && hasEmail && hasTelefone && hasFormacao;
 
-      const matchesStatus = statusFilter === 'todos' || 
-        (statusFilter === 'completo' && isComplete) || 
+      const matchesStatus = statusFilter === 'todos' ||
+        (statusFilter === 'completo' && isComplete) ||
         (statusFilter === 'incompleto' && !isComplete);
 
       return matchesSearch && matchesEscola && matchesStatus;
     });
-  }, [teachers, tenantUsers, searchQuery, escolaFilter, statusFilter]);
+  }, [teachers, tenantUsers, debouncedSearchQuery, escolaFilter, statusFilter]);
 
   // Teacher completeness helper
   const checkTeacherCompleteness = (t: Docente) => {

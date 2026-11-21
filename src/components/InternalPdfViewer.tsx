@@ -15,6 +15,7 @@ import {
   RefreshCw,
   FileText
 } from 'lucide-react';
+import { fetchCachedMediaObjectUrl } from '../lib/mediaCdn';
 
 declare global {
   interface Window {
@@ -27,6 +28,7 @@ interface InternalPdfViewerProps {
   bookTitle: string;
   editionNumber: number;
   initialPage: number;
+  tenantId?: string;
   onPageChange: (pageNum: number, totalPages: number) => void;
   onClose: () => void;
 }
@@ -155,6 +157,7 @@ export const InternalPdfViewer: React.FC<InternalPdfViewerProps> = ({
   bookTitle,
   editionNumber,
   initialPage = 1,
+  tenantId,
   onPageChange,
   onClose
 }) => {
@@ -225,7 +228,8 @@ export const InternalPdfViewer: React.FC<InternalPdfViewerProps> = ({
           }
           loadingTask = window.pdfjsLib.getDocument({ data: bytes });
         } else {
-          loadingTask = window.pdfjsLib.getDocument(pdfUrl);
+          const cachedOrCdnUrl = await fetchCachedMediaObjectUrl(pdfUrl, tenantId);
+          loadingTask = window.pdfjsLib.getDocument(cachedOrCdnUrl);
         }
 
         const pdf = await loadingTask.promise;
@@ -336,36 +340,52 @@ export const InternalPdfViewer: React.FC<InternalPdfViewerProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [scrollMode, currentPage, numPages]);
 
-  // Full Screen toggle
+  // Full Screen toggle (supports both CSS viewport expansion and native browser Fullscreen API)
   const toggleFullScreen = () => {
-    if (!containerRef.current) return;
+    const nextState = !isFullScreen;
+    setIsFullScreen(nextState);
 
-    if (!document.fullscreenElement) {
-      containerRef.current.requestFullscreen()
-        .then(() => setIsFullScreen(true))
-        .catch((err) => console.error("Error attempting full screen:", err));
+    if (!containerRef.current) return;
+    if (nextState) {
+      if (!document.fullscreenElement && containerRef.current.requestFullscreen) {
+        containerRef.current.requestFullscreen().catch(() => {
+          // CSS fixed inset-0 w-screen h-screen fallback remains active
+        });
+      }
     } else {
-      document.exitFullscreen()
-        .then(() => setIsFullScreen(false));
+      if (document.fullscreenElement && document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      }
     }
   };
 
   // Handle exiting full screen using Esc key automatically
   useEffect(() => {
     const onFsChange = () => {
-      setIsFullScreen(!!document.fullscreenElement);
+      if (!document.fullscreenElement) {
+        setIsFullScreen(false);
+      }
+    };
+    const onKeyEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullScreen) {
+        setIsFullScreen(false);
+      }
     };
     document.addEventListener('fullscreenchange', onFsChange);
-    return () => document.removeEventListener('fullscreenchange', onFsChange);
-  }, []);
+    window.addEventListener('keydown', onKeyEsc);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFsChange);
+      window.removeEventListener('keydown', onKeyEsc);
+    };
+  }, [isFullScreen]);
 
   return (
     <div 
       ref={containerRef}
       id="internal_interactive_pdf_viewer"
-      className={`rounded-2xl overflow-hidden shadow-2xl flex flex-col transition-colors duration-300 ${
+      className={`overflow-hidden shadow-2xl flex flex-col transition-all duration-300 ${
         isDarkMode ? 'bg-slate-950 text-slate-100' : 'bg-slate-100 text-slate-900'
-      } ${isFullScreen ? 'h-screen w-screen fixed inset-0 z-50 rounded-none' : 'h-[650px]'}`}
+      } ${isFullScreen ? 'h-screen w-screen fixed inset-0 z-[170000] rounded-none' : 'h-full w-full'}`}
     >
       {/* Upper Control Bar */}
       <div className={`px-4 py-3 border-b flex flex-wrap justify-between items-center shrink-0 gap-3 transition-colors ${

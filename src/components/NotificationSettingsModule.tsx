@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { 
   Bell, 
   Mail, 
@@ -622,27 +623,33 @@ export const NotificationSettingsModule: React.FC<NotificationSettingsModuleProp
     }
   };
 
-  // Filter modules and actions based on search and selected channel filter
-  const filteredModules = modules.map(mod => {
-    const matchesModuleSearch = mod.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                mod.description.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    const filteredActions = mod.actions.filter(act => {
-      const matchesActionSearch = matchesModuleSearch ||
-        act.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        act.description.toLowerCase().includes(searchQuery.toLowerCase());
+  const debouncedSearchQuery = useDebouncedValue(searchQuery, 200);
 
-      if (!matchesActionSearch) return false;
+  // Filter modules and actions based on debounced search and selected channel filter
+  const filteredModules = useMemo(() => {
+    const q = debouncedSearchQuery.trim().toLowerCase();
+    return modules.map(mod => {
+      const matchesModuleSearch = !q ||
+        mod.name.toLowerCase().includes(q) ||
+        mod.description.toLowerCase().includes(q);
 
-      if (channelFilter === 'push') return act.channels.push;
-      if (channelFilter === 'email') return act.channels.email;
-      if (channelFilter === 'popup') return act.channels.popup;
+      const filteredActions = mod.actions.filter(act => {
+        const matchesActionSearch = matchesModuleSearch ||
+          act.label.toLowerCase().includes(q) ||
+          act.description.toLowerCase().includes(q);
 
-      return true;
-    });
+        if (!matchesActionSearch) return false;
 
-    return { ...mod, actions: filteredActions };
-  }).filter(mod => mod.actions.length > 0 || mod.name.toLowerCase().includes(searchQuery.toLowerCase()));
+        if (channelFilter === 'push') return act.channels.push;
+        if (channelFilter === 'email') return act.channels.email;
+        if (channelFilter === 'popup') return act.channels.popup;
+
+        return true;
+      });
+
+      return { ...mod, actions: filteredActions };
+    }).filter(mod => mod.actions.length > 0 || (!!q && mod.name.toLowerCase().includes(q)));
+  }, [modules, debouncedSearchQuery, channelFilter]);
 
   // Calculate global summary stats
   let totalActions = 0;

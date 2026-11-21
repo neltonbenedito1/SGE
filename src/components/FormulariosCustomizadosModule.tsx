@@ -37,7 +37,9 @@ import {
   ShieldAlert,
   GraduationCap,
   Users,
-  Building
+  Building,
+  Award,
+  Type
 } from 'lucide-react';
 import { 
   collection, 
@@ -50,6 +52,12 @@ import {
   where 
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import {
+  getOrFetchCached,
+  buildTenantCacheKey,
+  CACHE_TTLS,
+  invalidateTenantCache,
+} from '../lib/referenceCache';
 import { 
   CustomForm, 
   CustomFormField, 
@@ -57,6 +65,10 @@ import {
   CustomFormStatus 
 } from '../types';
 import { CustomFieldsRenderer, COUNTRY_DIALING_CODES } from './CustomFieldsRenderer';
+import { CORE_NATIVE_FORM_FIELD_IDS, DEFAULT_SYSTEM_FORMS } from '../config/customFormDefaults';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
+
+export { CORE_NATIVE_FORM_FIELD_IDS, DEFAULT_SYSTEM_FORMS };
 
 interface FormulariosCustomizadosModuleProps {
   tenantId: string;
@@ -79,10 +91,42 @@ const AVAILABLE_FIELD_TYPES: FieldTypeDefinition[] = [
   {
     tipo: 'texto_curto',
     label: 'Campos de texto curto',
-    descricao: 'Linha única para nomes, códigos, números de identificação',
+    descricao: 'Linha única para textos gerais, identificadores e anotações',
     icon: AlignLeft,
     defaultLabel: 'Novo Campo de Texto',
     defaultPlaceholder: 'Digite a informação...'
+  },
+  {
+    tipo: 'alfabetico',
+    label: 'Alfabético (Somente Letras)',
+    descricao: 'Aceita estritamente letras e espaços (sem números nem símbolos)',
+    icon: Type,
+    defaultLabel: 'Campo Alfabético',
+    defaultPlaceholder: 'Digite apenas letras...'
+  },
+  {
+    tipo: 'alfanumerico',
+    label: 'Alfanumérico (Letras e Números)',
+    descricao: 'Aceita letras, números, espaços e hífens (sem caracteres especiais)',
+    icon: Hash,
+    defaultLabel: 'Campo Alfanumérico',
+    defaultPlaceholder: 'Digite letras e números...'
+  },
+  {
+    tipo: 'numero',
+    label: 'Número (Somente Números)',
+    descricao: 'Campo numérico estrito para notas, quantidades ou valores decimais',
+    icon: Hash,
+    defaultLabel: 'Quantidade ou Valor Numérico',
+    defaultPlaceholder: '0'
+  },
+  {
+    tipo: 'data',
+    label: 'Data (com Calendário)',
+    descricao: 'Seletor de data oficial com ícone interativo de calendário à direita',
+    icon: Calendar,
+    defaultLabel: 'Data de Registro',
+    defaultPlaceholder: 'AAAA-MM-DD'
   },
   {
     tipo: 'dropdown',
@@ -91,14 +135,6 @@ const AVAILABLE_FIELD_TYPES: FieldTypeDefinition[] = [
     icon: ChevronDown,
     defaultLabel: 'Selecione uma Opção',
     defaultPlaceholder: 'Selecione...'
-  },
-  {
-    tipo: 'data',
-    label: 'Data',
-    descricao: 'Seletor de data oficial para emissões, prazos ou registros',
-    icon: Calendar,
-    defaultLabel: 'Data de Registro',
-    defaultPlaceholder: 'DD/MM/AAAA'
   },
   {
     tipo: 'checkbox',
@@ -117,16 +153,8 @@ const AVAILABLE_FIELD_TYPES: FieldTypeDefinition[] = [
     defaultPlaceholder: 'Insira as notas detalhadas aqui...'
   },
   {
-    tipo: 'numero',
-    label: 'Número',
-    descricao: 'Campo numérico para quantidades, valores inteiros ou decimais',
-    icon: Hash,
-    defaultLabel: 'Quantidade ou Valor Numérico',
-    defaultPlaceholder: '0'
-  },
-  {
     tipo: 'telefone_ddd',
-    label: 'Contacto telefónico',
+    label: 'Contacto telefónico (DDD)',
     descricao: 'Seleção do DDD / código de país com entrada do número',
     icon: Phone,
     defaultLabel: 'Telefone de Contacto',
@@ -158,155 +186,7 @@ const AVAILABLE_FIELD_TYPES: FieldTypeDefinition[] = [
   }
 ];
 
-// Mapeamento dos formulários base padrão do sistema analisados
-const DEFAULT_SYSTEM_FORMS: CustomForm[] = [
-  {
-    id: 'form_cadastro_escola',
-    tenant_id: '',
-    codigo: 'cadastro_escola',
-    nome: 'Cadastro de Escolas e Unidades',
-    descricao: 'Formulário oficial de registro de escolas, faculdades, institutos e polos.',
-    entidade: 'escola',
-    status: 'ativo',
-    campos: [
-      {
-        id: 'esc_salas_clima',
-        tipo: 'numero',
-        label: 'Quantidade de Salas Climatizadas',
-        placeholder: 'Ex: 12',
-        obrigatorio: false,
-        ordem: 1,
-        texto_ajuda: 'Salas equipadas com ar condicionado ativo.'
-      },
-      {
-        id: 'esc_lab_info',
-        tipo: 'checkbox',
-        label: 'Possui Laboratório de Informática Equipado',
-        obrigatorio: false,
-        ordem: 2,
-        texto_ajuda: 'Marque caso a unidade possua computadores para os alunos.'
-      },
-      {
-        id: 'esc_regulamento',
-        tipo: 'upload_arquivo',
-        label: 'Regulamento Interno da Unidade',
-        obrigatorio: false,
-        formatos_permitidos: ['pdf'],
-        tamanho_maximo_mb: 15,
-        ordem: 3,
-        texto_ajuda: 'Ficheiro em PDF com as diretrizes da escola.'
-      }
-    ],
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
-  },
-  {
-    id: 'form_cadastro_docente',
-    tenant_id: '',
-    codigo: 'cadastro_docente',
-    nome: 'Cadastro de Docentes e Professores',
-    descricao: 'Formulário oficial de cadastro de professores, docentes e auxiliares.',
-    entidade: 'docente',
-    status: 'ativo',
-    campos: [
-      {
-        id: 'doc_grau_pedagogico',
-        tipo: 'dropdown',
-        label: 'Certificação de Habilitação Pedagógica',
-        placeholder: 'Selecione o nível de formação...',
-        obrigatorio: false,
-        opcoes: [
-          'Licenciatura em Educação / Ensino',
-          'Mestrado em Ciências da Educação',
-          'Certificado de Formação de Formadores (CENFOC)',
-          'Em Formação Pedagógica',
-          'Não Possui Certificação Pedagógica'
-        ],
-        ordem: 1,
-        texto_ajuda: 'Qualificação pedagógica oficial do docente.'
-      },
-      {
-        id: 'doc_tel_alternativo',
-        tipo: 'telefone_ddd',
-        label: 'Telefone Alternativo ou WhatsApp',
-        placeholder: '82 987 6543',
-        obrigatorio: false,
-        ddd_padrao: '+258',
-        ordem: 2,
-        texto_ajuda: 'Contacto adicional para avisos e convocações.'
-      },
-      {
-        id: 'doc_curriculum_vitae',
-        tipo: 'upload_arquivo',
-        label: 'Curriculum Vitae Atualizado',
-        obrigatorio: false,
-        formatos_permitidos: ['pdf', 'xlsx'],
-        tamanho_maximo_mb: 20,
-        ordem: 3,
-        texto_ajuda: 'Ficheiro PDF ou XLSX do CV.'
-      },
-      {
-        id: 'doc_observacoes',
-        tipo: 'texto_longo',
-        label: 'Observações ou Competências Especiais',
-        placeholder: 'Áreas de pesquisa, artigos publicados, projetos...',
-        obrigatorio: false,
-        ordem: 4
-      }
-    ],
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
-  },
-  {
-    id: 'form_cadastro_estudante',
-    tenant_id: '',
-    codigo: 'cadastro_estudante',
-    nome: 'Cadastro de Estudantes e Alunos',
-    descricao: 'Formulário oficial de admissão, matrícula e ficha do estudante.',
-    entidade: 'estudante',
-    status: 'ativo',
-    campos: [
-      {
-        id: 'est_grupo_sanguineo',
-        tipo: 'dropdown',
-        label: 'Grupo Sanguíneo',
-        placeholder: 'Selecione...',
-        obrigatorio: false,
-        opcoes: ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-', 'Não Sabe'],
-        ordem: 1,
-        texto_ajuda: 'Para primeiros socorros e ficha de saúde escolar.'
-      },
-      {
-        id: 'est_nee',
-        tipo: 'checkbox',
-        label: 'Necessidades Educativas Especiais (NEE)',
-        obrigatorio: false,
-        ordem: 2,
-        texto_ajuda: 'Assinale caso o estudante necessite de apoio especializado.'
-      },
-      {
-        id: 'est_alergias_medicas',
-        tipo: 'texto_longo',
-        label: 'Alergias ou Restrições de Saúde',
-        placeholder: 'Especifique alergias a medicamentos, alimentos, condições crônicas...',
-        obrigatorio: false,
-        ordem: 3
-      },
-      {
-        id: 'est_cert_habilitacoes',
-        tipo: 'upload_arquivo',
-        label: 'Certificado de Habilitações Anteriores',
-        obrigatorio: false,
-        formatos_permitidos: ['pdf'],
-        tamanho_maximo_mb: 15,
-        ordem: 4,
-        texto_ajuda: 'Cópia autenticada do certificado de conclusão.'
-      }
-    ],
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
-  }
-];
+// Defaults movidos para ../config/customFormDefaults e reexportados acima para code-splitting.
 
 // Campos nativos do sistema analisados para cada formulário base
 const NATIVE_FIELDS_SUMMARY: Record<string, string[]> = {
@@ -346,6 +226,17 @@ const NATIVE_FIELDS_SUMMARY: Record<string, string[]> = {
     'Naturalidade e Residência',
     'Telemóvel do Aluno e E-mail',
     'Nome e Contacto de Emergência'
+  ],
+  lancamento_notas: [
+    'Identificação do Estudante',
+    'Disciplina / Cadeira / Classe',
+    'Trimestre / Semestre / Módulo',
+    'Avaliação 1 / Teste 1 / Frequência 1',
+    'Avaliação 2 / Teste 2 / Frequência 2',
+    'Avaliação 3 / Trabalho Prático',
+    'Nota de Exame Normal e Recurso',
+    'Média Final e Situação Acadêmica',
+    'Observações Pedagógicas'
   ]
 };
 
@@ -358,6 +249,7 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
   const [forms, setForms] = useState<CustomForm[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearchQuery = useDebouncedValue(searchQuery, 250);
   const [filterEntity, setFilterEntity] = useState<string>('todas');
   const [filterStatus, setFilterStatus] = useState<string>('todos');
 
@@ -374,47 +266,106 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
   const [isNewFormModalOpen, setIsNewFormModalOpen] = useState(false);
   const [newFormNome, setNewFormNome] = useState('');
   const [newFormDescricao, setNewFormDescricao] = useState('');
-  const [newFormEntidade, setNewFormEntidade] = useState<'escola' | 'docente' | 'estudante' | 'outro'>('estudante');
+  const [newFormEntidade, setNewFormEntidade] = useState<'escola' | 'docente' | 'estudante' | 'notas' | 'outro'>('estudante');
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
-  // Carregar formulários do Firestore
-  const loadForms = async () => {
+  // Diálogo de confirmação in-app (zero window.confirm)
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    onConfirm: () => void;
+  } | null>(null);
+
+  // Carregar formulários do Firestore via cache isolada por tenant e garantir campos padrão
+  const loadForms = async (forceRefresh = false) => {
     setIsLoading(true);
     try {
-      const q = query(
-        collection(db, 'custom_forms'),
-        where('tenant_id', '==', tenantId)
-      );
-      const snapshot = await getDocs(q);
+      const cacheKey = buildTenantCacheKey(tenantId, 'custom_forms');
+      const loaded = await getOrFetchCached<CustomForm[]>({
+        key: cacheKey,
+        ttlMs: CACHE_TTLS.CUSTOM_FORMS,
+        forceRefresh,
+        fetcher: async () => {
+          const q = query(
+            collection(db, 'custom_forms'),
+            where('tenant_id', '==', tenantId)
+          );
+          const snapshot = await getDocs(q);
+          const items: CustomForm[] = [];
+          snapshot.forEach((docSnap) => {
+            items.push({ id: docSnap.id, ...docSnap.data() } as CustomForm);
+          });
+          return items;
+        },
+      });
       
-      if (!snapshot.empty) {
-        const loaded: CustomForm[] = [];
-        snapshot.forEach((docSnap) => {
-          loaded.push({ id: docSnap.id, ...docSnap.data() } as CustomForm);
-        });
+      if (loaded.length > 0) {
+        const mergedForms: CustomForm[] = [...loaded];
+        let mutated = false;
+        for (let i = 0; i < mergedForms.length; i++) {
+          const existing = mergedForms[i];
+          const defaultForm = DEFAULT_SYSTEM_FORMS.find(d => d.codigo === existing.codigo || (d.entidade === existing.entidade && existing.codigo === d.codigo));
+          if (defaultForm && !existing.campos_padrao_v2_inicializados) {
+            const existingCampos = Array.isArray(existing.campos) ? existing.campos : [];
+            const existingIds = new Set(existingCampos.map(c => c.id));
+            const missingDefaults = defaultForm.campos.filter(dc => !existingIds.has(dc.id));
+            const combined = [...existingCampos, ...missingDefaults]
+              .sort((a, b) => (a.ordem || 0) - (b.ordem || 0))
+              .map((c, idx) => ({ ...c, ordem: idx + 1 }));
 
-        // Garantir que os 3 formulários base sempre existam
-        const mergedForms = [...loaded];
+            const upgraded: CustomForm = {
+              ...existing,
+              campos: combined,
+              campos_padrao_inicializados: true,
+              campos_padrao_v2_inicializados: true,
+              updated_at: new Date().toISOString()
+            };
+            mergedForms[i] = upgraded;
+            mutated = true;
+            try {
+              await setDoc(doc(db, 'custom_forms', existing.id), upgraded);
+            } catch (syncErr) {
+              console.warn('Aviso ao sincronizar campos padrão do formulário:', syncErr);
+            }
+          }
+        }
+
+        // Garantir que todos os formulários base padrão existam
         for (const defaultForm of DEFAULT_SYSTEM_FORMS) {
           const exists = mergedForms.some(f => f.codigo === defaultForm.codigo);
           if (!exists) {
-            const initialized = { ...defaultForm, tenant_id: tenantId };
-            await setDoc(doc(db, 'custom_forms', `${tenantId}_${defaultForm.codigo}`), initialized);
-            mergedForms.push({ ...initialized, id: `${tenantId}_${defaultForm.codigo}` });
+            const initialized: CustomForm = {
+              ...defaultForm,
+              id: `${tenantId}_${defaultForm.codigo}`,
+              tenant_id: tenantId,
+              campos_padrao_inicializados: true,
+              campos_padrao_v2_inicializados: true
+            };
+            await setDoc(doc(db, 'custom_forms', initialized.id), initialized);
+            mergedForms.push(initialized);
+            mutated = true;
           }
+        }
+        if (mutated) {
+          await invalidateTenantCache(tenantId, ['custom_forms']);
         }
         setForms(mergedForms);
       } else {
-        // Inicializar com os 3 formulários base
+        // Inicializar com todos os formulários base e respectivos campos padrão
         const initializedForms: CustomForm[] = [];
         for (const defaultForm of DEFAULT_SYSTEM_FORMS) {
-          const formWithTenant = {
+          const formWithTenant: CustomForm = {
             ...defaultForm,
             id: `${tenantId}_${defaultForm.codigo}`,
-            tenant_id: tenantId
+            tenant_id: tenantId,
+            campos_padrao_inicializados: true,
+            campos_padrao_v2_inicializados: true
           };
           await setDoc(doc(db, 'custom_forms', formWithTenant.id), formWithTenant);
           initializedForms.push(formWithTenant);
         }
+        await invalidateTenantCache(tenantId, ['custom_forms']);
         setForms(initializedForms);
       }
     } catch (err: any) {
@@ -423,7 +374,9 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
       const localForms = DEFAULT_SYSTEM_FORMS.map(f => ({
         ...f,
         id: `${tenantId}_${f.codigo}`,
-        tenant_id: tenantId
+        tenant_id: tenantId,
+        campos_padrao_inicializados: true,
+        campos_padrao_v2_inicializados: true
       }));
       setForms(localForms);
     } finally {
@@ -437,26 +390,27 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
     }
   }, [tenantId]);
 
-  // Filtro dinâmico na visão geral
+  // Filtro dinâmico na visão geral (com debounce)
   const filteredForms = useMemo(() => {
+    const q = debouncedSearchQuery.trim().toLowerCase();
     return forms.filter(f => {
-      const matchesSearch = 
-        !searchQuery.trim() ||
-        f.nome.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (f.descricao && f.descricao.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        f.codigo.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesSearch =
+        !q ||
+        f.nome.toLowerCase().includes(q) ||
+        (f.descricao && f.descricao.toLowerCase().includes(q)) ||
+        f.codigo.toLowerCase().includes(q);
 
-      const matchesEntity = 
-        filterEntity === 'todas' || 
+      const matchesEntity =
+        filterEntity === 'todas' ||
         f.entidade === filterEntity;
 
-      const matchesStatus = 
-        filterStatus === 'todos' || 
+      const matchesStatus =
+        filterStatus === 'todos' ||
         f.status === filterStatus;
 
       return matchesSearch && matchesEntity && matchesStatus;
     });
-  }, [forms, searchQuery, filterEntity, filterStatus]);
+  }, [forms, debouncedSearchQuery, filterEntity, filterStatus]);
 
   // Alternar status de Suspensão / Reactivação
   const handleToggleStatus = async (form: CustomForm) => {
@@ -477,6 +431,7 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
         status: nextStatus,
         updated_at: updatedForm.updated_at
       });
+      await invalidateTenantCache(tenantId, ['custom_forms']);
 
       setForms(prev => prev.map(f => f.id === form.id ? updatedForm : f));
       onFormulariosUpdated?.();
@@ -504,10 +459,18 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
   // Descartar alterações
   const handleDiscardChanges = () => {
     if (isDirty) {
-      const confirmDiscard = window.confirm(
-        'Existem alterações não salvas. Deseja realmente descartar e voltar à visão geral?'
-      );
-      if (!confirmDiscard) return;
+      setConfirmDialog({
+        title: 'Descartar Alterações',
+        message: 'Existem alterações não salvas. Deseja realmente descartar e voltar à visão geral?',
+        confirmLabel: 'Descartar',
+        onConfirm: () => {
+          setEditingForm(null);
+          setIsDirty(false);
+          setSelectedFieldId(null);
+          setConfirmDialog(null);
+        }
+      });
+      return;
     }
     setEditingForm(null);
     setIsDirty(false);
@@ -627,6 +590,7 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
 
   const handleFieldDropOnIndex = (e: React.DragEvent, targetIndex: number) => {
     e.preventDefault();
+    setDragOverIndex(null);
     if (draggedFieldIndex === null || !editingForm) return;
     if (draggedFieldIndex === targetIndex) return;
 
@@ -638,6 +602,32 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
     setEditingForm(prev => prev ? { ...prev, campos: reordered } : null);
     setIsDirty(true);
     setDraggedFieldIndex(null);
+  };
+
+  // Restaurar campos padrão originais do formulário do sistema
+  const handleRestoreDefaultFields = () => {
+    if (!editingForm) return;
+    const defForm = DEFAULT_SYSTEM_FORMS.find(d => d.codigo === editingForm.codigo || d.entidade === editingForm.entidade);
+    if (!defForm) {
+      showNotification('Nenhum modelo padrão encontrado para este formulário.', 'alerta');
+      return;
+    }
+    setConfirmDialog({
+      title: 'Restaurar Campos Padrão',
+      message: `Deseja restaurar todos os campos padrão originais de "${editingForm.nome}"? Esta ação restaurará a estrutura padrão completa com todos os campos personalizáveis.`,
+      confirmLabel: 'Restaurar Campos',
+      onConfirm: () => {
+        setEditingForm(prev => prev ? {
+          ...prev,
+          campos_padrao_inicializados: true,
+          campos_padrao_v2_inicializados: true,
+          campos: JSON.parse(JSON.stringify(defForm.campos))
+        } : null);
+        setIsDirty(true);
+        setConfirmDialog(null);
+        showNotification('Campos padrão restaurados com sucesso!', 'sucesso');
+      }
+    });
   };
 
   // Drag over dropzone para adicionar novo campo da paleta
@@ -682,12 +672,15 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
     const finalStatus: CustomFormStatus = targetStatus || editingForm.status;
     const updatedForm: CustomForm = {
       ...editingForm,
+      campos_padrao_inicializados: true,
+      campos_padrao_v2_inicializados: true,
       status: finalStatus,
       updated_at: new Date().toISOString()
     };
 
     try {
       await setDoc(doc(db, 'custom_forms', updatedForm.id), updatedForm);
+      await invalidateTenantCache(tenantId, ['custom_forms']);
       setForms(prev => prev.map(f => f.id === updatedForm.id ? updatedForm : f));
       setEditingForm(updatedForm);
       setIsDirty(false);
@@ -741,6 +734,7 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
 
     try {
       await setDoc(doc(db, 'custom_forms', newFormId), newForm);
+      await invalidateTenantCache(tenantId, ['custom_forms']);
       setForms(prev => [newForm, ...prev]);
       onFormulariosUpdated?.();
       setIsNewFormModalOpen(false);
@@ -760,6 +754,7 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
       case 'escola': return 'Escola / Unidade';
       case 'docente': return 'Docentes';
       case 'estudante': return 'Estudantes';
+      case 'notas': return 'Lançamento de Notas / Pautas';
       default: return 'Geral';
     }
   };
@@ -770,6 +765,7 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
       case 'escola': return Building;
       case 'docente': return Users;
       case 'estudante': return GraduationCap;
+      case 'notas': return Award;
       default: return Layers;
     }
   };
@@ -972,30 +968,33 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
 
             {/* LADO DIREITO: Preview de edição e reordenação */}
             <div className="lg:col-span-8 space-y-4">
-              {/* Resumo de Campos Nativos do Sistema */}
-              {editingForm.codigo in NATIVE_FIELDS_SUMMARY && (
-                <div className="bg-slate-50 dark:bg-slate-850/40 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <ShieldAlert className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                      <h5 className="text-xs font-bold text-slate-700 dark:text-slate-200 uppercase tracking-wider">
-                        Campos Nativos do Sistema ({NATIVE_FIELDS_SUMMARY[editingForm.codigo].length})
-                      </h5>
-                    </div>
-                    <span className="text-[10px] text-slate-400 font-semibold">Integrados por padrão</span>
+              {/* Informação de Customização Total & Ação para Restaurar Campos Padrão */}
+              <div className="bg-slate-50 dark:bg-slate-850/60 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-100 dark:border-indigo-900 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
+                    <Check className="w-4 h-4" />
                   </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {NATIVE_FIELDS_SUMMARY[editingForm.codigo].map((campoNome, idx) => (
-                      <span
-                        key={idx}
-                        className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 shadow-2xs"
-                      >
-                        {campoNome}
-                      </span>
-                    ))}
+                  <div>
+                    <h5 className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                      Personalização Total de Campos ({editingForm.campos.length} campos)
+                    </h5>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                      Todos os campos deste formulário podem ser reordenados por arrastar e soltar, editados, duplicados, renomeados ou excluídos.
+                    </p>
                   </div>
                 </div>
-              )}
+
+                {DEFAULT_SYSTEM_FORMS.some(d => d.codigo === editingForm.codigo || d.entidade === editingForm.entidade) && (
+                  <button
+                    type="button"
+                    onClick={handleRestoreDefaultFields}
+                    className="px-3 py-1.5 rounded-xl text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-white dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/80 transition-colors cursor-pointer shrink-0 flex items-center gap-1.5 shadow-2xs"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Restaurar Campos Padrão
+                  </button>
+                )}
+              </div>
 
               {/* Área de Soltura / Dropzone */}
               <div
@@ -1043,12 +1042,22 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
                           key={campo.id}
                           draggable
                           onDragStart={(e) => handleFieldDragStart(e, index)}
-                          onDragOver={(e) => e.preventDefault()}
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                            if (draggedFieldIndex !== null && draggedFieldIndex !== index) {
+                              setDragOverIndex(index);
+                            }
+                          }}
+                          onDragLeave={() => {
+                            if (dragOverIndex === index) setDragOverIndex(null);
+                          }}
                           onDrop={(e) => handleFieldDropOnIndex(e, index)}
                           className={`rounded-2xl border transition-all ${
-                            isSelected
-                              ? 'border-indigo-500 bg-indigo-50/20 dark:bg-indigo-950/20 shadow-xs'
-                              : 'border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-850/40 hover:border-slate-300 dark:hover:border-slate-700'
+                            dragOverIndex === index
+                              ? 'border-indigo-500 ring-2 ring-indigo-500/40 bg-indigo-50/50 dark:bg-indigo-950/50 shadow-md scale-[1.01]'
+                              : isSelected
+                                ? 'border-indigo-500 bg-indigo-50/20 dark:bg-indigo-950/20 shadow-xs'
+                                : 'border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-850/40 hover:border-slate-300 dark:hover:border-slate-700'
                           }`}
                         >
                           {/* Cabeçalho do Cartão de Campo */}
@@ -1056,7 +1065,7 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
                             <div className="flex items-center gap-2.5 flex-1 min-w-0">
                               <div 
                                 className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600 p-1"
-                                title="Arraste para reordenar"
+                                title="Arraste para reordenar a sequência de campos"
                               >
                                 <GripVertical className="w-4 h-4" />
                               </div>
@@ -1066,7 +1075,7 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
                               </div>
 
                               <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 flex-wrap">
                                   <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
                                     {campo.label}
                                   </span>
@@ -1075,6 +1084,9 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
                                       Obrigatório
                                     </span>
                                   )}
+                                  <span className="text-[10px] font-medium text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.2 rounded">
+                                    {campo.largura === '1/2' ? '50% Largura' : '100% Largura'}
+                                  </span>
                                 </div>
                                 <span className="text-[10px] text-slate-400">
                                   Tipo: {typeDef?.label} · Ordem: {campo.ordem}
@@ -1088,7 +1100,7 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
                                 type="button"
                                 disabled={index === 0}
                                 onClick={() => handleMoveUp(index)}
-                                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 disabled:opacity-30 disabled:hover:text-slate-400 transition-colors"
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 disabled:opacity-30 disabled:hover:text-slate-400 transition-colors cursor-pointer"
                                 title="Mover para cima"
                               >
                                 <ArrowUp className="w-3.5 h-3.5" />
@@ -1097,7 +1109,7 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
                                 type="button"
                                 disabled={index === editingForm.campos.length - 1}
                                 onClick={() => handleMoveDown(index)}
-                                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 disabled:opacity-30 disabled:hover:text-slate-400 transition-colors"
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 disabled:opacity-30 disabled:hover:text-slate-400 transition-colors cursor-pointer"
                                 title="Mover para baixo"
                               >
                                 <ArrowDown className="w-3.5 h-3.5" />
@@ -1105,7 +1117,7 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
                               <button
                                 type="button"
                                 onClick={() => handleDuplicateField(campo)}
-                                className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors cursor-pointer"
                                 title="Duplicar campo"
                               >
                                 <Copy className="w-3.5 h-3.5" />
@@ -1113,7 +1125,7 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
                               <button
                                 type="button"
                                 onClick={() => setSelectedFieldId(isSelected ? null : campo.id)}
-                                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors ${
+                                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                                   isSelected
                                     ? 'bg-indigo-600 text-white'
                                     : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
@@ -1124,7 +1136,7 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
                               <button
                                 type="button"
                                 onClick={() => handleRemoveField(campo.id)}
-                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 transition-colors"
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 transition-colors cursor-pointer"
                                 title="Remover campo"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -1135,6 +1147,64 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
                           {/* Painel Expansível de Configuração do Campo */}
                           {isSelected && (
                             <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 rounded-b-2xl space-y-3.5">
+                              {/* Alteração Dinâmica do Tipo de Dado e Largura do Campo */}
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pb-3 border-b border-slate-150 dark:border-slate-800">
+                                <div>
+                                  <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                                    Tipo de Dado do Campo
+                                  </label>
+                                  <select
+                                    value={campo.tipo}
+                                    onChange={(e) => {
+                                      const novoTipo = e.target.value as CustomFieldTipo;
+                                      updateFieldProperty(campo.id, {
+                                        tipo: novoTipo,
+                                        opcoes: novoTipo === 'dropdown' ? (campo.opcoes || ['Opção 1', 'Opção 2', 'Opção 3']) : undefined,
+                                        ddd_padrao: novoTipo === 'telefone_ddd' ? (campo.ddd_padrao || '+258') : undefined,
+                                        formatos_permitidos: novoTipo === 'upload_arquivo' ? (campo.formatos_permitidos || ['pdf', 'xlsx']) : undefined
+                                      });
+                                    }}
+                                    className="w-full bg-slate-50 dark:bg-slate-850 border border-slate-250 dark:border-slate-750 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-100 font-semibold cursor-pointer"
+                                  >
+                                    {AVAILABLE_FIELD_TYPES.map(t => (
+                                      <option key={t.tipo} value={t.tipo}>
+                                        {t.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                                    Largura no Formulário
+                                  </label>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => updateFieldProperty(campo.id, { largura: '1/2' })}
+                                      className={`py-2 px-3 text-xs font-bold rounded-xl border transition-colors cursor-pointer ${
+                                        campo.largura === '1/2'
+                                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                                          : 'bg-slate-50 dark:bg-slate-850 text-slate-600 dark:text-slate-300 border-slate-250 dark:border-slate-750'
+                                      }`}
+                                    >
+                                      50% (Meia Linha)
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => updateFieldProperty(campo.id, { largura: 'full' })}
+                                      className={`py-2 px-3 text-xs font-bold rounded-xl border transition-colors cursor-pointer ${
+                                        campo.largura !== '1/2'
+                                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                                          : 'bg-slate-50 dark:bg-slate-850 text-slate-600 dark:text-slate-300 border-slate-250 dark:border-slate-750'
+                                      }`}
+                                    >
+                                      100% (Linha Toda)
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div>
                                   <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
@@ -1345,6 +1415,36 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
             </div>
           </div>
         )}
+        {/* Modal de Confirmação In-App */}
+        {confirmDialog && (
+          <div className="fixed inset-0 z-[170000] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
+            <div className="bg-white dark:bg-[#0b101b] rounded-2xl border border-slate-200 dark:border-slate-800 max-w-md w-full p-6 shadow-2xl space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 flex items-center justify-center text-amber-600 dark:text-amber-400 shrink-0">
+                  <AlertCircle className="w-5 h-5" />
+                </div>
+                <h4 className="text-base font-bold text-slate-900 dark:text-white">{confirmDialog.title}</h4>
+              </div>
+              <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">{confirmDialog.message}</p>
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDialog(null)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDialog.onConfirm}
+                  className="px-4 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-colors shadow-xs cursor-pointer"
+                >
+                  {confirmDialog.confirmLabel}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -1375,6 +1475,7 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
             className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-700 dark:text-slate-300 font-semibold cursor-pointer"
           >
             <option value="todas">Todas as Entidades</option>
+            <option value="notas">Lançamento de Notas / Pautas</option>
             <option value="escola">Escolas / Faculdades</option>
             <option value="docente">Docentes / Professores</option>
             <option value="estudante">Estudantes / Alunos</option>
@@ -1537,6 +1638,7 @@ export const FormulariosCustomizadosModule: React.FC<FormulariosCustomizadosModu
                   <option value="estudante">Estudantes / Alunos</option>
                   <option value="docente">Docentes / Professores</option>
                   <option value="escola">Escola / Unidade</option>
+                  <option value="notas">Lançamento de Notas / Pautas</option>
                   <option value="outro">Outro / Geral</option>
                 </select>
               </div>

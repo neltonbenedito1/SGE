@@ -3,7 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
+import { lazyWithRetry } from '../lib/lazyWithRetry';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
+import { ModuleSkeleton } from './Skeletons';
+import { ModuleErrorBoundary } from './ErrorBoundary';
+import { VirtualList } from './VirtualList';
 import { 
   collection, 
   getDocs, 
@@ -13,12 +18,22 @@ import {
   deleteDoc, 
   query, 
   where,
+  limit,
   getDoc,
   setDoc,
   onSnapshot,
   writeBatch
 } from 'firebase/firestore';
 import { db, registerUserInFirebaseAuth } from '../lib/firebase';
+import { commitBatchOperations, BatchMutationOp } from '../lib/firestoreScalable';
+import { applyAnalyticsDelta, recomputeAndPersistTenantAnalytics } from '../lib/tenantAnalyticsAggregates';
+import {
+  getOrFetchCached,
+  buildTenantCacheKey,
+  buildGlobalCacheKey,
+  invalidateTenantCache,
+  CACHE_TTLS,
+} from '../lib/referenceCache';
 import { isFirestoreQuotaExhausted } from '../lib/localDb';
 import { authSecurityService } from '../services/authSecurityService';
 import { 
@@ -55,8 +70,8 @@ import {
   CustomFormField
 } from '../types';
 import { CustomFieldsRenderer } from './CustomFieldsRenderer';
-import { CursosModule } from './tenant/CursosModule';
-import { ProcessoAlunoFicha } from './tenant/ProcessoAlunoFicha';
+const CursosModule = lazyWithRetry(() => import('./tenant/CursosModule').then(m => ({ default: m.CursosModule })), 'cursos-module');
+const ProcessoAlunoFicha = lazyWithRetry(() => import('./tenant/ProcessoAlunoFicha').then(m => ({ default: m.ProcessoAlunoFicha })), 'processo-aluno-ficha');
 import { useInstitutionFeatures, getInstitutionConfig } from '../config/institutionTypes';
 import { 
   sendAppNotification, 
@@ -66,14 +81,17 @@ import {
   notifyAttendanceLogged, 
   notifyJustificationEvaluated 
 } from '../services/notificationDispatcher';
-import { ValidarPresencaModal } from './ValidarPresencaModal';
-import { StudentQrDisplay } from './StudentQrDisplay';
-import { ModuloConfiguracoes, DEFAULT_INTERVALOS } from './ModuloConfiguracoes';
+const ValidarPresencaModal = lazyWithRetry(() => import('./ValidarPresencaModal').then(m => ({ default: m.ValidarPresencaModal })), 'validar-presenca-modal');
+const StudentQrDisplay = lazyWithRetry(() => import('./StudentQrDisplay').then(m => ({ default: m.StudentQrDisplay })), 'student-qr-display');
+const ModuloConfiguracoes = lazyWithRetry(() => import('./ModuloConfiguracoes').then(m => ({ default: m.ModuloConfiguracoes })), 'modulo-configuracoes');
+import { DEFAULT_INTERVALOS, DEFAULT_CATEGORIES, SYSTEM_MODULES } from '../config/permissionsDefaults';
+import { DEFAULT_SYSTEM_FORMS, CORE_NATIVE_FORM_FIELD_IDS } from '../config/customFormDefaults';
 import { generateStudentQrPayload, generateQrDataUrl } from '../utils/qrCodeHelper';
 import { EmailTemplates, createMimeMessage, createGmailRawPayload } from '../lib/emailUtils';
 import { escapeHtml } from '../lib/sanitize';
-import DocenteFormModal from './DocenteFormModal';
-import ProcessoIndividualModule from './ProcessoIndividualModule';
+const DocenteFormModal = lazyWithRetry(() => import('./DocenteFormModal'), 'docente-form-modal');
+const ProcessoIndividualModule = lazyWithRetry(() => import('./ProcessoIndividualModule'), 'processo-individual-module');
+const AsyncJobsPanel = lazyWithRetry(() => import('./AsyncJobsPanel').then(m => ({ default: m.AsyncJobsPanel })), 'async-jobs-panel');
 import { generateCompliantPassword } from '../shared/passwordPolicy';
 import { validateClassSchoolAssociation, getTerminology, getTerm } from '../lib/terminology';
 import { 
@@ -162,16 +180,15 @@ import {
   PauseCircle,
   BookOpenCheck
 } from 'lucide-react';
-import { SchoolMap } from './SchoolMap';
-import { AnalyticsModule } from './AnalyticsModule';
-import { BibliotecaModule } from './BibliotecaModule';
-import { AtividadesModule } from './AtividadesModule';
-import { PlanoAulasModule } from './PlanoAulasModule';
-import { GlobalPermissionsModule, DEFAULT_CATEGORIES } from './GlobalPermissionsModule';
-import { NotificationSettingsModule } from './NotificationSettingsModule';
-import { UserPermissionsChecklist } from './UserPermissionsChecklist';
-import { ProvinciasModule } from './tenant/ProvinciasModule';
-import { StudentRegistrationForm } from './StudentRegistrationForm';
+const SchoolMap = lazyWithRetry(() => import('./SchoolMap').then(m => ({ default: m.SchoolMap })), 'school-map');
+const AnalyticsModule = lazyWithRetry(() => import('./AnalyticsModule').then(m => ({ default: m.AnalyticsModule })), 'analytics-module');
+const BibliotecaModule = lazyWithRetry(() => import('./BibliotecaModule').then(m => ({ default: m.BibliotecaModule })), 'biblioteca-module');
+const AtividadesModule = lazyWithRetry(() => import('./AtividadesModule').then(m => ({ default: m.AtividadesModule })), 'atividades-module');
+const PlanoAulasModule = lazyWithRetry(() => import('./PlanoAulasModule').then(m => ({ default: m.PlanoAulasModule })), 'plano-aulas-module');
+const GlobalPermissionsModule = lazyWithRetry(() => import('./GlobalPermissionsModule').then(m => ({ default: m.GlobalPermissionsModule })), 'global-permissions-module');
+const UserPermissionsChecklist = lazyWithRetry(() => import('./UserPermissionsChecklist').then(m => ({ default: m.UserPermissionsChecklist })), 'user-permissions-checklist');
+const ProvinciasModule = lazyWithRetry(() => import('./tenant/ProvinciasModule').then(m => ({ default: m.ProvinciasModule })), 'provincias-module');
+const StudentRegistrationForm = lazyWithRetry(() => import('./StudentRegistrationForm').then(m => ({ default: m.StudentRegistrationForm })), 'student-registration-form');
 import { getAutomaticProvincesForCountries } from '../shared/catalogs';
 import { LANGUAGES, translate } from '../lib/translation';
 import LanguageSwitcher from './LanguageSwitcher';
@@ -336,7 +353,7 @@ import {
   saveSettingIfAllowed,
   getUserSessionCookie
 } from '../lib/cookies';
-import { CookiePolicyModal } from './CookiePolicyModal';
+const CookiePolicyModal = lazyWithRetry(() => import('./CookiePolicyModal').then(m => ({ default: m.CookiePolicyModal })), 'cookie-policy-modal');
 import { SessionStateService, useDebouncedScroll } from '../lib/userState';
 import { useUnsavedChangesGuard } from '../lib/useUnsavedChangesGuard';
 import { User as UserIcon } from 'lucide-react';
@@ -620,27 +637,42 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [pendingImports, setPendingImports] = useState<any[]>([]);
   const [customForms, setCustomForms] = useState<CustomForm[]>([]);
 
-  const escolaCustomFields = useMemo(() => {
-    const form = customForms.find(f => f.codigo === 'cadastro_escola' && f.status === 'ativo');
-    return form?.campos || [];
+  const getVisibleCustomFields = useCallback((codigo: string, fallbackEntidade?: string) => {
+    const form = customForms.find(
+      f => (f.codigo === codigo || (fallbackEntidade && f.entidade === fallbackEntidade)) && f.status === 'ativo'
+    );
+    if (!form?.campos) return [];
+    const defaultForm = DEFAULT_SYSTEM_FORMS.find(d => d.codigo === codigo);
+    return [...form.campos]
+      .sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0))
+      .filter((field) => {
+        if (!CORE_NATIVE_FORM_FIELD_IDS.has(field.id)) return true;
+        const defaultField = defaultForm?.campos.find(df => df.id === field.id);
+        if (!defaultField) return true;
+        return defaultField.label !== field.label || defaultField.tipo !== field.tipo;
+      });
   }, [customForms]);
 
-  const docenteCustomFields = useMemo(() => {
-    const form = customForms.find(f => f.codigo === 'cadastro_docente' && f.status === 'ativo');
-    return form?.campos || [];
-  }, [customForms]);
-
-  const estudanteCustomFields = useMemo(() => {
-    const form = customForms.find(f => f.codigo === 'cadastro_estudante' && f.status === 'ativo');
-    return form?.campos || [];
-  }, [customForms]);
+  const escolaCustomFields = useMemo(() => getVisibleCustomFields('cadastro_escola'), [getVisibleCustomFields]);
+  const docenteCustomFields = useMemo(() => getVisibleCustomFields('cadastro_docente'), [getVisibleCustomFields]);
+  const estudanteCustomFields = useMemo(() => getVisibleCustomFields('cadastro_estudante'), [getVisibleCustomFields]);
+  const notasCustomFields = useMemo(() => getVisibleCustomFields('lancamento_notas', 'notas'), [getVisibleCustomFields]);
 
   const refreshCustomForms = useCallback(async () => {
     if (!currentTenantId) return;
     try {
-      const snap = await getDocs(query(collection(db, 'custom_forms'), where('tenant_id', '==', currentTenantId)));
-      const formsList: CustomForm[] = [];
-      snap.forEach(d => formsList.push({ ...d.data() as CustomForm, id: d.id }));
+      await invalidateTenantCache(currentTenantId, ['custom_forms']);
+      const formsList = await getOrFetchCached<CustomForm[]>({
+        key: buildTenantCacheKey(currentTenantId, 'custom_forms'),
+        ttlMs: CACHE_TTLS.CUSTOM_FORMS,
+        forceRefresh: true,
+        fetcher: async () => {
+          const snap = await getDocs(query(collection(db, 'custom_forms'), where('tenant_id', '==', currentTenantId), limit(50)));
+          const items: CustomForm[] = [];
+          snap.forEach(d => items.push({ ...d.data() as CustomForm, id: d.id }));
+          return items;
+        },
+      });
       setCustomForms(formsList);
     } catch (e) {
       console.warn('Erro ao atualizar formulários customizados:', e);
@@ -728,7 +760,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const handleManualRefresh = useCallback(async (moduleTitle?: string) => {
     setIsManualRefreshing(true);
     try {
-      await loadTenantContext();
+      await loadTenantContext(true);
       window.dispatchEvent(new CustomEvent('sge-module-refresh', { detail: { module: activeTab, timestamp: Date.now() } }));
       showSystemNotification(moduleTitle ? `Módulo "${moduleTitle}" atualizado em tempo real.` : "Dados atualizados em tempo real.", "sucesso");
     } catch (e: any) {
@@ -740,13 +772,42 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     }
   }, [currentTenantId, activeTab, showSystemNotification]);
 
-  // Periodic automatic real-time data sync in background every 40s
+  // Sincronização inteligente em segundo plano: evita polling quando oculto, offline ou com poupança de dados
   useEffect(() => {
     if (!currentTenantId) return;
-    const autoSyncInterval = setInterval(() => {
+    let lastSyncAt = Date.now();
+    const minIntervalMs =
+      typeof navigator !== 'undefined' && (navigator as any).connection?.saveData
+        ? 120000
+        : 60000;
+
+    const triggerSyncIfEligible = (force = false) => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+      if (isFirestoreQuotaExhausted()) return;
+      const elapsed = Date.now() - lastSyncAt;
+      if (!force && elapsed < minIntervalMs) return;
+      lastSyncAt = Date.now();
       loadTenantContext();
-    }, 40000);
-    return () => clearInterval(autoSyncInterval);
+    };
+
+    const handleVisibility = () => {
+      if (!document.hidden && Date.now() - lastSyncAt >= 45000) {
+        triggerSyncIfEligible(true);
+      }
+    };
+
+    const handleOnline = () => triggerSyncIfEligible(true);
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('online', handleOnline);
+    const autoSyncInterval = setInterval(() => triggerSyncIfEligible(false), minIntervalMs);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('online', handleOnline);
+      clearInterval(autoSyncInterval);
+    };
   }, [currentTenantId]);
 
   const renderModuleRefreshButton = (moduleTitle: string, extraClasses: string = '') => (
@@ -1313,6 +1374,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const [teacherSearchText, setTeacherSearchText] = useState('');
   const [studentSearchText, setStudentSearchText] = useState('');
   const [disciplineSearchText, setDisciplineSearchText] = useState('');
+  const debouncedSchoolSearchText = useDebouncedValue(schoolSearchText, 250);
+  const debouncedTeacherSearchText = useDebouncedValue(teacherSearchText, 250);
+  const debouncedStudentSearchText = useDebouncedValue(studentSearchText, 250);
+  const debouncedDisciplineSearchText = useDebouncedValue(disciplineSearchText, 250);
   const [disciplineSchoolFilter, setDisciplineSchoolFilter] = useState('todas');
   const [disciplineDocenteFilter, setDisciplineDocenteFilter] = useState('todos');
   const [schoolFilterSearchText, setSchoolFilterSearchText] = useState('');
@@ -1348,9 +1413,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       filtered = filtered.filter(s => s.provincia_id === schoolProvinceFilter);
     }
 
-    // Text Search
-    if (schoolSearchText.trim()) {
-      const query = schoolSearchText.toLowerCase();
+    // Text Search (debounced)
+    if (debouncedSchoolSearchText.trim()) {
+      const query = debouncedSchoolSearchText.toLowerCase();
       filtered = filtered.filter(s => 
         s.nome.toLowerCase().includes(query) || 
         (s.endereco || '').toLowerCase().includes(query) || 
@@ -1359,27 +1424,27 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     }
     
     return filtered;
-  }, [schools, schoolSearchText, schoolStatusFilter, schoolProvinceFilter]);
+  }, [schools, debouncedSchoolSearchText, schoolStatusFilter, schoolProvinceFilter]);
 
   const searchedTeachers = useMemo(() => {
-    if (!teacherSearchText.trim()) return teachers;
-    const query = teacherSearchText.toLowerCase();
+    if (!debouncedTeacherSearchText.trim()) return teachers;
+    const query = debouncedTeacherSearchText.toLowerCase();
     return teachers.filter(t => 
       t.nome.toLowerCase().includes(query) || 
       (t.especialidade || '').toLowerCase().includes(query) || 
       ((t as any).email || '').toLowerCase().includes(query)
     );
-  }, [teachers, teacherSearchText]);
+  }, [teachers, debouncedTeacherSearchText]);
 
   const searchedStudents = useMemo(() => {
-    if (!studentSearchText.trim()) return students;
-    const query = studentSearchText.toLowerCase();
+    if (!debouncedStudentSearchText.trim()) return students;
+    const query = debouncedStudentSearchText.toLowerCase();
     return students.filter(s => 
       s.nome.toLowerCase().includes(query) || 
       (s.numero_matricula || '').toLowerCase().includes(query) || 
       ((s as any).email || '').toLowerCase().includes(query)
     );
-  }, [students, studentSearchText]);
+  }, [students, debouncedStudentSearchText]);
 
   const isBaseDiscipline = (c: any) => {
     if (!c) return false;
@@ -1409,9 +1474,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       });
     }
 
-    // Filter by Text Search
-    if (disciplineSearchText.trim()) {
-      const query = disciplineSearchText.toLowerCase();
+    // Filter by Text Search (debounced)
+    if (debouncedDisciplineSearchText.trim()) {
+      const query = debouncedDisciplineSearchText.toLowerCase();
       list = list.filter(c => {
         const codeStr = (c.codigo || c.id || '').toLowerCase();
         const nameStr = (c.nome || '').toLowerCase();
@@ -1420,28 +1485,32 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     }
 
     return list;
-  }, [classes, disciplineSchoolFilter, disciplineDocenteFilter, disciplineSearchText]);
+  }, [classes, disciplineSchoolFilter, disciplineDocenteFilter, debouncedDisciplineSearchText]);
 
   const [selectedSchoolFilter, setSelectedSchoolFilter] = useState('todos');
   const [selectedTurmaFilter, setSelectedTurmaFilter] = useState('todos');
 
   // Custom Calendar State variables
   const [calendarSelectedDate, setCalendarSelectedDate] = useState<Date>(() => new Date('2026-07-11'));
+  const [calendarWeekDirection, setCalendarWeekDirection] = useState<'left' | 'right' | null>(null);
+  const [weekTransitionKey, setWeekTransitionKey] = useState(0);
   const [selectedClassPopup, setSelectedClassPopup] = useState<any | null>(null);
   const [isCopyDropdownOpen, setIsCopyDropdownOpen] = useState(false);
 
-  const [selectedTurn, setSelectedTurn] = useState<'manha' | 'tarde' | 'noite'>(() => {
+  const [selectedTurn, setSelectedTurn] = useState<'manha' | 'tarde' | 'noite' | 'todos'>(() => {
     const currentHour = new Date().getHours();
     if (currentHour >= 7 && currentHour < 12) return 'manha';
     if (currentHour >= 12 && currentHour < 18) return 'tarde';
     return 'noite';
   });
-  const [userSelectedTurn, setUserSelectedTurn] = useState<'manha' | 'tarde' | 'noite' | null>(null);
+  const [userSelectedTurn, setUserSelectedTurn] = useState<'manha' | 'tarde' | 'noite' | 'todos' | null>(null);
   const [exameTurmaFilter, setExameTurmaFilter] = useState('todos');
   const [exameTipoFilter, setExameTipoFilter] = useState('todos');
   const [exameSearchTerm, setExameSearchTerm] = useState('');
 
   // Helper functions for turn separation and schedule validation
+  const normalizeSlot = (s: string): string => (s || '').replace(/\s*-\s*/g, ' - ').trim();
+
   const parseTimeToMinutes = (timeStr: string): number => {
     if (!timeStr) return 0;
     const parts = timeStr.trim().split(':');
@@ -1472,50 +1541,52 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     ];
   }, [config?.horarios_intervalos]);
 
-  const getShiftDefaultSlots = (turn: 'manha' | 'tarde' | 'noite'): string[] => {
-    // Collect active configured breaks for this turn
-    const turnBreaks = activeConfiguredBreaks.filter(b => b.turno === turn || b.turno === 'todos');
+  const getShiftDefaultSlots = (turn: 'manha' | 'tarde' | 'noite' | 'todos'): string[] => {
+    const manhaSlots = [
+      "07:00 - 07:45",
+      "07:45 - 08:30",
+      "08:30 - 09:15",
+      "09:30 - 10:15",
+      "10:15 - 11:00",
+      "11:00 - 11:45",
+      "11:45 - 12:30"
+    ];
+    const tardeSlots = [
+      "12:00 - 12:45",
+      "12:45 - 13:30",
+      "13:30 - 14:15",
+      "14:30 - 15:15",
+      "15:15 - 16:00",
+      "16:00 - 16:45",
+      "16:45 - 17:30"
+    ];
+    const noiteSlots = [
+      "18:00 - 18:45",
+      "18:45 - 19:30",
+      "19:30 - 20:15",
+      "20:30 - 21:15",
+      "21:15 - 22:00",
+      "22:00 - 22:45"
+    ];
+
+    const turnBreaks = turn === 'todos'
+      ? activeConfiguredBreaks
+      : activeConfiguredBreaks.filter(b => b.turno === turn || b.turno === 'todos');
     const breakSlots = turnBreaks.map(b => b.slotStr);
 
-    let baseSlots: string[] = [];
-    if (turn === 'manha') {
-      baseSlots = [
-        "07:00 - 07:45",
-        "07:45 - 08:30",
-        "08:30 - 09:15",
-        "09:30 - 10:15",
-        "10:15 - 11:00",
-        "11:00 - 11:45",
-        "11:45 - 12:30"
-      ];
-    } else if (turn === 'tarde') {
-      baseSlots = [
-        "12:00 - 12:45",
-        "12:45 - 13:30",
-        "13:30 - 14:15",
-        "14:30 - 15:15",
-        "15:15 - 16:00",
-        "16:00 - 16:45",
-        "16:45 - 17:30"
-      ];
-    } else {
-      baseSlots = [
-        "18:00 - 18:45",
-        "18:45 - 19:30",
-        "19:30 - 20:15",
-        "20:30 - 21:15",
-        "21:15 - 22:00",
-        "22:00 - 22:45"
-      ];
-    }
+    const baseSlots = turn === 'manha'
+      ? manhaSlots
+      : turn === 'tarde'
+        ? tardeSlots
+        : turn === 'noite'
+          ? noiteSlots
+          : [...manhaSlots, ...tardeSlots, ...noiteSlots];
 
-    const merged = Array.from(new Set([...baseSlots, ...breakSlots])).sort((a, b) => {
+    return Array.from(new Set([...baseSlots, ...breakSlots])).sort((a, b) => {
       const aStart = a.split(' - ')[0] || '';
       const bStart = b.split(' - ')[0] || '';
       return aStart.localeCompare(bStart);
     });
-
-    return merged;
   };
 
   const checkScheduleConflictDetails = (
@@ -1527,19 +1598,21 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     docenteId: string,
     sala: string,
     allClasses: Classe[],
-    excludeClassId?: string
+    excludeClassId?: string,
+    allExames: AgendamentoExame[] = rawExames,
+    excludeExameId?: string
   ): { conflict: boolean; reason?: string } => {
     const pStart = parseTimeToMinutes(pStartStr);
     const pEnd = parseTimeToMinutes(pEndStr);
 
-    if (pEnd <= pStart) {
-      return { conflict: true, reason: 'A hora de fim da aula deve ser posterior à hora de início.' };
+    if (!pStartStr || !pEndStr || pEnd <= pStart) {
+      return { conflict: true, reason: 'A hora de fim deve ser posterior à hora de início.' };
     }
 
     const duration = pEnd - pStart;
     const minDuration = config?.horarios_duracao_minutos || 45;
     if (duration < minDuration) {
-      return { conflict: true, reason: `A duração de uma aula deve ser de pelo menos ${minDuration} minutos.` };
+      return { conflict: true, reason: `A duração deve ser de pelo menos ${minDuration} minutos.` };
     }
 
     // 1. Check official break overlap
@@ -1547,11 +1620,28 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     if (breakHit) {
       return {
         conflict: true,
-        reason: `Horário inválido! O período selecionado (${pStartStr} - ${pEndStr}) sobrepõe o intervalo de recreio oficial "${breakHit.name}" (${breakHit.label}).`
+        reason: `Horário inválido! O período (${pStartStr} - ${pEndStr}) sobrepõe o intervalo oficial "${breakHit.name}" (${breakHit.label}).`
       };
     }
 
-    // 2. Check collision with existing classes
+    // 2. Check vacation / férias overlap
+    if (dateStr) {
+      const vacationHit = rawVacations.find(v =>
+        dateStr >= v.data_inicio &&
+        dateStr <= v.data_fim &&
+        (!v.turma_id || v.turma_id === 'todas' || (turmaId && v.turma_id === turmaId))
+      );
+      if (vacationHit) {
+        return {
+          conflict: true,
+          reason: `Conflito de Férias! A data selecionada está abrangida pelo período "${vacationHit.descricao}".`
+        };
+      }
+    }
+
+    const conflicts: string[] = [];
+
+    // 3. Check collision with existing classes (Sala, Docente, Turma)
     for (const c of allClasses) {
       if (excludeClassId && c.id === excludeClassId) continue;
 
@@ -1560,36 +1650,55 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
       if (!sameDay) continue;
 
-      const [cStartStr, cEndStr] = (c.horario || '').split(' - ').map(s => s?.trim());
+      const [cStartStr, cEndStr] = (c.horario || '').split(/\s*-\s*/).map(s => s?.trim());
       if (!cStartStr || !cEndStr) continue;
 
       const cStart = parseTimeToMinutes(cStartStr);
       const cEnd = parseTimeToMinutes(cEndStr);
-
-      // Classes overlap if pStart < cEnd and pEnd > cStart.
-      // Back-to-back classes touching at boundary (pStart === cEnd or pEnd === cStart) do NOT overlap.
       const overlaps = (pStart < cEnd) && (pEnd > cStart);
 
       if (overlaps) {
         if (sala && c.sala && c.sala.trim().toLowerCase() === sala.trim().toLowerCase()) {
-          return {
-            conflict: true,
-            reason: `Conflito de Sala! A sala "${sala}" já possui a aula "${c.nome}" agendada (${cStartStr} - ${cEndStr}).`
-          };
+          conflicts.push(`Sala "${sala}" ocupada pela aula "${c.nome}" (${cStartStr} - ${cEndStr})`);
         }
         if (docenteId && c.docente_id === docenteId) {
-          return {
-            conflict: true,
-            reason: `Conflito de Professor! O docente já leciona a aula "${c.nome}" no horário ${cStartStr} - ${cEndStr} na sala ${c.sala || 'N/A'}.`
-          };
+          conflicts.push(`Docente já leciona "${c.nome}" (${cStartStr} - ${cEndStr}, Sala: ${c.sala || 'N/A'})`);
         }
         if (turmaId && c.turma_id === turmaId) {
-          return {
-            conflict: true,
-            reason: `Conflito de Turma! A turma já possui a aula "${c.nome}" agendada no horário ${cStartStr} - ${cEndStr}.`
-          };
+          conflicts.push(`Turma já tem a aula "${c.nome}" neste horário (${cStartStr} - ${cEndStr})`);
         }
       }
+    }
+
+    // 4. Check collision with scheduled exams/assessments (Sala, Docente, Turma)
+    for (const ex of allExames) {
+      if (excludeExameId && ex.id === excludeExameId) continue;
+      if (!dateStr || ex.data !== dateStr) continue;
+      if (!ex.hora_inicio || !ex.hora_fim) continue;
+
+      const eStart = parseTimeToMinutes(ex.hora_inicio);
+      const eEnd = parseTimeToMinutes(ex.hora_fim);
+      const overlaps = (pStart < eEnd) && (pEnd > eStart);
+
+      if (overlaps) {
+        if (sala && ex.sala && ex.sala.trim().toLowerCase() === sala.trim().toLowerCase()) {
+          conflicts.push(`Sala "${sala}" reservada para ${ex.tipo || 'Exame'} de "${ex.disciplina_nome}" (${ex.hora_inicio} - ${ex.hora_fim})`);
+        }
+        if (docenteId && ex.docente_id === docenteId) {
+          conflicts.push(`Docente alocado(a) ao ${ex.tipo || 'Exame'} de "${ex.disciplina_nome}" (${ex.hora_inicio} - ${ex.hora_fim})`);
+        }
+        if (turmaId && ex.turma_id === turmaId) {
+          conflicts.push(`Turma já possui ${ex.tipo || 'Exame'} de "${ex.disciplina_nome}" (${ex.hora_inicio} - ${ex.hora_fim})`);
+        }
+      }
+    }
+
+    if (conflicts.length > 0) {
+      const uniqueConflicts = Array.from(new Set(conflicts));
+      return {
+        conflict: true,
+        reason: uniqueConflicts.join(' | ')
+      };
     }
 
     return { conflict: false };
@@ -1597,7 +1706,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
   const getShiftForSlot = (slot: string): 'manha' | 'tarde' | 'noite' => {
     if (!slot) return 'manha';
-    const startHourStr = slot.split(' - ')[0] || '';
+    const startHourStr = slot.split(/\s*-\s*/)[0] || '';
     const hour = parseInt(startHourStr.split(':')[0], 10);
     if (isNaN(hour)) return 'manha';
     if (hour >= 7 && hour < 12) return 'manha';
@@ -3353,7 +3462,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   }));
   const [turmaForm, setTurmaForm] = useState<any>(() => getSavedFormDraft('draft_turma', { nome: '', escola_id: '', ano_letivo: '2026', nivel: 'Primário', docente_id: '', capacidade_max: 30, classe_escolar_id: '', curso_id: '', curso_nome: '' }));
   const [classeForm, setClasseForm] = useState<any>(() => getSavedFormDraft('draft_classe', { nome: '', turma_id: '', docente_id: '', horario: '', sala: '', data: new Date().toISOString().split('T')[0], dia_semana: getDiaSemanaFromDate(new Date().toISOString().split('T')[0]), codigo: '', escola_id: '', classe_escolar_id: '', professores_responsaveis: [] }));
-  const [pautaForm, setPautaForm] = useState<any>(() => getSavedFormDraft('draft_pauta', { escola_id: '', estudante_id: '', classe_id: '', trimestre: '1º Trimestre', nota_prova: '', nota_trabalho: '', nota_participacao: '', nota_exame: '', nota_reavaliacao: '', observacao: '', num_avaliacoes: 3, avaliacao_1: '', avaliacao_2: '', avaliacao_3: '', status_estudante: 'Pendente', status: 'rascunho' }));
+  const [pautaForm, setPautaForm] = useState<any>(() => getSavedFormDraft('draft_pauta', { escola_id: '', estudante_id: '', classe_id: '', trimestre: '1º Trimestre', nota_prova: '', nota_trabalho: '', nota_participacao: '', nota_exame: '', nota_reavaliacao: '', observacao: '', num_avaliacoes: 3, avaliacao_1: '', avaliacao_2: '', avaliacao_3: '', status_estudante: 'Pendente', status: 'rascunho', dados_customizados: {} as Record<string, any> }));
   const [selectedPautaSchoolId, setSelectedPautaSchoolId] = useState('');
   const [pautaGeralEscolaId, setPautaGeralEscolaId] = useState('');
   const [pautaGeralAlunoQuery, setPautaGeralAlunoQuery] = useState('');
@@ -3475,7 +3584,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     setPageTurmas(1);
     setPageClasses(1);
     setPagePautas(1);
-  }, [searchQuery, schoolSearchText, teacherSearchText, studentSearchText, disciplineSearchText, selectedSchoolFilter, selectedTurmaFilter, activeTab, studentSubTab]);
+  }, [searchQuery, debouncedSchoolSearchText, debouncedTeacherSearchText, debouncedStudentSearchText, debouncedDisciplineSearchText, selectedSchoolFilter, selectedTurmaFilter, activeTab, studentSubTab]);
 
   useEffect(() => {
     saveSettingIfAllowed('draft_ferias', JSON.stringify(feriasForm), 'formData', 24);
@@ -4101,29 +4210,44 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           return;
         }
 
-        // Insert Users & Docentes
-        for (const row of validRows) {
-          const userRef = await addDoc(collection(db, 'users'), {
-            nome: row.nome,
-            email: row.email,
-            tipo: 'docente',
-            ativo: true,
-            tenant_id: currentTenantId,
-            modulo_acessos: getInheritedModuloAcessos('docente'),
-            created_at: new Date().toISOString()
-          });
+        // Insert Users & Docentes in atomic writeBatch chunks (eliminates N+1 HTTP writes)
+        const nowImportDocIso = new Date().toISOString();
+        const docenteBatchOps: BatchMutationOp[] = [];
+        const docModulos = getInheritedModuloAcessos('docente');
 
-          await addDoc(collection(db, 'docentes'), {
-            user_id: userRef.id,
-            escola_id: row.escola_id,
-            especialidade: row.especialidade,
-            numero_registro: row.numero_registro,
-            tenant_id: currentTenantId,
-            created_at: new Date().toISOString()
+        for (const row of validRows) {
+          const userRef = doc(collection(db, 'users'));
+          const docRef = doc(collection(db, 'docentes'));
+          docenteBatchOps.push({
+            type: 'set',
+            path: ['users', userRef.id],
+            data: {
+              nome: row.nome,
+              email: row.email,
+              tipo: 'docente',
+              ativo: true,
+              tenant_id: currentTenantId,
+              modulo_acessos: docModulos,
+              created_at: nowImportDocIso
+            }
+          });
+          docenteBatchOps.push({
+            type: 'set',
+            path: ['docentes', docRef.id],
+            data: {
+              user_id: userRef.id,
+              escola_id: row.escola_id,
+              especialidade: row.especialidade,
+              numero_registro: row.numero_registro,
+              tenant_id: currentTenantId,
+              created_at: nowImportDocIso
+            }
           });
         }
+        await commitBatchOperations(docenteBatchOps);
 
         await addDoc(collection(db, 'notificacoes'), {
+          tenant_id: currentTenantId,
           destinatario_id: currentTenantId,
           destinatario_role: 'admin',
           titulo: 'Importação de Docentes Concluída',
@@ -4338,6 +4462,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           // Informar o administrador sobre o bloqueio de importação
           try {
             await addDoc(collection(db, 'notificacoes'), {
+              tenant_id: currentTenantId,
               destinatario_id: currentTenantId,
               destinatario_role: 'admin',
               titulo: 'Bloqueio de Importação: Inconsistência de Classe',
@@ -4352,49 +4477,70 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           return;
         }
 
-        // Write students & users
+        // Insert Users & Estudantes & Dossiers in atomic writeBatch chunks
+        const nowImportEstIso = new Date().toISOString();
+        const todayDateStr = nowImportEstIso.split('T')[0];
+        const estBatchOps: BatchMutationOp[] = [];
+        const estModulos = getInheritedModuloAcessos('estudante');
+
         for (const row of validRows) {
-          const userRef = await addDoc(collection(db, 'users'), {
-            nome: row.nome,
-            email: row.email,
-            tipo: 'estudante',
-            ativo: true,
-            tenant_id: currentTenantId,
-            modulo_acessos: getInheritedModuloAcessos('estudante'),
-            created_at: new Date().toISOString()
-          });
-
-          const studRef = await addDoc(collection(db, 'estudantes'), {
-            user_id: userRef.id,
-            escola_id: row.escola_id,
-            turma_id: row.turma_id,
-            numero_matricula: row.numero_matricula,
-            data_nascimento: row.data_nascimento,
-            genero: row.genero,
-            faturado: row.faturado,
-            periodo_faturacao: row.periodo_faturacao,
-            dados_em_falta: row.dados_em_falta,
-            tenant_id: currentTenantId,
-            created_at: new Date().toISOString()
-          });
-
-          // Create student dossiers if incomplete
-          if (row.dados_em_falta.length > 0) {
-            await addDoc(collection(db, 'processos_aluno'), {
+          const userRef = doc(collection(db, 'users'));
+          const studRef = doc(collection(db, 'estudantes'));
+          estBatchOps.push({
+            type: 'set',
+            path: ['users', userRef.id],
+            data: {
+              nome: row.nome,
+              email: row.email,
+              tipo: 'estudante',
+              ativo: true,
               tenant_id: currentTenantId,
-              estudante_id: studRef.id,
-              tipo: 'Matrícula',
-              status: 'Análise',
-              documentos: [],
-              data: new Date().toISOString().split('T')[0],
-              criador_nome: 'Sistema (Importador)',
-              titulo: 'Ficha de Processo - Dados em Falta',
-              observacao: `Os seguintes dados obrigatórios estão em falta: ${row.dados_em_falta.join(', ')}.`
+              modulo_acessos: estModulos,
+              created_at: nowImportEstIso
+            }
+          });
+          estBatchOps.push({
+            type: 'set',
+            path: ['estudantes', studRef.id],
+            data: {
+              user_id: userRef.id,
+              escola_id: row.escola_id,
+              turma_id: row.turma_id,
+              numero_matricula: row.numero_matricula,
+              data_nascimento: row.data_nascimento,
+              genero: row.genero,
+              faturado: row.faturado,
+              periodo_faturacao: row.periodo_faturacao,
+              dados_em_falta: row.dados_em_falta,
+              tenant_id: currentTenantId,
+              created_at: nowImportEstIso
+            }
+          });
+
+          if (row.dados_em_falta.length > 0) {
+            const procRef = doc(collection(db, 'processos_aluno'));
+            estBatchOps.push({
+              type: 'set',
+              path: ['processos_aluno', procRef.id],
+              data: {
+                tenant_id: currentTenantId,
+                estudante_id: studRef.id,
+                tipo: 'Matrícula',
+                status: 'Análise',
+                documentos: [],
+                data: todayDateStr,
+                criador_nome: 'Sistema (Importador)',
+                titulo: 'Ficha de Processo - Dados em Falta',
+                observacao: `Os seguintes dados obrigatórios estão em falta: ${row.dados_em_falta.join(', ')}.`
+              }
             });
           }
         }
+        await commitBatchOperations(estBatchOps);
+        applyAnalyticsDelta(currentTenantId, 'student_created', { count: validRows.length }).catch(() => {});
 
         await addDoc(collection(db, 'notificacoes'), {
+          tenant_id: currentTenantId,
           destinatario_id: currentTenantId,
           destinatario_role: 'admin',
           titulo: 'Importação de Estudantes Concluída',
@@ -4597,11 +4743,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           return;
         }
 
-        for (const row of validRows) {
-          await addDoc(collection(db, 'pautas'), row);
-        }
+        const pautaBatchOps: BatchMutationOp[] = validRows.map((row) => {
+          const pRef = doc(collection(db, 'pautas'));
+          return { type: 'set', path: ['pautas', pRef.id], data: { ...row, tenant_id: currentTenantId } };
+        });
+        await commitBatchOperations(pautaBatchOps);
 
         await addDoc(collection(db, 'notificacoes'), {
+          tenant_id: currentTenantId,
           destinatario_id: currentTenantId,
           destinatario_role: 'admin',
           titulo: 'Lançamento de Notas Importado',
@@ -4623,15 +4772,23 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     }
   };
 
-  // LOAD TENANT DETAILS AND PLAN CONSTRAINTS
-  async function loadTenantContext() {
+  // LOAD TENANT DETAILS, REFERENCE CACHES AND PLAN CONSTRAINTS
+  async function loadTenantContext(forceRefresh: boolean = false) {
     if (!hasLoadedOnce) {
       setLoading(true);
     }
     try {
-      const tDoc = await getDoc(doc(db, 'tenants', currentTenantId));
-      if (tDoc.exists()) {
-        const tData = tDoc.data() as Tenant;
+      const tData = await getOrFetchCached<Tenant | null>({
+        key: buildTenantCacheKey(currentTenantId, 'tenant_profile'),
+        ttlMs: CACHE_TTLS.TENANT_PROFILE,
+        forceRefresh,
+        fetcher: async () => {
+          const tDoc = await getDoc(doc(db, 'tenants', currentTenantId));
+          return tDoc.exists() ? (tDoc.data() as Tenant) : null;
+        },
+      });
+
+      if (tData) {
         setTenant(tData);
 
         // Auto trigger default language if set and different from current systemLang
@@ -4639,10 +4796,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           onChangeLanguage(tData.idioma_padrao);
         }
 
-        // Get Plan
-        const pDoc = await getDoc(doc(db, 'planos', tData.plano_id));
-        if (pDoc.exists()) {
-          setPlan(pDoc.data() as Plano);
+        const pData = await getOrFetchCached<Plano | null>({
+          key: buildGlobalCacheKey(`plano_${tData.plano_id}`),
+          ttlMs: CACHE_TTLS.PLANOS,
+          forceRefresh,
+          fetcher: async () => {
+            const pDoc = await getDoc(doc(db, 'planos', tData.plano_id));
+            return pDoc.exists() ? (pDoc.data() as Plano) : null;
+          },
+        });
+        if (pData) {
+          setPlan(pData);
         }
       }
 
@@ -4658,77 +4822,128 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         }
       };
 
+      const safeCachedList = async <T,>(
+        cacheSubKey: string,
+        ttlMs: number,
+        colName: string,
+        maxLimit: number,
+        mapDoc?: (d: any) => T | null
+      ): Promise<T[]> => {
+        try {
+          return await getOrFetchCached<T[]>({
+            key: buildTenantCacheKey(currentTenantId, cacheSubKey),
+            ttlMs,
+            forceRefresh,
+            fetcher: async () => {
+              const snap = await getDocs(query(collection(db, colName), ...qParams, limit(maxLimit)));
+              const arr: T[] = [];
+              snap.forEach((d) => {
+                if (mapDoc) {
+                  const mapped = mapDoc(d);
+                  if (mapped !== null) arr.push(mapped);
+                } else {
+                  arr.push({ ...(d.data() as any), id: d.id } as T);
+                }
+              });
+              return arr;
+            },
+          });
+        } catch (e: any) {
+          console.warn(`Notice loading cached tenant partition (${colName}):`, e?.message || e);
+          return [];
+        }
+      };
+
       const [
-        provsSnap,
-        escSnap,
+        provList,
+        escList,
         usersSnap,
         docSnap,
         turSnap,
         estSnap,
-        clsSnap,
-        ferSnap,
-        salasSnap,
+        clsList,
+        ferList,
+        salasList,
         pauSnap,
         prcSnap,
-        confSnap,
-        escClsSnap,
-        plansSnapOrCached,
-        globalSmtpSnapOrCached,
+        configDocObj,
+        escClsList,
+        allPlansList,
+        globalSmtpObj,
         tSmtpSnap,
         pEmailsSnap,
         pendSnap,
         faturasSnap,
         assSnap,
-        feriadosSnap,
+        feriadosList,
         ativSnap,
         prcDocSnap,
         examesSnap,
-        cursosSnap,
-        cadeirasSnap,
+        cursosList,
+        cadeirasList,
         inscricoesSnap,
-        customFormsSnap,
+        formsList,
       ] = await Promise.all([
-        safeQuery(getDocs(query(collection(db, 'provincias'), ...qParams))),
-        safeQuery(getDocs(query(collection(db, 'escolas'), ...qParams))),
-        safeQuery(getDocs(query(collection(db, 'users'), ...qParams))),
-        safeQuery(getDocs(query(collection(db, 'docentes'), ...qParams))),
-        safeQuery(getDocs(query(collection(db, 'turmas'), ...qParams))),
-        safeQuery(getDocs(query(collection(db, 'estudantes'), ...qParams))),
-        safeQuery(getDocs(query(collection(db, 'classes'), ...qParams))),
-        safeQuery(getDocs(query(collection(db, 'ferias'), ...qParams))),
-        safeQuery(getDocs(query(collection(db, 'salas'), ...qParams))),
-        safeQuery(getDocs(query(collection(db, 'pautas'), ...qParams))),
-        safeQuery(getDocs(query(collection(db, 'processos_aluno'), ...qParams))),
-        safeQuery(getDocs(query(collection(db, 'configuracoes'), ...qParams))),
-        safeQuery(getDocs(query(collection(db, 'classes_escolares'), ...qParams))),
-        safeQuery(portalCache.allPlans ? Promise.resolve(portalCache.allPlans) : getDocs(collection(db, 'planos'))),
-        safeQuery(portalCache.globalSmtpConfig ? Promise.resolve(portalCache.globalSmtpConfig) : getDocs(query(collection(db, 'smtp_configs'), where('tenant_id', '==', 'fallback')))),
-        safeQuery(getDocs(query(collection(db, 'smtp_configs'), where('tenant_id', '==', currentTenantId)))),
-        safeQuery(getDocs(query(collection(db, 'pending_emails'), where('tenant_id', '==', currentTenantId)))),
-        safeQuery(getDocs(query(collection(db, 'importacoes_pendentes'), ...qParams))),
-        safeQuery(getDocs(query(collection(db, 'faturas_estudantes'), where('tenant_id', '==', currentTenantId)))),
-        safeQuery(getDocs(query(collection(db, 'assiduidade_logs'), ...qParams))),
-        safeQuery(getDocs(query(collection(db, 'feriados'), ...qParams))),
-        safeQuery(getDocs(query(collection(db, 'atividades'), ...qParams))),
-        safeQuery(getDocs(query(collection(db, 'processos_docentes'), ...qParams))),
-        safeQuery(getDocs(query(collection(db, 'exames_agendamentos'), ...qParams))),
-        safeQuery(getDocs(query(collection(db, 'cursos'), ...qParams))),
-        safeQuery(getDocs(query(collection(db, 'cadeiras'), ...qParams))),
-        safeQuery(getDocs(query(collection(db, 'inscricoes_cadeiras'), ...qParams))),
-        safeQuery(getDocs(query(collection(db, 'custom_forms'), where('tenant_id', '==', currentTenantId)))),
+        safeCachedList<Provincia>('provincias', CACHE_TTLS.PROVINCIAS, 'provincias', 200),
+        safeCachedList<Escola>('escolas', CACHE_TTLS.ESCOLAS, 'escolas', 200, (d) => {
+          const data = d.data() as Escola;
+          return !data.deleted_at ? { ...data, id: d.id } : null;
+        }),
+        safeQuery(getDocs(query(collection(db, 'users'), ...qParams, limit(1000)))),
+        safeQuery(getDocs(query(collection(db, 'docentes'), ...qParams, limit(500)))),
+        safeQuery(getDocs(query(collection(db, 'turmas'), ...qParams, limit(500)))),
+        safeQuery(getDocs(query(collection(db, 'estudantes'), ...qParams, limit(1500)))),
+        safeCachedList<Classe>('classes', CACHE_TTLS.CLASSES, 'classes', 500),
+        safeCachedList<any>('ferias', CACHE_TTLS.FERIAS, 'ferias', 200),
+        safeCachedList<Sala>('salas', CACHE_TTLS.SALAS, 'salas', 300),
+        safeQuery(getDocs(query(collection(db, 'pautas'), ...qParams, limit(1000)))),
+        safeQuery(getDocs(query(collection(db, 'processos_aluno'), ...qParams, limit(500)))),
+        getOrFetchCached<TenantConfig | null>({
+          key: buildTenantCacheKey(currentTenantId, 'configuracoes'),
+          ttlMs: CACHE_TTLS.CONFIGURACOES,
+          forceRefresh,
+          fetcher: async () => {
+            const snap = await getDocs(query(collection(db, 'configuracoes'), ...qParams, limit(20)));
+            return !snap.empty ? { ...(snap.docs[0].data() as TenantConfig), id: snap.docs[0].id } : null;
+          },
+        }).catch(() => null),
+        safeCachedList<ClasseEscolar>('classes_escolares', CACHE_TTLS.CLASSES_ESCOLARES, 'classes_escolares', 200),
+        getOrFetchCached<Plano[]>({
+          key: buildGlobalCacheKey('planos'),
+          ttlMs: CACHE_TTLS.PLANOS,
+          forceRefresh,
+          fetcher: async () => {
+            const snap = await getDocs(query(collection(db, 'planos'), limit(50)));
+            const arr: Plano[] = [];
+            snap.forEach((d) => arr.push({ ...(d.data() as Plano), id: d.id }));
+            return arr;
+          },
+        }).catch(() => portalCache.allPlans || []),
+        getOrFetchCached<SmtpConfig | null>({
+          key: buildGlobalCacheKey('smtp_fallback'),
+          ttlMs: CACHE_TTLS.GLOBAL_SMTP,
+          forceRefresh,
+          fetcher: async () => {
+            const snap = await getDocs(query(collection(db, 'smtp_configs'), where('tenant_id', '==', 'fallback'), limit(5)));
+            return !snap.empty ? { ...(snap.docs[0].data() as SmtpConfig), id: snap.docs[0].id } : null;
+          },
+        }).catch(() => null),
+        safeQuery(getDocs(query(collection(db, 'smtp_configs'), where('tenant_id', '==', currentTenantId), limit(10)))),
+        safeQuery(getDocs(query(collection(db, 'pending_emails'), where('tenant_id', '==', currentTenantId), limit(100)))),
+        safeQuery(getDocs(query(collection(db, 'importacoes_pendentes'), ...qParams, limit(100)))),
+        safeQuery(getDocs(query(collection(db, 'faturas_estudantes'), where('tenant_id', '==', currentTenantId), limit(500)))),
+        safeQuery(getDocs(query(collection(db, 'assiduidade_logs'), ...qParams, limit(500)))),
+        safeCachedList<Feriado>('feriados', CACHE_TTLS.FERIADOS, 'feriados', 200),
+        safeQuery(getDocs(query(collection(db, 'atividades'), ...qParams, limit(300)))),
+        safeQuery(getDocs(query(collection(db, 'processos_docentes'), ...qParams, limit(300)))),
+        safeQuery(getDocs(query(collection(db, 'exames_agendamentos'), ...qParams, limit(300)))),
+        safeCachedList<Curso>('cursos', CACHE_TTLS.CURSOS, 'cursos', 200),
+        safeCachedList<Cadeira>('cadeiras', CACHE_TTLS.CADEIRAS, 'cadeiras', 500),
+        safeQuery(getDocs(query(collection(db, 'inscricoes_cadeiras'), ...qParams, limit(1000)))),
+        safeCachedList<CustomForm>('custom_forms', CACHE_TTLS.CUSTOM_FORMS, 'custom_forms', 50),
       ]);
 
-      const provList: Provincia[] = [];
-      provsSnap.forEach(d => provList.push({ ...d.data() as Provincia, id: d.id }));
       setProvinces(provList);
-
-      const escList: Escola[] = [];
-      escSnap.forEach(d => {
-        const data = d.data() as Escola;
-        if (!data.deleted_at) {
-          escList.push({ ...data, id: d.id });
-        }
-      });
       setSchools(escList);
 
       const usersList: User[] = [];
@@ -4756,22 +4971,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       estSnap.forEach(d => estList.push({ ...d.data() as Estudante, id: d.id }));
       setStudents(estList);
 
-      const clsList: Classe[] = [];
-      clsSnap.forEach(d => clsList.push({ ...d.data() as Classe, id: d.id }));
       setClasses(clsList);
-
-      const ferList: any[] = [];
-      ferSnap.forEach(d => ferList.push({ ...d.data(), id: d.id }));
       setVacations(ferList);
-
-      const feriadosList: Feriado[] = [];
-      if (feriadosSnap) {
-        feriadosSnap.forEach(d => feriadosList.push({ ...d.data() as Feriado, id: d.id }));
-      }
       setFeriados(feriadosList);
-
-      const salasList: Sala[] = [];
-      salasSnap.forEach(d => salasList.push({ ...d.data() as Sala, id: d.id }));
       setSalas(salasList);
 
       const pauList: Pauta[] = [];
@@ -4800,24 +5002,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       }
       setExames(examesList);
 
-      if (!confSnap.empty) {
-        setConfig({ ...confSnap.docs[0].data() as TenantConfig, id: confSnap.docs[0].id });
+      if (configDocObj) {
+        setConfig(configDocObj);
       }
 
-      const escClsList: ClasseEscolar[] = [];
-      escClsSnap.forEach(d => escClsList.push({ ...d.data() as ClasseEscolar, id: d.id }));
       setClassesEscolares(escClsList);
-
-      const cursosList: Curso[] = [];
-      if (cursosSnap) {
-        cursosSnap.forEach(d => cursosList.push({ ...d.data() as Curso, id: d.id }));
-      }
       setCursos(cursosList);
-
-      const cadeirasList: Cadeira[] = [];
-      if (cadeirasSnap) {
-        cadeirasSnap.forEach(d => cadeirasList.push({ ...d.data() as Cadeira, id: d.id }));
-      }
       setCadeiras(cadeirasList);
 
       const inscricoesList: InscricaoCadeira[] = [];
@@ -4826,35 +5016,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       }
       setInscricoes(inscricoesList);
 
-      const formsList: CustomForm[] = [];
-      if (customFormsSnap) {
-        customFormsSnap.forEach(d => formsList.push({ ...d.data() as CustomForm, id: d.id }));
-      }
       setCustomForms(formsList);
 
-      if (portalCache.allPlans) {
-        setAllPlans(portalCache.allPlans);
-      } else {
-        const plansList: Plano[] = [];
-        const pSnap = plansSnapOrCached as any;
-        pSnap.forEach((d: any) => plansList.push({ ...d.data() as Plano, id: d.id }));
-        portalCache.allPlans = plansList;
-        setAllPlans(plansList);
-      }
+      portalCache.allPlans = allPlansList;
+      setAllPlans(allPlansList);
 
-      if (portalCache.globalSmtpConfig) {
-        setGlobalSmtpConfig(portalCache.globalSmtpConfig);
-      } else {
-        const gSnap = globalSmtpSnapOrCached as any;
-        if (!gSnap.empty) {
-          const cObj = { ...gSnap.docs[0].data() as SmtpConfig, id: gSnap.docs[0].id };
-          portalCache.globalSmtpConfig = cObj;
-          setGlobalSmtpConfig(cObj);
-        } else {
-          portalCache.globalSmtpConfig = null;
-          setGlobalSmtpConfig(null);
-        }
-      }
+      portalCache.globalSmtpConfig = globalSmtpObj;
+      setGlobalSmtpConfig(globalSmtpObj);
 
       if (!tSmtpSnap.empty) {
         setTenantSmtpConfig({ ...tSmtpSnap.docs[0].data() as SmtpConfig, id: tSmtpSnap.docs[0].id });
@@ -4879,6 +5047,23 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       const assList: any[] = [];
       assSnap.forEach(d => assList.push({ ...d.data(), id: d.id }));
       setAssiduidadeLogs(assList);
+
+      // Sincroniza agregado pré-calculado para Análise Administrativa em segundo plano
+      recomputeAndPersistTenantAnalytics({
+        tenantId: currentTenantId,
+        schools: escList,
+        teachers: docList,
+        students: estList,
+        turmas: turList,
+        classes: clsList,
+        salas: salasList,
+        cursos: cursosList,
+        cadeiras: cadeirasList,
+        pautas: pauList,
+        assiduidadeLogs: assList,
+        atividades: ativList,
+        planoAulas: [],
+      }).catch(() => {});
 
     } catch (err) {
       console.error("Error loading tenant database:", err);
@@ -4971,6 +5156,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           escola_id: cleanDocenteData.escola_id || schools[0]?.id || '',
           created_at: new Date().toISOString()
         });
+        applyAnalyticsDelta(currentTenantId, 'teacher_created');
 
         // If optional fields missing, auto-create activity idempotently
         if (cleanDocenteData.dados_em_falta && cleanDocenteData.dados_em_falta.length > 0) {
@@ -5035,7 +5221,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         });
         showSystemNotification("Novo curso cadastrado com sucesso!", "sucesso");
       }
-      await loadTenantContext();
+      await invalidateTenantCache(currentTenantId, ['cursos']);
+      await loadTenantContext(true);
     } catch (error: any) {
       console.error("Erro ao salvar curso:", error);
       showSystemNotification(`Erro ao salvar curso: ${error?.message || error}`, "erro");
@@ -5045,8 +5232,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const handleDeleteCurso = async (cursoId: string) => {
     try {
       await deleteDoc(doc(db, 'cursos', cursoId));
+      await invalidateTenantCache(currentTenantId, ['cursos']);
       showSystemNotification("Curso removido com sucesso!", "sucesso");
-      await loadTenantContext();
+      await loadTenantContext(true);
     } catch (error: any) {
       console.error("Erro ao remover curso:", error);
       showSystemNotification(`Erro ao remover curso: ${error?.message || error}`, "erro");
@@ -5106,7 +5294,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         });
         showSystemNotification("Disciplina/Cadeira cadastrada com sucesso e sincronizada com o módulo de cadeiras!", "sucesso");
       }
-      await loadTenantContext();
+      await invalidateTenantCache(currentTenantId, ['cadeiras', 'classes']);
+      await loadTenantContext(true);
     } catch (error: any) {
       console.error("Erro ao salvar cadeira:", error);
       showSystemNotification(`Erro ao salvar disciplina/cadeira: ${error?.message || error}`, "erro");
@@ -5116,8 +5305,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const handleDeleteCadeira = async (cadeiraId: string) => {
     try {
       await deleteDoc(doc(db, 'cadeiras', cadeiraId));
+      await invalidateTenantCache(currentTenantId, ['cadeiras', 'classes']);
       showSystemNotification("Disciplina/Cadeira removida com sucesso!", "sucesso");
-      await loadTenantContext();
+      await loadTenantContext(true);
     } catch (error: any) {
       console.error("Erro ao remover cadeira:", error);
       showSystemNotification(`Erro ao remover disciplina/cadeira: ${error?.message || error}`, "erro");
@@ -5286,12 +5476,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     }
   }
 
-  // Periodically check and send pending emails if active SMTP is found (Rule 6.2)
+  // Processa fila de e-mails apenas quando existem e-mails pendentes (sem polling em repouso)
   useEffect(() => {
     const activeSmtp = (tenantSmtpConfig && tenantSmtpConfig.status === 'ativo') ? tenantSmtpConfig : (globalSmtpConfig && globalSmtpConfig.status === 'ativo' ? globalSmtpConfig : null);
-    if (!activeSmtp) return;
+    const hasPendingEmails = pendingEmails.some(e => e.status === 'pendente');
+    if (!activeSmtp || !hasPendingEmails) return;
 
     async function processQueue() {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
       if (isFirestoreQuotaExhausted()) return;
       const pending = pendingEmails.filter(e => e.status === 'pendente');
       if (pending.length === 0) return;
@@ -5300,14 +5493,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       for (const email of pending) {
         if (isFirestoreQuotaExhausted()) break;
         try {
-          // Update email status
           await updateDoc(doc(db, 'pending_emails', email.id), {
             status: 'enviado',
             enviado_em: new Date().toISOString(),
             smtp_provider: activeSmtp.tenant_id === 'fallback' ? 'fallback' : 'tenant'
           });
 
-          // Add to received emails
           await addDoc(collection(db, 'received_emails'), {
             to: email.to,
             subject: email.subject,
@@ -5316,7 +5507,6 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             created_at: new Date().toISOString()
           });
 
-          // Notify tenant admin too
           await addDoc(collection(db, 'notificacoes'), {
             destinatario_id: currentTenantId,
             titulo: 'Fila de E-mails Enviada',
@@ -5325,7 +5515,6 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             lido: false,
             created_at: new Date().toISOString()
           });
-
         } catch (err: any) {
           if (err?.message?.includes('Quota limit exceeded')) {
             break;
@@ -5336,9 +5525,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       loadTenantContext();
     }
 
+    const handleOnline = () => { processQueue(); };
+    window.addEventListener('online', handleOnline);
     const interval = setInterval(processQueue, 60000);
-    return () => clearInterval(interval);
-  }, [tenantSmtpConfig, globalSmtpConfig, pendingEmails]);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      clearInterval(interval);
+    };
+  }, [tenantSmtpConfig, globalSmtpConfig, pendingEmails, currentTenantId]);
 
   function renderStudentActions(s: Estudante, usr: any) {
     const isDeactivated = s.ativo === false;
@@ -5591,7 +5785,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     return DEFAULT_CATEGORIES[0]?.modulos ? JSON.parse(JSON.stringify(DEFAULT_CATEGORIES[0].modulos)) : {};
   };
 
-  function hasPermission(moduleKey: string, featureKey?: 'visualizar' | 'criar' | 'editar' | 'excluir'): boolean {
+  function hasPermission(moduleKey: string, featureKey?: 'visualizar' | 'criar' | 'editar' | 'excluir' | 'aprovar' | 'exportar'): boolean {
     let normalizedKey = moduleKey;
     if (moduleKey === 'classes') normalizedKey = 'classes_escolares';
     if (moduleKey === 'utilizadores' || moduleKey === 'usuarios') normalizedKey = 'usuarios';
@@ -5820,6 +6014,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         async () => {
           setIsSaving(true);
           try {
+            const batchOps: BatchMutationOp[] = [];
             for (const id of selectedSchoolIds) {
               const escObj = rawSchools.find(sc => sc.id === id);
               const name = escObj?.nome || 'Escola';
@@ -5827,27 +6022,33 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               const associatedTeachers = rawTeachers.filter(t => t.escola_id === id);
 
               for (const s of associatedStudents) {
-                await updateDoc(doc(db, 'estudantes', s.id), { escola_id: '' });
+                batchOps.push({ type: 'update', path: ['estudantes', s.id], data: { escola_id: '' } });
               }
               for (const t of associatedTeachers) {
-                await updateDoc(doc(db, 'docentes', t.id), { escola_id: '' });
+                batchOps.push({ type: 'update', path: ['docentes', t.id], data: { escola_id: '' } });
               }
-              await deleteDoc(doc(db, 'escolas', id));
+              batchOps.push({ type: 'delete', path: ['escolas', id] });
 
-              // Add a database notification for admin
-              await addDoc(collection(db, 'notificacoes'), {
-                destinatario_id: 'admin',
-                tenant_id: currentTenantId,
-                titulo: 'Escola Excluída em Massa',
-                mensagem: `A escola "${name}" foi excluída em massa. Alunos e docentes vinculados foram desassociados.`,
-                tipo: 'alerta',
-                lido: false,
-                created_at: new Date().toISOString()
+              const notifRef = doc(collection(db, 'notificacoes'));
+              batchOps.push({
+                type: 'set',
+                path: ['notificacoes', notifRef.id],
+                data: {
+                  destinatario_id: 'admin',
+                  tenant_id: currentTenantId,
+                  titulo: 'Escola Excluída em Massa',
+                  mensagem: `A escola "${name}" foi excluída em massa. Alunos e docentes vinculados foram desassociados.`,
+                  tipo: 'alerta',
+                  lido: false,
+                  created_at: new Date().toISOString()
+                }
               });
             }
+            await commitBatchOperations(batchOps);
+            await invalidateTenantCache(currentTenantId, ['escolas']);
             setSelectedSchoolIds([]);
             showSystemNotification(`Operação em massa realizada: ${selectedSchoolIds.length} escolas excluídas!`, 'sucesso');
-            loadTenantContext();
+            loadTenantContext(true);
           } catch (e: any) {
             console.error(e);
             showSystemNotification(`Erro na operação em massa: ${e.message || e}`, 'erro');
@@ -5867,9 +6068,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             for (const id of selectedSchoolIds) {
               await updateDoc(doc(db, 'escolas', id), { ativo: false });
             }
+            await invalidateTenantCache(currentTenantId, ['escolas']);
             setSelectedSchoolIds([]);
             showSystemNotification(`Operação em massa realizada: ${selectedSchoolIds.length} escolas desativadas!`, 'sucesso');
-            loadTenantContext();
+            loadTenantContext(true);
           } catch (e: any) {
             console.error(e);
             showSystemNotification(`Erro na desativação em massa: ${e.message || e}`, 'erro');
@@ -5888,9 +6090,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             for (const id of selectedSchoolIds) {
               await updateDoc(doc(db, 'escolas', id), { ativo: true });
             }
+            await invalidateTenantCache(currentTenantId, ['escolas']);
             setSelectedSchoolIds([]);
             showSystemNotification(`Operação em massa realizada: ${selectedSchoolIds.length} escolas ativadas!`, 'sucesso');
-            loadTenantContext();
+            loadTenantContext(true);
           } catch (e: any) {
             console.error(e);
             showSystemNotification(`Erro na ativação em massa: ${e.message || e}`, 'erro');
@@ -5965,7 +6168,19 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           const loaded: UserCategoryPermission[] = [];
           snapshot.forEach((docSnap) => {
             const data = docSnap.data() as UserCategoryPermission;
-            loaded.push({ ...data, id: docSnap.id });
+            const defaultCat = DEFAULT_CATEGORIES.find(
+              def => def.id === docSnap.id || def.codigo === data.codigo
+            );
+            const mergedModulos: Record<string, any> = { ...(data.modulos || {}) };
+            SYSTEM_MODULES.forEach((mod) => {
+              if (!mergedModulos[mod.key]) {
+                mergedModulos[mod.key] = defaultCat?.modulos?.[mod.key] || {
+                  habilitado: false,
+                  acoes: { visualizar: false, criar: false, editar: false, excluir: false, exportar: false, aprovar: false }
+                };
+              }
+            });
+            loaded.push({ ...data, id: docSnap.id, modulos: mergedModulos });
           });
           const merged = [...loaded];
           DEFAULT_CATEGORIES.forEach((def) => {
@@ -6033,7 +6248,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   useEffect(() => {
     if (!currentTenantId) return;
     const mountTime = Date.now();
-    const q = query(collection(db, 'notificacoes'));
+    const q = query(
+      collection(db, 'notificacoes'),
+      where('tenant_id', '==', currentTenantId),
+      limit(100)
+    );
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list: Notificacao[] = [];
       const userRole = (currentUserRole || loggedInUser?.tipo || 'estudante').toLowerCase();
@@ -6839,6 +7058,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             }, { merge: true });
           }
           await addDoc(collection(db, 'notificacoes'), {
+            tenant_id: currentTenantId,
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
             titulo: 'Cadastro de Docente Atualizado',
@@ -6881,14 +7101,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           };
           const teacherTempPwd = generateCompliantPassword();
           await setDoc(doc(db, 'docentes', docGenId), newDocente);
+          applyAnalyticsDelta(currentTenantId, 'teacher_created');
           if (teacherEmail) {
             await registerUserInFirebaseAuth(teacherEmail, teacherTempPwd);
           }
 
           await addDoc(collection(db, 'notificacoes'), {
+            tenant_id: currentTenantId,
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
-            titulo: '‍ Novo Docente Cadastrado',
+            titulo: 'Novo Docente Cadastrado',
             mensagem: `O docente "${teacherForm.nome}" foi cadastrado no sistema (Especialidade: ${teacherForm.especialidade}).`,
             tipo: 'sucesso',
             lido: false,
@@ -6994,6 +7216,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             }, { merge: true });
           }
           await addDoc(collection(db, 'notificacoes'), {
+            tenant_id: currentTenantId,
             destinatario_id: currentTenantId,
             destinatario_role: 'admin',
             titulo: 'Cadastro de Estudante Atualizado',
@@ -7059,9 +7282,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             ...(studentForm as any).dados_customizados ? { dados_customizados: (studentForm as any).dados_customizados } : {}
           } as any;
           await setDoc(doc(db, 'estudantes', estGenId), newEstudante);
+          applyAnalyticsDelta(currentTenantId, 'student_created');
           await registerUserInFirebaseAuth(studentEmail, studentPwd);
 
-          // Auto-inscrição obrigatória nas disciplinas do 1º período (Regra 8.3)
+          // Auto-inscrição obrigatória nas disciplinas do 1º período em lote (Regra 8.3)
           if (studentForm.curso_id) {
             const courseCadeiras = rawCadeiras.filter(c => c.cursoId === studentForm.curso_id);
             const firstPeriodName = courseCadeiras[0]?.periodo_lectivo || '1º Semestre';
@@ -7069,46 +7293,62 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               c.periodo_lectivo === firstPeriodName && c.tipo_disciplina === 'obrigatoria'
             );
 
-            for (const cad of firstPeriodCadeiras) {
+            const inscOps: BatchMutationOp[] = firstPeriodCadeiras.map((cad) => {
               const inscId = "insc-" + Math.random().toString(36).substr(2, 9);
-              await setDoc(doc(db, 'inscricoes_cadeiras', inscId), {
-                id: inscId,
-                tenant_id: currentTenantId,
-                estudante_id: estGenId,
-                institutionId: studentForm.escola_id,
-                cursoId: studentForm.curso_id,
-                cadeira_id: cad.id,
-                cadeira_nome: cad.nome,
-                cadeira_codigo: cad.codigo,
-                ano_lectivo: studentForm.ano_lectivo || '2026',
-                periodo_lectivo: cad.periodo_lectivo,
-                ano_curricular: cad.ano_curricular || 1,
-                estado: 'Em curso',
-                creditos_concluidos: 0,
-                data_inscricao: new Date().toISOString()
-              });
-            }
+              return {
+                type: 'set',
+                path: ['inscricoes_cadeiras', inscId],
+                data: {
+                  id: inscId,
+                  tenant_id: currentTenantId,
+                  estudante_id: estGenId,
+                  institutionId: studentForm.escola_id,
+                  cursoId: studentForm.curso_id,
+                  cadeira_id: cad.id,
+                  cadeira_nome: cad.nome,
+                  cadeira_codigo: cad.codigo,
+                  ano_lectivo: studentForm.ano_lectivo || '2026',
+                  periodo_lectivo: cad.periodo_lectivo,
+                  ano_curricular: cad.ano_curricular || 1,
+                  estado: 'Em curso',
+                  creditos_concluidos: 0,
+                  data_inscricao: new Date().toISOString()
+                }
+              };
+            });
+            await commitBatchOperations(inscOps);
           }
 
-          await addDoc(collection(db, 'notificacoes'), {
-            destinatario_id: currentTenantId,
-            destinatario_role: 'admin',
-            titulo: 'Novo Estudante Matriculado',
-            mensagem: `O estudante "${studentForm.nome}" foi matriculado com sucesso (Nº Matrícula: ${studentForm.numero_matricula}).`,
-            tipo: 'sucesso',
-            lido: false,
-            created_at: new Date().toISOString()
-          });
-
-          await addDoc(collection(db, 'notificacoes'), {
-            destinatario_id: userGenId,
-            destinatario_role: 'estudante',
-            titulo: 'Bem-vindo ao Portal do Estudante!',
-            mensagem: `Olá ${studentForm.nome}! O seu acesso ao Portal do Estudante está pronto. Nº Matrícula: ${studentForm.numero_matricula}.`,
-            tipo: 'sucesso',
-            lido: false,
-            created_at: new Date().toISOString()
-          });
+          await commitBatchOperations([
+            {
+              type: 'set',
+              path: ['notificacoes', doc(collection(db, 'notificacoes')).id],
+              data: {
+                tenant_id: currentTenantId,
+                destinatario_id: currentTenantId,
+                destinatario_role: 'admin',
+                titulo: 'Novo Estudante Matriculado',
+                mensagem: `O estudante "${studentForm.nome}" foi matriculado com sucesso (Nº Matrícula: ${studentForm.numero_matricula}).`,
+                tipo: 'sucesso',
+                lido: false,
+                created_at: new Date().toISOString()
+              }
+            },
+            {
+              type: 'set',
+              path: ['notificacoes', doc(collection(db, 'notificacoes')).id],
+              data: {
+                tenant_id: currentTenantId,
+                destinatario_id: userGenId,
+                destinatario_role: 'estudante',
+                titulo: 'Bem-vindo ao Portal do Estudante!',
+                mensagem: `Olá ${studentForm.nome}! O seu acesso ao Portal do Estudante está pronto. Nº Matrícula: ${studentForm.numero_matricula}.`,
+                tipo: 'sucesso',
+                lido: false,
+                created_at: new Date().toISOString()
+              }
+            }
+          ]);
 
           if (studentForm.faturado) {
             await addDoc(collection(db, 'faturas_estudantes'), {
@@ -7427,7 +7667,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           horarioForm.docente_id,
           horarioForm.sala,
           rawClasses,
-          editingItem?.id
+          editingItem?.id,
+          rawExames
         );
 
         if (conflictCheck.conflict) {
@@ -7590,6 +7831,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           })),
           isUpdate: !!editingItem
         });
+
+        // Focus calendar week, turma & turn on newly saved class so it shows immediately
+        if (horarioForm.data) {
+          setCalendarSelectedDate(getMonday(new Date(horarioForm.data + 'T12:00:00')));
+        }
+        if (horarioForm.turma_id) {
+          setSelectedTurmaFilter(horarioForm.turma_id);
+        }
+        setUserSelectedTurn(null);
+        setSelectedTurn(getShiftForSlot(`${horarioForm.hora_inicio} - ${horarioForm.hora_fim}`));
       }
 
       else if (modalType === 'feriado') {
@@ -7632,6 +7883,26 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       else if (modalType === 'agendar_exame') {
         if (!exameForm.turma_id || !exameForm.disciplina_nome || !exameForm.data || !exameForm.hora_inicio || !exameForm.hora_fim) {
           showSystemNotification("Erro: Preencha a turma, disciplina, data e horários do exame/avaliação!", "erro");
+          setIsSaving(false);
+          return;
+        }
+
+        const examConflictCheck = checkScheduleConflictDetails(
+          exameForm.hora_inicio,
+          exameForm.hora_fim,
+          exameForm.data,
+          getDiaSemanaFromDate(exameForm.data),
+          exameForm.turma_id,
+          exameForm.docente_id || '',
+          exameForm.sala || '',
+          rawClasses,
+          undefined,
+          rawExames,
+          editingItem?.id
+        );
+
+        if (examConflictCheck.conflict) {
+          showSystemNotification(`Conflito de Agendamento: ${examConflictCheck.reason}`, "erro");
           setIsSaving(false);
           return;
         }
@@ -7691,6 +7962,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           })),
           isUpdate: !!editingItem
         });
+
+        // Focus calendar week, turma & turn on newly scheduled exam
+        if (exameForm.data) {
+          setCalendarSelectedDate(getMonday(new Date(exameForm.data + 'T12:00:00')));
+        }
+        if (exameForm.turma_id) {
+          setSelectedTurmaFilter(exameForm.turma_id);
+        }
+        setUserSelectedTurn(null);
+        setSelectedTurn(getShiftForSlot(`${exameForm.hora_inicio} - ${exameForm.hora_fim}`));
       } 
       
       else if (modalType === 'classe_escolar') {
@@ -8044,6 +8325,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           }
         } else {
           await addDoc(collection(db, 'pautas'), { ...calculatedPauta, ...qParams });
+          applyAnalyticsDelta(currentTenantId, 'grade_recorded', {
+            nota: calculatedPauta.nota_media,
+            situacao: calculatedPauta.situacao
+          });
           
           if (calculatedPauta.status === 'publicado') {
             const targetStud = rawStudents.find(s => s.id === calculatedPauta.estudante_id);
@@ -8228,7 +8513,21 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       setIsModalOpen(false);
       setEditingItem(null);
       setIsFormDirty(false); // Reset dirty flag on successful submit
-      loadTenantContext();
+      const cacheKeyMap: Record<string, string[]> = {
+        provincia: ['provincias'],
+        escola: ['escolas'],
+        sala: ['salas'],
+        classe: ['classes', 'cadeiras'],
+        horario: ['classes', 'cadeiras'],
+        classe_escolar: ['classes_escolares'],
+        feriado: ['feriados'],
+        ferias: ['ferias'],
+      };
+      const keysToInvalidate = cacheKeyMap[modalType.toLowerCase()];
+      if (keysToInvalidate) {
+        await invalidateTenantCache(currentTenantId, keysToInvalidate);
+      }
+      loadTenantContext(Boolean(keysToInvalidate));
       const entitySaveNames: Record<string, string> = {
         student: 'Estudante guardado com sucesso.',
         teacher: 'Docente guardado com sucesso.',
@@ -8272,35 +8571,37 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       const associatedStudents = rawStudents.filter(s => s.escola_id === id);
       const associatedTeachers = rawTeachers.filter(t => t.escola_id === id);
 
-      // 2. Unassociate students in Firestore
+      // 2-5. Unassociate students/teachers, delete school and create notification in batch
+      const schoolDelOps: BatchMutationOp[] = [];
       for (const s of associatedStudents) {
-        await updateDoc(doc(db, 'estudantes', s.id), { escola_id: '' });
+        schoolDelOps.push({ type: 'update', path: ['estudantes', s.id], data: { escola_id: '' } });
       }
-
-      // 3. Unassociate teachers in Firestore
       for (const t of associatedTeachers) {
-        await updateDoc(doc(db, 'docentes', t.id), { escola_id: '' });
+        schoolDelOps.push({ type: 'update', path: ['docentes', t.id], data: { escola_id: '' } });
       }
+      schoolDelOps.push({ type: 'delete', path: ['escolas', id] });
 
-      // 4. Delete the school document
-      await deleteDoc(doc(db, 'escolas', id));
-
-      // 5. Create notification for admin
       const notificationMessage = `A escola "${name}" foi excluída permanentemente. ${associatedStudents.length} alunos e ${associatedTeachers.length} docentes foram desvinculados.`;
-      await addDoc(collection(db, 'notificacoes'), {
-        destinatario_id: 'admin',
-        tenant_id: currentTenantId,
-        titulo: 'Escola Excluída (Ação Crítica)',
-        mensagem: notificationMessage,
-        tipo: 'alerta',
-        lido: false,
-        created_at: new Date().toISOString()
+      schoolDelOps.push({
+        type: 'set',
+        path: ['notificacoes', doc(collection(db, 'notificacoes')).id],
+        data: {
+          destinatario_id: 'admin',
+          tenant_id: currentTenantId,
+          titulo: 'Escola Excluída (Ação Crítica)',
+          mensagem: notificationMessage,
+          tipo: 'alerta',
+          lido: false,
+          created_at: new Date().toISOString()
+        }
       });
+      await commitBatchOperations(schoolDelOps);
+      await invalidateTenantCache(currentTenantId, ['escolas']);
 
       showSystemNotification(`Escola "${name}" excluída e ${associatedStudents.length + associatedTeachers.length} vínculos desfeitos com sucesso!`, 'sucesso');
       setCriticalDeleteEscola(null);
       setDeleteEscolaConfirmText('');
-      await loadTenantContext();
+      await loadTenantContext(true);
     } catch (err: any) {
       console.error("Error deleting school:", err);
       showSystemNotification(`Erro ao excluir escola: ${err.message || err}`, 'erro');
@@ -8383,6 +8684,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           idioma_padrao: systemLang
         });
       }
+      await invalidateTenantCache(currentTenantId, ['configuracoes', 'tenant_profile']);
 
       showSystemNotification("Configurações gerais salvas com sucesso!", 'config');
     } catch (err: any) {
@@ -9648,16 +9950,20 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         <div className="lg:col-span-2 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-md transition-shadow space-y-4">
                           <div className="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-800">
                             <p className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-                              <MapPin className="w-4 h-4 text-indigo-600 dark:text-indigo-400 animate-bounce" /> Distribuição Geográfica das Escolas Registadas
+                              <MapPin className="w-4 h-4 text-indigo-600 dark:text-indigo-400" /> Distribuição Geográfica das Escolas Registadas
                             </p>
                             <span className="text-xs bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 px-2.5 py-1 rounded-full font-bold border border-indigo-100 dark:border-indigo-900/50">
                               {filteredSchools.length} {filteredSchools.length === 1 ? 'Escola' : 'Escolas'}
                             </span>
                           </div>
-                          <SchoolMap 
-                            schools={filteredSchools} 
-                            provinces={provinces}
-                          />
+                          <ModuleErrorBoundary title="Mapa Escolar">
+                            <Suspense fallback={<ModuleSkeleton title="A carregar mapa geográfico..." variant="compact" />}>
+                              <SchoolMap 
+                                schools={filteredSchools} 
+                                provinces={provinces}
+                              />
+                            </Suspense>
+                          </ModuleErrorBoundary>
                         </div>
                       </div>
                     </>
@@ -9670,28 +9976,32 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             {activeTab === 'analytics' && (
               !hasPermission('analytics') ? renderRestrictedAccess('Módulo de Análises & Analytics') : (
                 <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-6">
-                  <AnalyticsModule
-                    role={currentUserRole === 'suporte' ? 'admin' : currentUserRole}
-                    schools={rawSchools}
-                    teachers={rawTeachers}
-                    students={rawStudents}
-                    turmas={rawTurmas}
-                    classes={rawClasses}
-                    pautas={rawPautas}
-                    tenantUsers={tenantUsers}
-                    currentTeacher={currentTeacher}
-                    loggedInUser={loggedInUser}
-                    atividades={rawAtividades}
-                    assiduidadeLogs={assiduidadeLogs}
-                    processosAluno={rawProcessos}
-                    planoAulas={rawPlanoAulas}
-                    tipoInstituicao={tenant?.tipoInstituicao || 'escola'}
-                    cursos={rawCursos}
-                    cadeiras={rawCadeiras}
-                    salas={rawSalas}
-                    tenantConfig={config}
-                    tenantId={tenant?.id}
-                  />
+                  <ModuleErrorBoundary title="Análises & Analytics">
+                    <Suspense fallback={<ModuleSkeleton title="A carregar análises académicas..." variant="cards" />}>
+                      <AnalyticsModule
+                        role={currentUserRole === 'suporte' ? 'admin' : currentUserRole}
+                        schools={rawSchools}
+                        teachers={rawTeachers}
+                        students={rawStudents}
+                        turmas={rawTurmas}
+                        classes={rawClasses}
+                        pautas={rawPautas}
+                        tenantUsers={tenantUsers}
+                        currentTeacher={currentTeacher}
+                        loggedInUser={loggedInUser}
+                        atividades={rawAtividades}
+                        assiduidadeLogs={assiduidadeLogs}
+                        processosAluno={rawProcessos}
+                        planoAulas={rawPlanoAulas}
+                        tipoInstituicao={tenant?.tipoInstituicao || 'escola'}
+                        cursos={rawCursos}
+                        cadeiras={rawCadeiras}
+                        salas={rawSalas}
+                        tenantConfig={config}
+                        tenantId={tenant?.id}
+                      />
+                    </Suspense>
+                  </ModuleErrorBoundary>
                 </div>
               )
             )}
@@ -9699,23 +10009,27 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             {/* TAB: ACTIVIDADES */}
             {activeTab === 'atividades' && (
               !hasPermission('atividades') ? renderRestrictedAccess('Módulo de Actividades') : (
-                <AtividadesModule
-                  tenantId={tenant?.id || 'default'}
-                  loggedInUser={loggedInUser}
-                  currentUserRole={currentUserRole}
-                  tenantUsers={tenantUsers}
-                  teachers={rawTeachers}
-                  students={rawStudents}
-                  schools={rawSchools}
-                  turmas={rawTurmas}
-                  atividades={rawAtividades}
-                  pautas={rawPautas}
-                  processos={rawProcessos}
-                  faturas={studentFaturas}
-                  globalCategories={globalCategories}
-                  onRefreshData={() => loadTenantContext()}
-                  showNotification={showSystemNotification}
-                />
+                <ModuleErrorBoundary title="Actividades">
+                  <Suspense fallback={<ModuleSkeleton title="A carregar módulo de actividades..." />}>
+                    <AtividadesModule
+                      tenantId={tenant?.id || 'default'}
+                      loggedInUser={loggedInUser}
+                      currentUserRole={currentUserRole}
+                      tenantUsers={tenantUsers}
+                      teachers={rawTeachers}
+                      students={rawStudents}
+                      schools={rawSchools}
+                      turmas={rawTurmas}
+                      atividades={rawAtividades}
+                      pautas={rawPautas}
+                      processos={rawProcessos}
+                      faturas={studentFaturas}
+                      globalCategories={globalCategories}
+                      onRefreshData={() => loadTenantContext()}
+                      showNotification={showSystemNotification}
+                    />
+                  </Suspense>
+                </ModuleErrorBoundary>
               )
             )}
 
@@ -10169,16 +10483,20 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
             {/* TAB: DISTRITOS / PROVINCIAS */}
             {activeTab === 'provincias' && (
-              <ProvinciasModule
-                provinces={provinces as any}
-                paisOrigem={tenant?.pais_origem || 'Moçambique'}
-                paisesSucursais={tenant?.paises_sucursais || []}
-                hasPermission={hasPermission}
-                renderRestrictedAccess={renderRestrictedAccess}
-                renderModuleRefreshButton={renderModuleRefreshButton}
-                onSyncAutomaticProvinces={handleSyncAutomaticProvinces}
-                isSyncing={isSyncingProvinces}
-              />
+              <ModuleErrorBoundary title="Províncias">
+                <Suspense fallback={<ModuleSkeleton title="A carregar distritos e províncias..." variant="table" />}>
+                  <ProvinciasModule
+                    provinces={provinces as any}
+                    paisOrigem={tenant?.pais_origem || 'Moçambique'}
+                    paisesSucursais={tenant?.paises_sucursais || []}
+                    hasPermission={hasPermission}
+                    renderRestrictedAccess={renderRestrictedAccess}
+                    renderModuleRefreshButton={renderModuleRefreshButton}
+                    onSyncAutomaticProvinces={handleSyncAutomaticProvinces}
+                    isSyncing={isSyncingProvinces}
+                  />
+                </Suspense>
+              </ModuleErrorBoundary>
             )}
 
             {/* TAB: SALAS DE AULA */}
@@ -10473,12 +10791,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   {/* Mapa Interativo de Localização das Escolas */}
                   <div className="space-y-2">
                     <p className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <MapPin className="w-3.5 h-3.5 text-indigo-600 animate-bounce" /> Distribuição Geográfica das Escolas Registradas
+                      <MapPin className="w-3.5 h-3.5 text-indigo-600" /> Distribuição Geográfica das Escolas Registradas
                     </p>
-                    <SchoolMap 
-                      schools={searchedSchools} 
-                      provinces={provinces}
-                    />
+                    <ModuleErrorBoundary title="Mapa das Escolas">
+                      <Suspense fallback={<ModuleSkeleton title="A carregar mapa..." variant="compact" />}>
+                        <SchoolMap 
+                          schools={searchedSchools} 
+                          provinces={provinces}
+                        />
+                      </Suspense>
+                    </ModuleErrorBoundary>
                   </div>
 
                   {/* Select All / Batch Action Controls */}
@@ -12320,19 +12642,23 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   )}
 
                   {(institutionFeatures.allowsCursos && (!institutionFeatures.allowsClasses || activeClassesSubTab === 'cursos')) ? (
-                    <CursosModule
-                      tenantTipoInstituicao={tenant?.tipoInstituicao || 'universidade'}
-                      schools={schools}
-                      teachers={teachers}
-                      tenantUsers={tenantUsers}
-                      cursos={rawCursos}
-                      cadeiras={rawCadeiras}
-                      studentsCountByCurso={studentsCountByCurso}
-                      onSaveCurso={handleSaveCurso}
-                      onDeleteCurso={handleDeleteCurso}
-                      onSaveCadeira={handleSaveCadeira}
-                      onDeleteCadeira={handleDeleteCadeira}
-                    />
+                    <ModuleErrorBoundary title="Cursos e Cadeiras">
+                      <Suspense fallback={<ModuleSkeleton title="A carregar gestão de cursos..." />}>
+                        <CursosModule
+                          tenantTipoInstituicao={tenant?.tipoInstituicao || 'universidade'}
+                          schools={schools}
+                          teachers={teachers}
+                          tenantUsers={tenantUsers}
+                          cursos={rawCursos}
+                          cadeiras={rawCadeiras}
+                          studentsCountByCurso={studentsCountByCurso}
+                          onSaveCurso={handleSaveCurso}
+                          onDeleteCurso={handleDeleteCurso}
+                          onSaveCadeira={handleSaveCadeira}
+                          onDeleteCadeira={handleDeleteCadeira}
+                        />
+                      </Suspense>
+                    </ModuleErrorBoundary>
                   ) : (
                     <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs space-y-4">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -12576,12 +12902,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                   id="calendar_turno_filter"
                                   className="bg-slate-100 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2 text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-sans"
                                   onChange={(e) => {
-                                    const val = e.target.value as 'manha' | 'tarde' | 'noite';
+                                    const val = e.target.value as 'manha' | 'tarde' | 'noite' | 'todos';
                                     setSelectedTurn(val);
                                     setUserSelectedTurn(val);
                                   }}
                                   value={selectedTurn}
                                 >
+                                  <option value="todos">Todos os Turnos</option>
                                   <option value="manha">Manhã</option>
                                   <option value="tarde">Tarde</option>
                                   <option value="noite">Noite</option>
@@ -12660,6 +12987,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     onClick={() => {
                                       setEditingItem(null);
                                       const activeFilterId = selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter;
+                                      const todayLocal = getLocalYYYYMMDD(new Date());
                                       setHorarioForm({ 
                                         turma_id: activeFilterId || (turmas[0]?.id || ''),
                                         disciplina_id: '',
@@ -12668,8 +12996,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                         hora_inicio: '08:00',
                                         hora_fim: '09:30', 
                                         sala: rawSalas[0]?.nome || 'Sala 01',
-                                        data: new Date().toISOString().split('T')[0],
-                                        dia_semana: getDiaSemanaFromDate(new Date().toISOString().split('T')[0]),
+                                        data: todayLocal,
+                                        dia_semana: getDiaSemanaFromDate(todayLocal),
                                         justificativa: '',
                                         escola_id: schools[0]?.id || '',
                                         plano_aula_id: '',
@@ -12690,6 +13018,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                       setEditingItem(null);
                                       const activeFilterId = selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter;
                                       const selTurma = turmas.find(t => t.id === activeFilterId);
+                                      const todayLocal = getLocalYYYYMMDD(new Date());
                                       setExameForm({
                                         turma_id: activeFilterId || (turmas[0]?.id || ''),
                                         disciplina_id: '',
@@ -12697,7 +13026,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                         docente_id: teachers[0]?.id || '',
                                         docente_nome: teachers[0]?.nome || '',
                                         tipo: 'Exame Normal',
-                                        data: new Date().toISOString().split('T')[0],
+                                        data: todayLocal,
                                         hora_inicio: '08:00',
                                         hora_fim: '10:00',
                                         sala: rawSalas[0]?.nome || 'Sala 01',
@@ -12721,8 +13050,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           <div className="flex justify-center items-center gap-4 py-2.5 border-t border-slate-100 dark:border-slate-800 mt-2">
                             <button
                               onClick={() => {
+                                setCalendarWeekDirection('left');
+                                setWeekTransitionKey(k => k + 1);
                                 setCalendarSelectedDate(prev => {
-                                  const d = new Date(prev);
+                                  const d = getMonday(prev);
                                   d.setDate(d.getDate() - 7);
                                   return d;
                                 });
@@ -12734,13 +13065,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             </button>
                             
                             <span className="text-xs sm:text-sm font-bold text-indigo-950 dark:text-indigo-200 font-sans tracking-wide bg-indigo-50/50 dark:bg-indigo-950/40 border border-indigo-100/80 dark:border-indigo-800 rounded-xl px-4 py-1.5 shadow-2xs flex items-center gap-2">
-                               {formatCalendarDateWeek(calendarSelectedDate)}
+                               {formatCalendarDateWeek(monday)}
                             </span>
 
                             <button
                               onClick={() => {
+                                setCalendarWeekDirection('right');
+                                setWeekTransitionKey(k => k + 1);
                                 setCalendarSelectedDate(prev => {
-                                  const d = new Date(prev);
+                                  const d = getMonday(prev);
                                   d.setDate(d.getDate() + 7);
                                   return d;
                                 });
@@ -12763,11 +13096,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               <button
                                 onClick={() => {
                                   setEditingItem(null);
+                                  const todayLocal = getLocalYYYYMMDD(new Date());
                                   setFeriasForm({
                                     descricao: '',
                                     turma_id: 'todas',
-                                    data_inicio: new Date().toISOString().split('T')[0],
-                                    data_fim: new Date().toISOString().split('T')[0]
+                                    data_inicio: todayLocal,
+                                    data_fim: todayLocal
                                   });
                                   setModalType('ferias');
                                   setIsModalOpen(true);
@@ -12879,12 +13213,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             </table>
                           </div>
                         </div>
-                      ) : (
+                      ) : calendarSubTab === 'feriados' ? (
                         <div className="space-y-4 pt-2">
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50/70 border border-slate-150 p-4 rounded-xl">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50/70 dark:bg-[#090d16] border border-slate-150 dark:border-slate-800 p-4 rounded-xl">
                             <div>
-                              <h4 className="font-bold text-slate-850 text-sm">Feriados e Datas Comemorativas</h4>
-                              <p className="text-xs text-slate-500 font-sans">
+                              <h4 className="font-bold text-slate-850 dark:text-slate-100 text-sm">Feriados e Datas Comemorativas</h4>
+                              <p className="text-xs text-slate-500 dark:text-slate-400 font-sans">
                                 Consulte os feriados registrados para {config?.pais || 'Moçambique'}. Aulas agendadas nestas datas exigem justificativa.
                               </p>
                             </div>
@@ -12892,9 +13226,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               <button
                                 onClick={() => fetchAndRegisterCountryHolidays(config?.pais || 'Moçambique')}
                                 disabled={isSyncingHolidays}
-                                className="bg-slate-100 hover:bg-slate-200 text-slate-750 font-bold text-xs py-2 px-3 rounded-lg flex items-center gap-1.5 transition-all border border-slate-200 cursor-pointer disabled:opacity-50"
+                                className="bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-750 dark:text-slate-200 font-bold text-xs py-2 px-3 rounded-lg flex items-center gap-1.5 transition-all border border-slate-200 dark:border-slate-700 cursor-pointer disabled:opacity-50"
                               >
-                                {isSyncingHolidays ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-600" /> : <Globe className="w-3.5 h-3.5 text-indigo-600" />}
+                                {isSyncingHolidays ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-600 dark:text-indigo-400" /> : <Globe className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />}
                                 <span>{isSyncingHolidays ? 'Sincronizando...' : 'Sincronizar Feriados'}</span>
                               </button>
 
@@ -12904,7 +13238,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     setEditingItem(null);
                                     setFeriadoForm({
                                       nome: '',
-                                      data: new Date().toISOString().split('T')[0],
+                                      data: getLocalYYYYMMDD(new Date()),
                                       pais: config?.pais || 'Moçambique',
                                       tipo: 'Nacional',
                                       descricao: ''
@@ -12920,45 +13254,45 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             </div>
                           </div>
 
-                          <div className="border border-slate-200/80 rounded-xl overflow-hidden bg-white shadow-2xs">
+                          <div className="border border-slate-200/80 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-[#0b101b] shadow-2xs">
                             <table className="w-full text-left border-collapse text-xs">
                               <thead>
-                                <tr className="bg-slate-50 text-slate-600 font-bold border-b border-slate-150">
+                                <tr className="bg-slate-50 dark:bg-[#090d16] text-slate-600 dark:text-slate-300 font-bold border-b border-slate-150 dark:border-slate-800">
                                   <th className="p-3.5 font-bold">Feriado</th>
                                   <th className="p-3.5 font-bold">Data</th>
                                   <th className="p-3.5 font-bold">País</th>
                                   <th className="p-3.5 font-bold">Tipo</th>
                                   <th className="p-3.5 font-bold">Descrição</th>
-                                  <th className="p-3.5 font-bold text-center sticky right-0 bg-slate-50 dark:bg-slate-900 z-10">Ações</th>
+                                  <th className="p-3.5 font-bold text-center sticky right-0 bg-slate-50 dark:bg-[#090d16] z-10">Ações</th>
                                 </tr>
                               </thead>
-                              <tbody className="divide-y divide-slate-100">
+                              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                                 {rawFeriados.length > 0 ? (
                                   rawFeriados.map((f) => {
                                     const isEditable = currentUserRole === 'admin' || currentUserRole === 'director' || loggedInUser?.tipo === 'admin' || loggedInUser?.tipo === 'director';
 
                                     return (
-                                      <tr key={f.id} className="hover:bg-slate-50/50 transition-colors">
-                                        <td className="p-3.5 font-semibold text-slate-850 flex items-center gap-1.5">
+                                      <tr key={f.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                                        <td className="p-3.5 font-semibold text-slate-850 dark:text-slate-100 flex items-center gap-1.5">
                                           <span></span> {f.nome}
                                         </td>
-                                        <td className="p-3.5 font-mono text-slate-700 font-bold">
+                                        <td className="p-3.5 font-mono text-slate-700 dark:text-slate-300 font-bold">
                                           {new Date(f.data + 'T12:00:00').toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric' })}
                                         </td>
-                                        <td className="p-3.5 text-slate-600 font-medium">
-                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                        <td className="p-3.5 text-slate-600 dark:text-slate-300 font-medium">
+                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
                                              {f.pais || 'Geral'}
                                           </span>
                                         </td>
-                                        <td className="p-3.5 text-slate-600 font-medium">
-                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                                        <td className="p-3.5 text-slate-600 dark:text-slate-300 font-medium">
+                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
                                             {f.tipo || 'Nacional'}
                                           </span>
                                         </td>
-                                        <td className="p-3.5 text-slate-500 font-sans max-w-xs truncate" title={f.descricao}>
+                                        <td className="p-3.5 text-slate-500 dark:text-slate-400 font-sans max-w-xs truncate" title={f.descricao}>
                                           {f.descricao || '-'}
                                         </td>
-                                        <td className="p-3.5 text-center sticky right-0 bg-white dark:bg-slate-900 z-10">
+                                        <td className="p-3.5 text-center sticky right-0 bg-white dark:bg-[#0b101b] z-10">
                                           {isEditable ? (
                                             <div className="flex items-center justify-center gap-2">
                                               <button
@@ -13020,7 +13354,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             </table>
                           </div>
                         </div>
-                      )}
+                      ) : null}
 
                       {calendarSubTab === 'exames' && (
                         <div className="space-y-4">
@@ -13042,7 +13376,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                       docente_id: teachers[0]?.id || '',
                                       docente_nome: teachers[0]?.nome || '',
                                       tipo: 'Exame Normal',
-                                      data: new Date().toISOString().split('T')[0],
+                                      data: getLocalYYYYMMDD(new Date()),
                                       hora_inicio: '08:00',
                                       hora_fim: '10:00',
                                       sala: rawSalas[0]?.nome || 'Sala 01',
@@ -13269,14 +13603,23 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           Nenhuma turma cadastrada. Crie uma turma primeiro para ver o calendário.
                         </div>
                       ) : (
-                        <div className="overflow-x-auto border border-slate-150 dark:border-slate-800 rounded-2xl bg-slate-50/50 dark:bg-[#0b101b] shadow-2xs">
+                        <div
+                          key={weekTransitionKey}
+                          className={`overflow-x-auto border border-slate-150 dark:border-slate-800 rounded-2xl bg-slate-50/50 dark:bg-[#0b101b] shadow-2xs ${
+                            calendarWeekDirection === 'right'
+                              ? 'animate-week-slide-right'
+                              : calendarWeekDirection === 'left'
+                                ? 'animate-week-slide-left'
+                                : ''
+                          }`}
+                        >
                         <table className="w-full text-left border-collapse min-w-[700px]">
                           <thead>
                             <tr className="bg-slate-100 dark:bg-[#090d16] text-slate-700 dark:text-slate-200 border-b border-slate-200 dark:border-slate-800 text-xs font-bold text-center">
                               <th className="p-4 border-r border-slate-200 dark:border-slate-800 w-32">Horário</th>
                               {Array.from({ length: 7 }, (_, i) => i).map((dayIndex) => {
-                                const currentDayDate = new Date(calendarSelectedDate);
-                                currentDayDate.setDate(calendarSelectedDate.getDate() + dayIndex);
+                                const currentDayDate = new Date(monday);
+                                currentDayDate.setDate(monday.getDate() + dayIndex);
                                 const dayNames = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
                                 const dayName = dayNames[currentDayDate.getDay()];
                                 const formattedDateHeader = currentDayDate.toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit' });
@@ -13304,6 +13647,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               const activeCalendarTurma = selectedTurmaFilter === 'todos' ? (turmas[0]?.id || '') : selectedTurmaFilter;
                               const matches = classes.filter(c => c.turma_id === activeCalendarTurma);
 
+                              const mondayStr = getLocalYYYYMMDD(monday);
+                              const sunday = new Date(monday);
+                              sunday.setDate(monday.getDate() + 6);
+                              const sundayStr = getLocalYYYYMMDD(sunday);
+
+                              const weekExames = rawExames.filter(e =>
+                                (!e.turma_id || e.turma_id === activeCalendarTurma) &&
+                                e.data >= mondayStr &&
+                                e.data <= sundayStr
+                              );
+
                               const getDiaSemanaPt = (date: Date) => {
                                 const names = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
                                 return names[date.getDay()];
@@ -13311,29 +13665,36 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                               // Check if class falls in currently selected week
                               const isClassInSelectedWeek = (c: any) => {
-                                if (!c.data) {
-                                  // Recurring classes
-                                  return true;
-                                }
-                                const monday = getMonday(calendarSelectedDate);
-                                const sunday = new Date(monday);
-                                sunday.setDate(monday.getDate() + 6);
-                                const mondayStr = getLocalYYYYMMDD(monday);
-                                const sundayStr = getLocalYYYYMMDD(sunday);
+                                if (!c.data) return true;
                                 return c.data >= mondayStr && c.data <= sundayStr;
                               };
 
-                              // Check if a slot has any class scheduled this week for selected turma
+                              // Check if a slot has any class or exam scheduled this week for selected turma
                               const isSlotActiveThisWeek = (slot: string) => {
-                                return matches.some(c => c.horario === slot && isClassInSelectedWeek(c));
+                                const normSlot = normalizeSlot(slot);
+                                const [partsStart, partsEnd] = normSlot.split(' - ').map(s => s?.trim());
+                                const sStart = partsStart ? parseTimeToMinutes(partsStart) : 0;
+                                const sEnd = partsEnd ? parseTimeToMinutes(partsEnd) : 0;
+                                const hasClass = matches.some(c => normalizeSlot(c.horario) === normSlot && isClassInSelectedWeek(c));
+                                const hasExam = weekExames.some(e => {
+                                  if (!e.hora_inicio || !e.hora_fim) return false;
+                                  const eStart = parseTimeToMinutes(e.hora_inicio);
+                                  const eEnd = parseTimeToMinutes(e.hora_fim);
+                                  return normalizeSlot(`${e.hora_inicio} - ${e.hora_fim}`) === normSlot || (sStart < eEnd && sEnd > eStart);
+                                });
+                                return hasClass || hasExam;
                               };
 
                               const defaultSlots = getShiftDefaultSlots(selectedTurn);
                               const registeredSlotsOfThisShift = matches
-                                .map(c => c.horario)
-                                .filter((val, idx, self) => val && self.indexOf(val) === idx && getShiftForSlot(val) === selectedTurn);
+                                .map(c => normalizeSlot(c.horario))
+                                .filter((val, idx, self) => val && self.indexOf(val) === idx && (selectedTurn === 'todos' || getShiftForSlot(val) === selectedTurn));
 
-                              const shiftSlots = Array.from(new Set([...defaultSlots, ...registeredSlotsOfThisShift]))
+                              const weekExameSlots = weekExames
+                                .map(e => normalizeSlot(`${e.hora_inicio} - ${e.hora_fim}`))
+                                .filter((val, idx, self) => val && self.indexOf(val) === idx && (selectedTurn === 'todos' || getShiftForSlot(val) === selectedTurn));
+
+                              const shiftSlots = Array.from(new Set([...defaultSlots, ...registeredSlotsOfThisShift, ...weekExameSlots]))
                                 .filter(Boolean)
                                 .sort((a, b) => {
                                   const aStart = a.split(' - ')[0] || '';
@@ -13356,7 +13717,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                               const rows = displayedSlots.map((timeSlot) => {
                                 // Render official break row across columns
-                                const matchingBreak = activeConfiguredBreaks.find(b => b.slotStr === timeSlot);
+                                const matchingBreak = activeConfiguredBreaks.find(b => normalizeSlot(b.slotStr) === normalizeSlot(timeSlot));
                                 if (matchingBreak) {
                                   return (
                                     <tr key={timeSlot} className="bg-amber-50/80 dark:bg-amber-950/30 border-y-2 border-amber-200/90 dark:border-amber-800/80">
@@ -13377,18 +13738,19 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 }
 
                                 const getDisciplineForDay = (dayIndex: number) => {
-                                  const currentDayDate = new Date(calendarSelectedDate);
-                                  currentDayDate.setDate(calendarSelectedDate.getDate() + dayIndex);
+                                  const currentDayDate = new Date(monday);
+                                  currentDayDate.setDate(monday.getDate() + dayIndex);
                                   const targetDayDateStr = getLocalYYYYMMDD(currentDayDate);
                                   const dayName = getDiaSemanaPt(currentDayDate);
-                                  
-                                  let match = matches.find(c => c.data === targetDayDateStr && c.horario === timeSlot);
+                                  const normTimeSlot = normalizeSlot(timeSlot);
+
+                                  let match = matches.find(c => c.data === targetDayDateStr && normalizeSlot(c.horario) === normTimeSlot);
                                   if (match) return match;
-                                  
+
                                   match = matches.find(c => {
                                     if (!c.dia_semana) return false;
                                     if (c.data) return false;
-                                    return c.dia_semana.toLowerCase().includes(dayName.toLowerCase().split('-')[0]) && c.horario === timeSlot;
+                                    return c.dia_semana.toLowerCase().includes(dayName.toLowerCase().split('-')[0]) && normalizeSlot(c.horario) === normTimeSlot;
                                   });
                                   return match;
                                 };
@@ -13399,8 +13761,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                       {timeSlot}
                                     </td>
                                     {Array.from({ length: 7 }, (_, i) => i).map((dayIdx) => {
-                                      const currentDayDate = new Date(calendarSelectedDate);
-                                      currentDayDate.setDate(calendarSelectedDate.getDate() + dayIdx);
+                                      const currentDayDate = new Date(monday);
+                                      currentDayDate.setDate(monday.getDate() + dayIdx);
                                       const currentDateStr = getLocalYYYYMMDD(currentDayDate);
                                       const dayName = getDiaSemanaPt(currentDayDate);
                                       const holiday = rawFeriados.find(f => f.data === currentDateStr || (f.data && f.data.length === 5 && currentDateStr.endsWith(f.data)));
@@ -13495,16 +13857,18 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                         );
                                       }
 
-                                      // Check if vacant slot has conflict
+                                      // Check if vacant slot has turma/break/vacation conflict (avoid passing Teacher #1 or Sala #1)
                                       const slotConflict = (!disc && partsStart && partsEnd) ? checkScheduleConflictDetails(
                                         partsStart,
                                         partsEnd,
                                         currentDateStr,
                                         dayName,
                                         activeCalendarTurma,
-                                        teachers[0]?.id || '',
-                                        rawSalas[0]?.nome || 'Sala 01',
-                                        rawClasses
+                                        '',
+                                        '',
+                                        rawClasses,
+                                        undefined,
+                                        rawExames
                                       ) : { conflict: false };
 
                                       return (
@@ -13888,21 +14252,29 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             {/* TAB: PLANO DE AULAS */}
             {activeTab === 'plano_aulas' && (
               !hasPermission('plano_aulas') ? renderRestrictedAccess('Plano de Aulas') : (
-                <PlanoAulasModule
-                  tenantId={currentTenantId}
-                  loggedInUser={loggedInUser}
-                  currentUserRole={currentUserRole}
-                  teachers={rawTeachers}
-                  classes={classes}
-                  turmas={turmas}
-                  schools={schools}
-                  students={rawStudents}
-                  parents={[]}
-                  tenantUsers={tenantUsers}
-                  currentAcademicYear={config?.ano_letivo_atual || '2026'}
-                  onAuditLog={tenantAuditLog}
-                  showNotification={showSystemNotification}
-                />
+                <ModuleErrorBoundary title="Plano de Aulas">
+                  <Suspense fallback={<ModuleSkeleton title="A carregar planos de aulas..." />}>
+                    <PlanoAulasModule
+                      tenantId={currentTenantId}
+                      loggedInUser={loggedInUser}
+                      currentUserRole={currentUserRole}
+                      teachers={rawTeachers}
+                      classes={classes}
+                      turmas={turmas}
+                      schools={schools}
+                      students={rawStudents}
+                      parents={[]}
+                      tenantUsers={tenantUsers}
+                      currentAcademicYear={config?.ano_letivo_atual || '2026'}
+                      onAuditLog={tenantAuditLog}
+                      showNotification={showSystemNotification}
+                      canCreate={hasPermission('plano_aulas', 'criar')}
+                      canEdit={hasPermission('plano_aulas', 'editar')}
+                      canDelete={hasPermission('plano_aulas', 'excluir')}
+                      canApprove={hasPermission('plano_aulas', 'aprovar')}
+                    />
+                  </Suspense>
+                </ModuleErrorBoundary>
               )
             )}
 
@@ -13953,56 +14325,63 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     const listMedias = filteredPautas.map(p => p.nota_media).filter(m => m !== undefined && m !== null);
                     const mediaGeralGeral = listMedias.length > 0 ? (listMedias.reduce((acc, current) => acc + (typeof current === 'number' ? current : Number(current) || 0), 0) / listMedias.length).toFixed(1) : '0.0';
 
+                    const canDeleteAnyPauta =
+                      isAdmin ||
+                      isDirector ||
+                      ['admin', 'administrador', 'super_admin', 'superadmin', 'director', 'diretor', 'director_escola'].includes(
+                        (currentUserRole || loggedInUser?.tipo || '').toString().toLowerCase().trim()
+                      );
+
                     return (
                       <>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                          <div className="bg-white p-4 rounded-2xl border border-slate-200/60 shadow-3xs flex items-center gap-4">
-                            <div className="p-3 bg-indigo-50 rounded-xl text-indigo-600">
+                          <div className="bg-white dark:bg-[#0b101b] p-4 rounded-2xl border border-slate-200/60 dark:border-slate-800 shadow-3xs flex items-center gap-4">
+                            <div className="p-3 bg-indigo-50 dark:bg-indigo-950/60 rounded-xl text-indigo-600 dark:text-indigo-400">
                               <Award className="w-5 h-5" />
                             </div>
                             <div>
                               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total de Notas</p>
-                              <p className="text-xl font-black text-slate-800">{totalLancamentos}</p>
+                              <p className="text-xl font-black text-slate-800 dark:text-slate-100">{totalLancamentos}</p>
                             </div>
                           </div>
 
-                          <div className="bg-white p-4 rounded-2xl border border-slate-200/60 shadow-3xs flex items-center gap-4">
-                            <div className="p-3 bg-emerald-50 rounded-xl text-emerald-600">
+                          <div className="bg-white dark:bg-[#0b101b] p-4 rounded-2xl border border-slate-200/60 dark:border-slate-800 shadow-3xs flex items-center gap-4">
+                            <div className="p-3 bg-emerald-50 dark:bg-emerald-950/60 rounded-xl text-emerald-600 dark:text-emerald-400">
                               <CheckCircle className="w-5 h-5" />
                             </div>
                             <div>
                               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Taxa de Aprovação</p>
-                              <p className="text-xl font-black text-slate-800">{percentAprovado}% <span className="text-xs font-semibold text-slate-400">({totalAprovados})</span></p>
+                              <p className="text-xl font-black text-slate-800 dark:text-slate-100">{percentAprovado}% <span className="text-xs font-semibold text-slate-400">({totalAprovados})</span></p>
                             </div>
                           </div>
 
-                          <div className="bg-white p-4 rounded-2xl border border-slate-200/60 shadow-3xs flex items-center gap-4">
-                            <div className="p-3 bg-rose-50 rounded-xl text-rose-600">
+                          <div className="bg-white dark:bg-[#0b101b] p-4 rounded-2xl border border-slate-200/60 dark:border-slate-800 shadow-3xs flex items-center gap-4">
+                            <div className="p-3 bg-rose-50 dark:bg-rose-950/60 rounded-xl text-rose-600 dark:text-rose-400">
                               <XCircle className="w-5 h-5" />
                             </div>
                             <div>
                               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Reprovados / Excluídos</p>
-                              <p className="text-xl font-black text-slate-800">{totalReprovados} <span className="text-xs font-semibold text-slate-400">alunos</span></p>
+                              <p className="text-xl font-black text-slate-800 dark:text-slate-100">{totalReprovados} <span className="text-xs font-semibold text-slate-400">alunos</span></p>
                             </div>
                           </div>
 
-                          <div className="bg-white p-4 rounded-2xl border border-slate-200/60 shadow-3xs flex items-center gap-4">
-                            <div className="p-3 bg-amber-50 rounded-xl text-amber-600">
+                          <div className="bg-white dark:bg-[#0b101b] p-4 rounded-2xl border border-slate-200/60 dark:border-slate-800 shadow-3xs flex items-center gap-4">
+                            <div className="p-3 bg-amber-50 dark:bg-amber-950/60 rounded-xl text-amber-600 dark:text-amber-400">
                               <TrendingUp className="w-5 h-5" />
                             </div>
                             <div>
                               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Média Geral</p>
-                              <p className="text-xl font-black text-slate-800">{mediaGeralGeral} <span className="text-xs font-semibold text-slate-400">valores</span></p>
+                              <p className="text-xl font-black text-slate-800 dark:text-slate-100">{mediaGeralGeral} <span className="text-xs font-semibold text-slate-400">valores</span></p>
                             </div>
                           </div>
                         </div>
 
                         {/* FILTERS PANEL */}
-                        <div className="bg-white p-5 rounded-2xl border border-slate-200/60 shadow-xs space-y-4">
-                          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                        <div className="bg-white dark:bg-[#0b101b] p-5 rounded-2xl border border-slate-200/60 dark:border-slate-800 shadow-xs space-y-4">
+                          <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
                             <div className="flex items-center gap-2">
                               <div>
-                                <h3 className="font-extrabold text-slate-800 text-sm">Filtros da Pauta Geral</h3>
+                                <h3 className="font-extrabold text-slate-800 dark:text-slate-100 text-sm">Filtros da Pauta Geral</h3>
                                 <p className="text-[10px] text-slate-400">Filtre as notas consolidadas de todas as escolas do sistema em tempo real.</p>
                               </div>
                               {renderModuleRefreshButton('Pauta Geral')}
@@ -14015,7 +14394,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 setPautaGeralDateStart('');
                                 setPautaGeralDateEnd('');
                               }}
-                              className="text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors"
+                              className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 transition-colors cursor-pointer"
                             >
                               Limpar Filtros
                             </button>
@@ -14028,7 +14407,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               <select
                                 value={pautaGeralEscolaId}
                                 onChange={(e) => setPautaGeralEscolaId(e.target.value)}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold text-slate-700"
+                                className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2 text-xs font-bold text-slate-700 dark:text-slate-200"
                               >
                                 <option value="">Todas as Escolas</option>
                                 {schools.map(s => (
@@ -14045,7 +14424,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 placeholder="Buscar aluno..."
                                 value={pautaGeralAlunoQuery}
                                 onChange={(e) => setPautaGeralAlunoQuery(e.target.value)}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold text-slate-700"
+                                className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2 text-xs font-bold text-slate-700 dark:text-slate-200"
                               />
                             </div>
 
@@ -14055,7 +14434,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               <select
                                 value={pautaGeralEstado}
                                 onChange={(e) => setPautaGeralEstado(e.target.value)}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold text-slate-700"
+                                className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2 text-xs font-bold text-slate-700 dark:text-slate-200"
                               >
                                 <option value="">Todos os Estados</option>
                                 <option value="aprovado">Aprovado</option>
@@ -14071,7 +14450,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 type="date"
                                 value={pautaGeralDateStart}
                                 onChange={(e) => setPautaGeralDateStart(e.target.value)}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold text-slate-700"
+                                className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2 text-xs font-bold text-slate-700 dark:text-slate-200"
                               />
                             </div>
 
@@ -14082,16 +14461,16 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                 type="date"
                                 value={pautaGeralDateEnd}
                                 onChange={(e) => setPautaGeralDateEnd(e.target.value)}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold text-slate-700"
+                                className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2 text-xs font-bold text-slate-700 dark:text-slate-200"
                               />
                             </div>
                           </div>
                         </div>
 
                         {/* DATA TABLE */}
-                        <div className="bg-white rounded-2xl border border-slate-200/60 shadow-xs overflow-hidden">
-                          <div className="p-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
-                            <span className="text-xs font-bold text-slate-500">
+                        <div className="bg-white dark:bg-[#0b101b] rounded-2xl border border-slate-200/60 dark:border-slate-800 shadow-xs overflow-hidden">
+                          <div className="p-4 bg-slate-50 dark:bg-[#090d16] border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                            <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
                               Exibindo {filteredPautas.length} de {pautas.length} registros de notas
                             </span>
                           </div>
@@ -14099,7 +14478,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           <div className="overflow-x-auto">
                             <table className="w-full text-left border-collapse text-xs min-w-[900px]">
                               <thead>
-                                <tr className="bg-slate-50/50 text-slate-500 font-bold border-b border-slate-200 text-[10px] uppercase tracking-wider">
+                                <tr className="bg-slate-50/50 dark:bg-[#090d16] text-slate-500 dark:text-slate-400 font-bold border-b border-slate-200 dark:border-slate-800 text-[10px] uppercase tracking-wider">
                                   <th className="p-4">Estudante</th>
                                   <th className="p-4">Escola / Local</th>
                                   <th className="p-4">Turma / Período</th>
@@ -14109,14 +14488,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                   <th className="p-4 text-center">Avaliação 2</th>
                                   <th className="p-4 text-center">Avaliação 3</th>
                                   <th className="p-4 text-center">Exame</th>
-                                  <th className="p-4 text-center font-bold text-indigo-900 bg-indigo-50/10">Média Final</th>
+                                  <th className="p-4 text-center font-bold text-indigo-900 dark:text-indigo-300 bg-indigo-50/10 dark:bg-indigo-950/20">Média Final</th>
                                   <th className="p-4 text-right">Situação</th>
+                                  {canDeleteAnyPauta && (
+                                    <th className="p-4 text-right sticky right-0 bg-slate-50 dark:bg-[#090d16] z-10">Ações</th>
+                                  )}
                                 </tr>
                               </thead>
-                              <tbody className="divide-y divide-slate-100 font-sans">
+                              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-sans">
                                 {filteredPautas.length === 0 ? (
                                   <tr>
-                                    <td colSpan={11} className="p-8 text-center text-slate-400 font-semibold">
+                                    <td colSpan={canDeleteAnyPauta ? 12 : 11} className="p-8 text-center text-slate-400 font-semibold">
                                       Nenhuma nota correspondente aos filtros foi encontrada na base de dados.
                                     </td>
                                   </tr>
@@ -14128,53 +14510,80 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     const discipline = classes.find(c => c.id === p.classe_id);
 
                                     return (
-                                      <tr key={p.id} className="hover:bg-slate-50/40 transition-colors">
+                                      <tr key={p.id} className="hover:bg-slate-50/40 dark:hover:bg-slate-800/40 transition-colors">
                                         <td className="p-4">
-                                          <p className="font-extrabold text-slate-800">{student?.nome || 'Estudante não encontrado'}</p>
+                                          <p className="font-extrabold text-slate-800 dark:text-slate-100">{student?.nome || 'Estudante não encontrado'}</p>
                                           <p className="text-[9px] text-slate-400 font-mono">MAT: {student?.numero_matricula || 'N/D'}</p>
                                         </td>
                                         <td className="p-4">
-                                          <p className="font-bold text-slate-700">{school?.nome || 'Sem Escola'}</p>
+                                          <p className="font-bold text-slate-700 dark:text-slate-200">{school?.nome || 'Sem Escola'}</p>
                                           <p className="text-[9px] text-slate-400">{school?.endereco || 'Sem Endereço'}</p>
                                         </td>
                                         <td className="p-4">
-                                          <p className="font-bold text-slate-700">{turma?.nome || 'Sem Turma'}</p>
+                                          <p className="font-bold text-slate-700 dark:text-slate-200">{turma?.nome || 'Sem Turma'}</p>
                                           <p className="text-[9px] text-slate-400">{turma?.ano_letivo || '2026'}</p>
                                         </td>
                                         <td className="p-4">
-                                          <span className="bg-slate-100 text-slate-800 px-2 py-0.5 rounded-md font-bold">
+                                          <span className="bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 px-2 py-0.5 rounded-md font-bold">
                                             {discipline?.nome || 'Disciplina Geral'}
                                           </span>
                                         </td>
-                                        <td className="p-4 text-center font-bold text-slate-600">
+                                        <td className="p-4 text-center font-bold text-slate-600 dark:text-slate-300">
                                           {p.trimestre}
                                         </td>
-                                        <td className="p-4 text-center font-mono font-bold text-slate-700">
+                                        <td className="p-4 text-center font-mono font-bold text-slate-700 dark:text-slate-200">
                                           {p.avaliacao_1 !== undefined && (p.avaliacao_1 as any) !== '' ? p.avaliacao_1 : '-'}
                                         </td>
-                                        <td className="p-4 text-center font-mono font-bold text-slate-700">
+                                        <td className="p-4 text-center font-mono font-bold text-slate-700 dark:text-slate-200">
                                           {p.avaliacao_2 !== undefined && (p.avaliacao_2 as any) !== '' ? p.avaliacao_2 : '-'}
                                         </td>
-                                        <td className="p-4 text-center font-mono font-bold text-slate-700">
+                                        <td className="p-4 text-center font-mono font-bold text-slate-700 dark:text-slate-200">
                                           {p.avaliacao_3 !== undefined && (p.avaliacao_3 as any) !== '' ? p.avaliacao_3 : '-'}
                                         </td>
                                         <td className="p-4 text-center">
-                                          <p className="font-mono font-bold text-slate-700">{p.nota_exame !== undefined && p.nota_exame !== null && (p.nota_exame as any) !== '' ? p.nota_exame : '-'}</p>
+                                          <p className="font-mono font-bold text-slate-700 dark:text-slate-200">{p.nota_exame !== undefined && p.nota_exame !== null && (p.nota_exame as any) !== '' ? p.nota_exame : '-'}</p>
                                         </td>
-                                        <td className="p-4 text-center font-black font-mono bg-indigo-50/10 text-indigo-950 text-xs">
+                                        <td className="p-4 text-center font-black font-mono bg-indigo-50/10 dark:bg-indigo-950/20 text-indigo-950 dark:text-indigo-300 text-xs">
                                           {p.media_final !== undefined ? p.media_final : (p.nota_media !== undefined && p.nota_media !== null ? (typeof p.nota_media === 'number' ? p.nota_media.toFixed(1) : p.nota_media) : '-')}
                                         </td>
                                         <td className="p-4 text-right">
                                           <span className={`inline-flex px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider ${
                                             p.status_estudante === 'Dispensado' || p.status_estudante === 'Aprovado' || p.situacao === 'Aprovado'
-                                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-150' 
+                                              ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-150 dark:border-emerald-800' 
                                               : p.status_estudante === 'Exame de Recorrência' || p.situacao === 'Recuperação'
-                                              ? 'bg-amber-50 text-amber-700 border border-amber-150 animate-pulse'
-                                              : 'bg-rose-50 text-rose-700 border border-rose-150'
+                                              ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-150 dark:border-amber-800 animate-pulse'
+                                              : 'bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-150 dark:border-rose-800'
                                           }`}>
                                             {p.status_estudante || p.situacao}
                                           </span>
                                         </td>
+                                        {canDeleteAnyPauta && (
+                                          <td className="p-4 text-right sticky right-0 bg-white dark:bg-[#0b101b] z-10">
+                                            <button
+                                              title={p.status === 'publicado' ? 'Eliminar Registo da Pauta Global (Mesmo Publicado)' : 'Eliminar Registo de Pauta'}
+                                              onClick={() => {
+                                                showConfirm(
+                                                  'Eliminar Registo da Pauta Global',
+                                                  `Tem certeza que deseja eliminar permanentemente a nota de "${student?.nome || 'Estudante'}" (${discipline?.nome || 'Disciplina'})${p.status === 'publicado' ? ' mesmo estando publicada' : ''}?`,
+                                                  async () => {
+                                                    try {
+                                                      await deleteDoc(doc(db, 'pautas', p.id));
+                                                      setPautas(prev => prev.filter(item => item.id !== p.id));
+                                                      showSystemNotification('Registo eliminado da Pauta Global com sucesso.', 'sucesso');
+                                                      loadTenantContext();
+                                                    } catch (e: any) {
+                                                      showSystemNotification(`Erro ao eliminar registo: ${e.message || e}`, 'erro');
+                                                    }
+                                                  },
+                                                  true
+                                                );
+                                              }}
+                                              className="p-1.5 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 rounded cursor-pointer border border-rose-200 dark:border-rose-800 transition-colors"
+                                            >
+                                              <Trash2 className="w-3.5 h-3.5" />
+                                            </button>
+                                          </td>
+                                        )}
                                       </tr>
                                     );
                                   })
@@ -14341,6 +14750,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-200 text-sm">
                       {pautas.slice((pagePautas - 1) * 25, pagePautas * 25).map(p => {
+                        const canDeleteAnyPauta =
+                          isAdmin ||
+                          isDirector ||
+                          ['admin', 'administrador', 'super_admin', 'superadmin', 'director', 'diretor', 'director_escola'].includes(
+                            (currentUserRole || loggedInUser?.tipo || '').toString().toLowerCase().trim()
+                          );
                         const est = students.find(s => s.id === p.estudante_id);
                         const estUsr = tenantUsers.find(u => u.id === est?.user_id);
                         const cls = classes.find(c => c.id === p.classe_id);
@@ -14420,7 +14835,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                           creditos_ects: p.creditos_ects || 6,
                                           status_estudante: p.status_estudante || p.situacao || 'Pendente',
                                           status: p.status || 'rascunho',
-                                          observacao: p.observacao || ''
+                                          observacao: p.observacao || '',
+                                          dados_customizados: p.dados_customizados || {}
                                         });
                                         setModalType('pauta');
                                         setIsModalOpen(true);
@@ -14430,25 +14846,29 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                       <Edit className="w-3.5 h-3.5" />
                                     </button>
                                   )}
-                                  {p.status === 'rascunho' && (
+                                  {(p.status === 'rascunho' || canDeleteAnyPauta) && (
                                     <button 
-                                      title="Eliminar Rascunho"
+                                      title={p.status === 'publicado' ? 'Eliminar Lançamento Publicado' : 'Eliminar Rascunho'}
                                       onClick={() => {
                                         showConfirm(
-                                          "Eliminar Pauta em Rascunho",
-                                          "Tem certeza que deseja eliminar esta pauta em rascunho permanentemente?",
+                                          p.status === 'publicado' ? "Eliminar Pauta Publicada" : "Eliminar Pauta em Rascunho",
+                                          p.status === 'publicado'
+                                            ? "Tem certeza que deseja eliminar permanentemente este lançamento já publicado?"
+                                            : "Tem certeza que deseja eliminar esta pauta em rascunho permanentemente?",
                                           async () => {
                                             try {
                                               await deleteDoc(doc(db, 'pautas', p.id));
-                                              showSystemNotification('Pauta em rascunho eliminada com sucesso.', 'sucesso');
+                                              setPautas(prev => prev.filter(item => item.id !== p.id));
+                                              showSystemNotification('Lançamento de pauta eliminado com sucesso.', 'sucesso');
                                               loadTenantContext();
                                             } catch (e: any) {
                                               showSystemNotification(`Erro ao eliminar pauta: ${e.message || e}`, 'erro');
                                             }
-                                          }
+                                          },
+                                          true
                                         );
                                       }}
-                                      className="p-1.5 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 rounded cursor-pointer border border-rose-200 dark:border-rose-800"
+                                      className="p-1.5 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 rounded cursor-pointer border border-rose-200 dark:border-rose-800"
                                     >
                                       <Trash2 className="w-3.5 h-3.5" />
                                     </button>
@@ -14513,7 +14933,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                           projecto_integrador: p.projecto_integrador !== undefined ? p.projecto_integrador : '',
                                           status_estudante: p.status_estudante || p.competencia_status || 'Pendente',
                                           status: p.status || 'rascunho',
-                                          observacao: p.observacao || ''
+                                          observacao: p.observacao || '',
+                                          dados_customizados: p.dados_customizados || {}
                                         });
                                         setModalType('pauta');
                                         setIsModalOpen(true);
@@ -14523,25 +14944,29 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                       <Edit className="w-4 h-4" />
                                     </button>
                                   )}
-                                  {p.status === 'rascunho' && (
+                                  {(p.status === 'rascunho' || canDeleteAnyPauta) && (
                                     <button 
-                                      title="Eliminar Rascunho"
+                                      title={p.status === 'publicado' ? 'Eliminar Lançamento Publicado' : 'Eliminar Rascunho'}
                                       onClick={() => {
                                         showConfirm(
-                                          "Eliminar Pauta em Rascunho",
-                                          "Tem certeza que deseja eliminar esta pauta em rascunho permanentemente?",
+                                          p.status === 'publicado' ? "Eliminar Pauta Publicada" : "Eliminar Pauta em Rascunho",
+                                          p.status === 'publicado'
+                                            ? "Tem certeza que deseja eliminar permanentemente este lançamento já publicado?"
+                                            : "Tem certeza que deseja eliminar esta pauta em rascunho permanentemente?",
                                           async () => {
                                             try {
                                               await deleteDoc(doc(db, 'pautas', p.id));
-                                              showSystemNotification('Pauta em rascunho eliminada com sucesso.', 'sucesso');
+                                              setPautas(prev => prev.filter(item => item.id !== p.id));
+                                              showSystemNotification('Lançamento de pauta eliminado com sucesso.', 'sucesso');
                                               loadTenantContext();
                                             } catch (e: any) {
                                               showSystemNotification(`Erro ao eliminar pauta: ${e.message || e}`, 'erro');
                                             }
-                                          }
+                                          },
+                                          true
                                         );
                                       }}
-                                      className="p-1 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 rounded cursor-pointer border border-rose-200 dark:border-rose-800 transition-colors"
+                                      className="p-1 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 rounded cursor-pointer border border-rose-200 dark:border-rose-800 transition-colors"
                                     >
                                       <Trash2 className="w-4 h-4" />
                                     </button>
@@ -14615,7 +15040,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                         nota_exame: p.nota_exame !== undefined ? p.nota_exame : '',
                                         status_estudante: p.status_estudante || p.situacao || 'Pendente',
                                         status: p.status || 'rascunho',
-                                        observacao: p.observacao || ''
+                                        observacao: p.observacao || '',
+                                        dados_customizados: p.dados_customizados || {}
                                       });
                                       setModalType('pauta');
                                       setIsModalOpen(true);
@@ -14625,25 +15051,29 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                     <Edit className="w-4 h-4" />
                                   </button>
                                 )}
-                                {p.status === 'rascunho' && (
+                                {(p.status === 'rascunho' || canDeleteAnyPauta) && (
                                   <button 
-                                    title="Eliminar Rascunho"
+                                    title={p.status === 'publicado' ? 'Eliminar Lançamento Publicado' : 'Eliminar Rascunho'}
                                     onClick={() => {
                                       showConfirm(
-                                        "Eliminar Pauta em Rascunho",
-                                        "Tem certeza que deseja eliminar esta pauta em rascunho permanentemente?",
+                                        p.status === 'publicado' ? "Eliminar Pauta Publicada" : "Eliminar Pauta em Rascunho",
+                                        p.status === 'publicado'
+                                          ? "Tem certeza que deseja eliminar permanentemente este lançamento já publicado?"
+                                          : "Tem certeza que deseja eliminar esta pauta em rascunho permanentemente?",
                                         async () => {
                                           try {
                                             await deleteDoc(doc(db, 'pautas', p.id));
-                                            showSystemNotification('Pauta em rascunho eliminada com sucesso.', 'sucesso');
+                                            setPautas(prev => prev.filter(item => item.id !== p.id));
+                                            showSystemNotification('Lançamento de pauta eliminado com sucesso.', 'sucesso');
                                             loadTenantContext();
                                           } catch (e: any) {
                                             showSystemNotification(`Erro ao eliminar pauta: ${e.message || e}`, 'erro');
                                           }
-                                        }
+                                        },
+                                        true
                                       );
                                     }}
-                                    className="p-1 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 rounded cursor-pointer border border-rose-200 dark:border-rose-800 transition-colors"
+                                    className="p-1 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 rounded cursor-pointer border border-rose-200 dark:border-rose-800 transition-colors"
                                   >
                                     <Trash2 className="w-4 h-4" />
                                   </button>
@@ -14669,58 +15099,62 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
             {/* TAB: PROCESSO INDIVIDUAL (ALUNO & DOCENTE) */}
             {activeTab === 'processos' && (
               !hasPermission('processos') ? renderRestrictedAccess('Processos Individuais') : (
-                <ProcessoIndividualModule
-                  students={students}
-                  teachers={teachers}
-                  processosAlunos={processos}
-                  processosDocentes={rawProcessosDocentes}
-                  tenantUsers={tenantUsers}
-                  turmas={turmas}
-                  schools={schools}
-                  currentUserRole={currentUserRole}
-                  loggedInUser={loggedInUser}
-                  hasPermission={hasPermission}
-                  onOpenStudentDossier={(student) => {
-                    setSelectedProcessStudent(student);
-                    setDossierForm({
-                      documento_identificacao: student.documento_identificacao || '',
-                      nome_pai: student.nome_pai || '',
-                      nome_mae: student.nome_mae || '',
-                      morada: student.morada || ''
-                    });
-                    setIsProcessPanelOpen(true);
-                  }}
-                  onNotifyStudentMissingData={handleNotifyMissingData}
-                  onOpenStudentProcessModal={(processo) => {
-                    setEditingItem(processo || null);
-                    setProcessoForm(
-                      processo
-                        ? {
-                            estudante_id: processo.estudante_id,
-                            tipo: processo.tipo,
-                            status: processo.status,
-                            documentos: processo.documentos || [],
-                            observacao: processo.observacao || ''
-                          }
-                        : {
-                            estudante_id: students[0]?.id || '',
-                            tipo: 'Matrícula',
-                            status: 'Solicitação',
-                            documentos: ['guia_academic.pdf'],
-                            observacao: ''
-                          }
-                    );
-                    setModalType('processo');
-                    setIsModalOpen(true);
-                  }}
-                  onSaveProcessoDocente={async (procData) => {
-                    await handleSaveProcessoDocente(procData, !!procData.id);
-                  }}
-                  onUpdateDocenteDossier={handleUpdateDocenteDossier}
-                  onNotifyTeacherMissingData={handleNotifyTeacherMissingData}
-                  onRefreshData={() => handleManualRefresh('Processos')}
-                  onOpenFichaAcademica={(student) => setSelectedProcessoStudent(student)}
-                />
+                <ModuleErrorBoundary title="Processos Individuais">
+                  <Suspense fallback={<ModuleSkeleton title="A carregar processos individuais..." variant="table" />}>
+                    <ProcessoIndividualModule
+                      students={students}
+                      teachers={teachers}
+                      processosAlunos={processos}
+                      processosDocentes={rawProcessosDocentes}
+                      tenantUsers={tenantUsers}
+                      turmas={turmas}
+                      schools={schools}
+                      currentUserRole={currentUserRole}
+                      loggedInUser={loggedInUser}
+                      hasPermission={hasPermission}
+                      onOpenStudentDossier={(student) => {
+                        setSelectedProcessStudent(student);
+                        setDossierForm({
+                          documento_identificacao: student.documento_identificacao || '',
+                          nome_pai: student.nome_pai || '',
+                          nome_mae: student.nome_mae || '',
+                          morada: student.morada || ''
+                        });
+                        setIsProcessPanelOpen(true);
+                      }}
+                      onNotifyStudentMissingData={handleNotifyMissingData}
+                      onOpenStudentProcessModal={(processo) => {
+                        setEditingItem(processo || null);
+                        setProcessoForm(
+                          processo
+                            ? {
+                                estudante_id: processo.estudante_id,
+                                tipo: processo.tipo,
+                                status: processo.status,
+                                documentos: processo.documentos || [],
+                                observacao: processo.observacao || ''
+                              }
+                            : {
+                                estudante_id: students[0]?.id || '',
+                                tipo: 'Matrícula',
+                                status: 'Solicitação',
+                                documentos: ['guia_academic.pdf'],
+                                observacao: ''
+                              }
+                        );
+                        setModalType('processo');
+                        setIsModalOpen(true);
+                      }}
+                      onSaveProcessoDocente={async (procData) => {
+                        await handleSaveProcessoDocente(procData, !!procData.id);
+                      }}
+                      onUpdateDocenteDossier={handleUpdateDocenteDossier}
+                      onNotifyTeacherMissingData={handleNotifyTeacherMissingData}
+                      onRefreshData={() => handleManualRefresh('Processos')}
+                      onOpenFichaAcademica={(student) => setSelectedProcessoStudent(student)}
+                    />
+                  </Suspense>
+                </ModuleErrorBoundary>
               )
             )}
 
@@ -15148,6 +15582,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       });
                     } else {
                       await addDoc(collection(db, 'assiduidade_logs'), logData);
+                      applyAnalyticsDelta(currentTenantId, 'attendance_recorded', { tipoPresenca: status || 'presente' });
                     }
 
                     // Dispatch notification to user and parent if tardy or absent
@@ -15363,12 +15798,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         where('tipo', '==', 'Justificativa de Ausência')
                       );
                       const procSnap = await getDocs(procQuery);
-                      procSnap.forEach(async (pDoc) => {
-                        await updateDoc(doc(db, 'processos_aluno', pDoc.id), {
+                      const procBatchOps: BatchMutationOp[] = procSnap.docs.map((pDoc) => ({
+                        type: 'update',
+                        path: ['processos_aluno', pDoc.id],
+                        data: {
                           status: action === 'validada' ? 'Aprovado' : 'Rejeitado',
                           observacao: action === 'validada' ? 'Justificativa Aprovada - Falta Retirada' : 'Justificativa Rejeitada - Falta Mantida'
-                        });
-                      });
+                        }
+                      }));
+                      await commitBatchOperations(procBatchOps);
                     }
 
                     if (action === 'validada') {
@@ -16168,21 +16606,27 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       )}
 
                       {/* POPUP MODAL VALIDAR PRESENÇA */}
-                      <ValidarPresencaModal
-                        isOpen={isValidarPresencaModalOpen}
-                        onClose={() => setIsValidarPresencaModalOpen(false)}
-                        currentTenantId={currentTenantId || ''}
-                        activeEscolaId={assiduidadeEscolaFilter !== 'todos' ? assiduidadeEscolaFilter : (schools[0]?.id || '')}
-                        students={rawStudents}
-                        teachers={rawTeachers}
-                        users={tenantUsers}
-                        classes={rawClasses}
-                        turmas={rawTurmas}
-                        schools={rawSchools}
-                        onValidatePerson={async (person: any, tipo: 'estudante' | 'docente') => {
-                          await registerCheckIn(tipo, person);
-                        }}
-                      />
+                      {isValidarPresencaModalOpen && (
+                        <ModuleErrorBoundary title="Validação de Presenças">
+                          <Suspense fallback={null}>
+                            <ValidarPresencaModal
+                              isOpen={isValidarPresencaModalOpen}
+                              onClose={() => setIsValidarPresencaModalOpen(false)}
+                              currentTenantId={currentTenantId || ''}
+                              activeEscolaId={assiduidadeEscolaFilter !== 'todos' ? assiduidadeEscolaFilter : (schools[0]?.id || '')}
+                              students={rawStudents}
+                              teachers={rawTeachers}
+                              users={tenantUsers}
+                              classes={rawClasses}
+                              turmas={rawTurmas}
+                              schools={rawSchools}
+                              onValidatePerson={async (person: any, tipo: 'estudante' | 'docente') => {
+                                await registerCheckIn(tipo, person);
+                              }}
+                            />
+                          </Suspense>
+                        </ModuleErrorBoundary>
+                      )}
 
                       {/* MODAL JUSTIFICAR AUSÊNCIA */}
                       {isJustificativaModalOpen && (
@@ -16442,13 +16886,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   <div className="flex justify-end">
                     {renderModuleRefreshButton('Biblioteca')}
                   </div>
-                  <BibliotecaModule
-                    currentUserRole={currentUserRole}
-                    currentUserId={currentUserEmail}
-                    currentUserName={currentUserEmail.split('@')[0]}
-                    schools={schools}
-                    tenantId={currentTenantId}
-                  />
+                  <ModuleErrorBoundary title="Biblioteca Digital">
+                    <Suspense fallback={<ModuleSkeleton title="A carregar biblioteca digital..." variant="cards" />}>
+                      <BibliotecaModule
+                        currentUserRole={currentUserRole}
+                        currentUserId={currentUserEmail}
+                        currentUserName={currentUserEmail.split('@')[0]}
+                        schools={schools}
+                        tenantId={currentTenantId}
+                      />
+                    </Suspense>
+                  </ModuleErrorBoundary>
                 </div>
               )
             )}
@@ -17113,135 +17561,146 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   </div>
                 </div>
 
-                <div className="space-y-4">
-                  {notifications
-                    .filter(n => {
-                      if (notifCenterFilter === 'lidas') return n.lido;
-                      if (notifCenterFilter === 'nao_lidas') return !n.lido;
-                      return true;
-                    })
-                    .map(n => {
-                      const isUnread = !n.lido;
-                      return (
-                        <div 
-                          key={n.id} 
-                          className={`p-4 rounded-xl border transition-all flex flex-col md:flex-row justify-between items-start md:items-center gap-4 ${
-                            isUnread 
-                              ? 'bg-indigo-50/20 border-indigo-100/80 shadow-xs' 
-                              : 'bg-white border-slate-150'
-                          }`}
-                        >
-                          <div className="flex gap-3">
-                            <div className={`p-2.5 rounded-full shrink-0 ${
-                              n.tipo === 'alerta' || (n.tipo as string) === 'erro'
-                                ? 'bg-rose-50 text-rose-600' 
-                                : n.tipo === 'sucesso'
-                                ? 'bg-emerald-50 text-emerald-600'
-                                : 'bg-indigo-50 text-indigo-600'
-                            }`}>
-                              <Bell className="w-4 h-4" />
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <h4 className={`font-bold text-sm ${isUnread ? 'text-indigo-900' : 'text-slate-800'}`}>
-                                  {n.titulo}
-                                </h4>
-                                {isUnread && (
-                                  <span className="w-2 h-2 rounded-full bg-indigo-600 animate-ping" />
-                                )}
-                              </div>
-                              <p className="text-xs text-slate-600 mt-1">{n.mensagem}</p>
-                              <p className="text-[10px] text-slate-400 mt-1.5 font-mono">
-                                {n.created_at ? new Date(n.created_at).toLocaleString('pt-BR') : 'Sem data'}
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-2 self-end md:self-center">
-                            {isUnread && (
-                              <button
-                                onClick={() => markNotificationAsRead(n.id)}
-                                className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] px-3 py-1.5 rounded-lg shrink-0 cursor-pointer transition-colors shadow-xs"
-                              >
-                                Marcar como Lida
-                              </button>
-                            )}
-                            <button
-                              onClick={() => deleteNotification(n.id)}
-                              title="Remover notificação"
-                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                  {notifications.filter(n => {
+                {(() => {
+                  const filteredNotifications = notifications.filter(n => {
                     if (notifCenterFilter === 'lidas') return n.lido;
                     if (notifCenterFilter === 'nao_lidas') return !n.lido;
                     return true;
-                  }).length === 0 && (
-                    <div className="text-center py-12 text-slate-400">
-                      Nenhuma notificação encontrada nesta central.
-                    </div>
-                  )}
-                </div>
+                  });
+                  return (
+                    <VirtualList
+                      items={filteredNotifications}
+                      itemHeight={108}
+                      maxHeight={620}
+                      virtualizeThreshold={25}
+                      className="space-y-4"
+                      getKey={(n) => n.id}
+                      emptyState={
+                        <div className="text-center py-12 text-slate-400">
+                          Nenhuma notificação encontrada nesta central.
+                        </div>
+                      }
+                      renderItem={(n) => {
+                        const isUnread = !n.lido;
+                        return (
+                          <div
+                            className={`p-4 rounded-xl border transition-all flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-3 ${
+                              isUnread
+                                ? 'bg-indigo-50/20 border-indigo-100/80 shadow-xs'
+                                : 'bg-white border-slate-150'
+                            }`}
+                          >
+                            <div className="flex gap-3">
+                              <div className={`p-2.5 rounded-full shrink-0 ${
+                                n.tipo === 'alerta' || (n.tipo as string) === 'erro'
+                                  ? 'bg-rose-50 text-rose-600'
+                                  : n.tipo === 'sucesso'
+                                  ? 'bg-emerald-50 text-emerald-600'
+                                  : 'bg-indigo-50 text-indigo-600'
+                              }`}>
+                                <Bell className="w-4 h-4" />
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <h4 className={`font-bold text-sm ${isUnread ? 'text-indigo-900' : 'text-slate-800'}`}>
+                                    {n.titulo}
+                                  </h4>
+                                  {isUnread && (
+                                    <span className="w-2 h-2 rounded-full bg-indigo-600" />
+                                  )}
+                                </div>
+                                <p className="text-xs text-slate-600 mt-1">{n.mensagem}</p>
+                                <p className="text-[10px] text-slate-400 mt-1.5 font-mono">
+                                  {n.created_at ? new Date(n.created_at).toLocaleString('pt-BR') : 'Sem data'}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 self-end md:self-center">
+                              {isUnread && (
+                                <button
+                                  onClick={() => markNotificationAsRead(n.id)}
+                                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] px-3 py-1.5 rounded-lg shrink-0 cursor-pointer transition-colors shadow-xs"
+                                >
+                                  Marcar como Lida
+                                </button>
+                              )}
+                              <button
+                                onClick={() => deleteNotification(n.id)}
+                                title="Remover notificação"
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      }}
+                    />
+                  );
+                })()}
               </div>
             )}
 
             {/* TAB: PERMISSOES GLOBAIS */}
             {activeTab === 'permissoes_globais' && (
-              <GlobalPermissionsModule
-                tenantId={currentTenantId}
-                showNotification={(msg, type) => showSystemNotification(msg, type || 'info')}
-              />
+              <ModuleErrorBoundary title="Permissões Globais">
+                <Suspense fallback={<ModuleSkeleton title="A carregar permissões globais..." />}>
+                  <GlobalPermissionsModule
+                    tenantId={currentTenantId}
+                    showNotification={(msg, type) => showSystemNotification(msg, type || 'info')}
+                  />
+                </Suspense>
+              </ModuleErrorBoundary>
             )}
 
             {/* TAB: CONFIGURACAO */}
             {activeTab === 'configuracao' && config && (
               !hasPermission('configuracoes') ? renderRestrictedAccess('Configurações Académicas') : (
-                <ModuloConfiguracoes
-                  tenantId={currentTenantId}
-                  onFormulariosUpdated={refreshCustomForms}
-                  config={config}
-                  onSaveConfig={async (updatedConfig) => {
-                    setConfig(updatedConfig);
-                    if (updatedConfig.id) {
-                      await updateDoc(doc(db, 'configuracoes', updatedConfig.id), {
-                        ...updatedConfig
-                      });
-                    }
-                    if (tenant) {
-                      await updateDoc(doc(db, 'tenants', tenant.id), {
-                        idioma_padrao: systemLang,
-                        ai_translation_enabled: tenant.ai_translation_enabled
-                      });
-                    }
-                  }}
-                  showNotification={showSystemNotification}
-                  onBackupExport={handleBackupExport}
-                  renderRefreshButton={renderModuleRefreshButton}
-                  canEdit={hasPermission('configuracoes', 'editar')}
-                  systemLang={systemLang}
-                  onChangeLanguage={onChangeLanguage}
-                  aiTranslationEnabled={tenant ? tenant.ai_translation_enabled !== false : true}
-                  onToggleAiTranslation={async (enabled) => {
-                    if (tenant) {
-                      const updatedTenant = { ...tenant, ai_translation_enabled: enabled };
-                      setTenant(updatedTenant);
-                      await updateDoc(doc(db, 'tenants', tenant.id), {
-                        ai_translation_enabled: enabled
-                      });
-                    }
-                  }}
-                  worldCountries={WORLD_COUNTRIES}
-                  onSyncHolidays={async (country) => {
-                    await fetchAndRegisterCountryHolidays(country);
-                  }}
-                  existingClasses={rawClasses}
-                />
+                <ModuleErrorBoundary title="Configurações Académicas">
+                  <Suspense fallback={<ModuleSkeleton title="A carregar configurações..." />}>
+                    <ModuloConfiguracoes
+                      tenantId={currentTenantId}
+                      onFormulariosUpdated={refreshCustomForms}
+                      config={config}
+                      onSaveConfig={async (updatedConfig) => {
+                        setConfig(updatedConfig);
+                        if (updatedConfig.id) {
+                          await updateDoc(doc(db, 'configuracoes', updatedConfig.id), {
+                            ...updatedConfig
+                          });
+                        }
+                        if (tenant) {
+                          await updateDoc(doc(db, 'tenants', tenant.id), {
+                            idioma_padrao: systemLang,
+                            ai_translation_enabled: tenant.ai_translation_enabled
+                          });
+                        }
+                      }}
+                      showNotification={showSystemNotification}
+                      onBackupExport={handleBackupExport}
+                      renderRefreshButton={renderModuleRefreshButton}
+                      canEdit={hasPermission('configuracoes', 'editar')}
+                      systemLang={systemLang}
+                      onChangeLanguage={onChangeLanguage}
+                      aiTranslationEnabled={tenant ? tenant.ai_translation_enabled !== false : true}
+                      onToggleAiTranslation={async (enabled) => {
+                        if (tenant) {
+                          const updatedTenant = { ...tenant, ai_translation_enabled: enabled };
+                          setTenant(updatedTenant);
+                          await updateDoc(doc(db, 'tenants', tenant.id), {
+                            ai_translation_enabled: enabled
+                          });
+                        }
+                      }}
+                      worldCountries={WORLD_COUNTRIES}
+                      onSyncHolidays={async (country) => {
+                        await fetchAndRegisterCountryHolidays(country);
+                      }}
+                      existingClasses={rawClasses}
+                    />
+                  </Suspense>
+                </ModuleErrorBoundary>
               )
             )}
 
@@ -17515,13 +17974,15 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                     {/* Dynamic Real QR Code for Student */}
                     <div className="mt-4 flex flex-col items-center">
-                      <StudentQrDisplay
-                        tenantId={currentTenantId || ''}
-                        escolaId={s.escola_id || ''}
-                        studentId={s.id}
-                        matricula={s.numero_matricula || s.id}
-                        userId={s.user_id}
-                      />
+                      <Suspense fallback={<ModuleSkeleton title="A gerar cartão QR..." variant="compact" />}>
+                        <StudentQrDisplay
+                          tenantId={currentTenantId || ''}
+                          escolaId={s.escola_id || ''}
+                          studentId={s.id}
+                          matricula={s.numero_matricula || s.id}
+                          userId={s.user_id}
+                        />
+                      </Suspense>
                       <span className="text-[7px] text-slate-400 dark:text-slate-500 font-mono mt-1.5 uppercase tracking-widest font-bold">STUDENT ID: {s.id}</span>
                     </div>
                   </>
@@ -17685,7 +18146,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   const user_id = studentToDeactivate.user_id;
                   const studName = tenantUsers.find(u => u.id === user_id)?.nome || 'Estudante';
                   
-                  // Update Student Record (Soft delete)
+                  // Update Student Record (Soft delete) & update pre-calculated aggregate
                   await setDoc(doc(db, 'estudantes', studentToDeactivate.id), {
                     ativo: false,
                     cracha_inutilizado: true,
@@ -17693,9 +18154,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     desativado_em: new Date().toISOString(),
                     desativado_por: loggedInUser?.nome || 'Admin'
                   }, { merge: true });
+                  applyAnalyticsDelta(currentTenantId, 'student_deactivated');
 
-                  // Add Historical Entry in processes
+                  // Add Historical Entry in processes (strictly tenant-partitioned)
                   await addDoc(collection(db, 'processos_aluno'), {
+                    tenant_id: currentTenantId,
                     estudante_id: studentToDeactivate.id,
                     tipo: 'Desactivação',
                     detalhes: `Estudante desactivado temporariamente. Motivo: ${deactivateReason}`,
@@ -18965,7 +19428,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 ? 'w-full max-w-3xl bg-[#0b101b] border-l border-slate-800/80 shadow-2xl overflow-hidden flex flex-col h-full pointer-events-auto animate-in slide-in-from-right duration-300'
                 : (modalType === 'teacher' && isUniversidade)
                   ? 'w-full max-w-xl bg-[#0b101b] text-slate-100 border-l border-slate-800/80 shadow-2xl overflow-y-auto pointer-events-auto flex flex-col justify-between h-full animate-in slide-in-from-right duration-300'
-                  : `bg-white h-full ${modalType === 'escola_detalhes' || modalType === 'user' ? 'max-w-2xl' : 'max-w-lg'} w-full p-6 shadow-2xl border-l border-slate-200 overflow-y-auto pointer-events-auto flex flex-col justify-between rounded-l-2xl sm:rounded-l-3xl rounded-r-none animate-in slide-in-from-right duration-300`
+                  : `bg-white dark:bg-[#0b101b] text-slate-900 dark:text-slate-100 h-full ${modalType === 'escola_detalhes' || modalType === 'user' ? 'max-w-2xl' : 'max-w-lg'} w-full p-6 shadow-2xl border-l border-slate-200 dark:border-slate-800 overflow-y-auto pointer-events-auto flex flex-col justify-between rounded-l-2xl sm:rounded-l-3xl rounded-r-none animate-in slide-in-from-right duration-300`
           }>
             {modalType === 'student' ? (
               <div className="px-6 py-4 border-b border-slate-800/60 flex items-center justify-between bg-[#0e1422]/80 backdrop-blur sticky top-0 z-20 shrink-0">
@@ -19022,8 +19485,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 </button>
               </div>
             ) : (
-              <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-150">
-                <h3 className="text-lg font-bold text-slate-900 font-sans">
+              <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-150 dark:border-slate-800">
+                <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100 font-sans">
                   {getHumanizedModalTitle(modalType, !!editingItem)}
                 </h3>
                 <button
@@ -19042,7 +19505,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       );
                     }
                   }}
-                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                  className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
                   title="Fechar Painel"
                 >
                   <X className="w-5 h-5" />
@@ -19484,10 +19947,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     <span className="font-bold text-slate-400 block uppercase text-[10px]">Localização Geográfica da Escola</span>
                     {editingItem && (
                       <div className="w-full rounded-2xl overflow-hidden relative">
-                        <SchoolMap 
-                          schools={[editingItem]} 
-                          provinces={provinces}
-                        />
+                        <Suspense fallback={<ModuleSkeleton title="A carregar mapa..." variant="compact" />}>
+                          <SchoolMap 
+                            schools={[editingItem]} 
+                            provinces={provinces}
+                          />
+                        </Suspense>
                       </div>
                     )}
                   </div>
@@ -19579,24 +20044,28 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
               {/* STUDENT FORM */}
               {modalType === 'student' && (
-                <StudentRegistrationForm
-                  formData={studentForm}
-                  setFormData={setStudentForm}
-                  isEditing={!!editingItem}
-                  schools={schools}
-                  turmas={turmas}
-                  tenantUsers={tenantUsers}
-                  cursos={rawCursos}
-                  cadeiras={rawCadeiras}
-                  students={students}
-                  salas={rawSalas}
-                  isUniversidade={isUniversidade}
-                  tenantTipoInstituicao={tenant?.tipoInstituicao || 'escola'}
-                  allowedLevels={['primario', 'secundario', 'superior', 'profissional']}
-                  onPhotoUploaded={(b64) => setStudentForm(prev => ({ ...prev, foto_url: b64 }))}
-                  onPhotoRemoved={() => setStudentForm(prev => ({ ...prev, foto_url: '' }))}
-                  customFields={estudanteCustomFields}
-                />
+                <ModuleErrorBoundary title="Registo de Estudante">
+                  <Suspense fallback={<ModuleSkeleton title="A carregar formulário do estudante..." variant="compact" />}>
+                    <StudentRegistrationForm
+                      formData={studentForm}
+                      setFormData={setStudentForm}
+                      isEditing={!!editingItem}
+                      schools={schools}
+                      turmas={turmas}
+                      tenantUsers={tenantUsers}
+                      cursos={rawCursos}
+                      cadeiras={rawCadeiras}
+                      students={students}
+                      salas={rawSalas}
+                      isUniversidade={isUniversidade}
+                      tenantTipoInstituicao={tenant?.tipoInstituicao || 'escola'}
+                      allowedLevels={['primario', 'secundario', 'superior', 'profissional']}
+                      onPhotoUploaded={(b64) => setStudentForm(prev => ({ ...prev, foto_url: b64 }))}
+                      onPhotoRemoved={() => setStudentForm(prev => ({ ...prev, foto_url: '' }))}
+                      customFields={estudanteCustomFields}
+                    />
+                  </Suspense>
+                </ModuleErrorBoundary>
               )}
 
               {/* TURMA FORM */}
@@ -20998,6 +21467,31 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 text-sm h-16 focus:outline-none text-slate-800 dark:text-slate-200"
                     />
                   </div>
+
+                  {/* Campos Customizados do Formulário de Lançamento de Notas */}
+                  {notasCustomFields.length > 0 && (
+                    <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-3">
+                      <div className="flex items-center gap-2">
+                        <Award className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                          Campos Personalizados do Formulário de Notas
+                        </h4>
+                      </div>
+                      <CustomFieldsRenderer
+                        fields={notasCustomFields}
+                        values={pautaForm.dados_customizados || {}}
+                        onChange={(fieldId, val) => {
+                          setPautaForm((prev: any) => ({
+                            ...prev,
+                            dados_customizados: {
+                              ...(prev?.dados_customizados || {}),
+                              [fieldId]: val
+                            }
+                          }));
+                        }}
+                      />
+                    </div>
+                  )}
                 </>
               )}
 
@@ -21187,15 +21681,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   {/* MODULAR PERMISSIONS CONTAINER */}
                   {userForm.tipo !== 'admin' && (
                     <div className="border-t border-slate-150 pt-4 mt-4">
-                      <UserPermissionsChecklist
-                        userCategoryCode={userForm.tipo}
-                        globalCategories={globalCategories}
-                        moduloAcessos={userForm.modulo_acessos || {}}
-                        onChangeModuloAcessos={(newAcessos) => {
-                          setUserForm({ ...userForm, modulo_acessos: newAcessos });
-                        }}
-                        showNotification={showSystemNotification}
-                      />
+                      <Suspense fallback={<ModuleSkeleton title="A carregar matriz de permissões..." variant="compact" />}>
+                        <UserPermissionsChecklist
+                          userCategoryCode={userForm.tipo}
+                          globalCategories={globalCategories}
+                          moduloAcessos={userForm.modulo_acessos || {}}
+                          onChangeModuloAcessos={(newAcessos) => {
+                            setUserForm({ ...userForm, modulo_acessos: newAcessos });
+                          }}
+                          showNotification={showSystemNotification}
+                        />
+                      </Suspense>
                     </div>
                   )}
                 </>
@@ -21205,20 +21701,21 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               {modalType === 'ferias' && (
                 <>
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">Descrição das Férias / Feriado</label>
+                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Descrição das Férias / Feriado</label>
                     <input 
                       type="text"
                       required
                       placeholder="Ex: Férias de Natal, Feriado Nacional, Recesso Escolar"
                       value={feriasForm.descricao}
                       onChange={(e) => setFeriasForm({ ...feriasForm, descricao: e.target.value })}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
+                      className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm text-slate-800 dark:text-slate-100"
                     />
                   </div>
                    <div>
                     <SearchableDropdown
                       label="Aplicável a (Turma / Classe)"
                       required
+                      theme={activeTheme === 'theme-dark' ? 'dark' : 'light'}
                       options={[
                         { value: 'todas', label: ' Todas as Turmas (Geral)' },
                         ...turmas.map(t => ({ value: t.id, label: t.nome }))
@@ -21230,23 +21727,23 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Data de Início</label>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Data de Início</label>
                       <input 
                         type="date"
                         required
                         value={feriasForm.data_inicio}
                         onChange={(e) => setFeriasForm({ ...feriasForm, data_inicio: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
+                        className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm text-slate-700 dark:text-slate-100"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Data de Fim</label>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Data de Fim</label>
                       <input 
                         type="date"
                         required
                         value={feriasForm.data_fim}
                         onChange={(e) => setFeriasForm({ ...feriasForm, data_fim: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700"
+                        className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm text-slate-700 dark:text-slate-100"
                       />
                     </div>
                   </div>
@@ -21256,10 +21753,37 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               {/* HORARIO AULA FORM */}
               {modalType === 'horario_aula' && (
                 <>
+                  {(() => {
+                    const liveHorarioConflict = (horarioForm.hora_inicio && horarioForm.hora_fim && horarioForm.data)
+                      ? checkScheduleConflictDetails(
+                          horarioForm.hora_inicio,
+                          horarioForm.hora_fim,
+                          horarioForm.data,
+                          getDiaSemanaFromDate(horarioForm.data),
+                          horarioForm.turma_id,
+                          horarioForm.docente_id,
+                          horarioForm.sala,
+                          rawClasses,
+                          editingItem?.id,
+                          rawExames
+                        )
+                      : { conflict: false };
+                    return liveHorarioConflict.conflict ? (
+                      <div className="p-3 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 rounded-xl flex items-start gap-2 text-xs text-rose-800 dark:text-rose-200">
+                        <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-extrabold">Conflito Detectado (Agendamento Bloqueado)</p>
+                          <p className="text-[11px] opacity-90 mt-0.5">{liveHorarioConflict.reason}</p>
+                        </div>
+                      </div>
+                    ) : null;
+                  })()}
+
                   <div>
                     <SearchableDropdown
                       label="Turma Alvo"
                       required
+                      theme={activeTheme === 'theme-dark' ? 'dark' : 'light'}
                       options={turmas.map(t => ({ value: t.id, label: t.nome }))}
                       value={horarioForm.turma_id}
                       onChange={(val) => {
@@ -21278,6 +21802,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     <SearchableDropdown
                       label="Disciplina"
                       required
+                      theme={activeTheme === 'theme-dark' ? 'dark' : 'light'}
                       options={(() => {
                         const selectedTurma = turmas.find(t => t.id === horarioForm.turma_id);
                         const turmaClasseEscolarId = selectedTurma?.classe_escolar_id;
@@ -21308,6 +21833,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     <SearchableDropdown
                       label="Docente / Professor"
                       required
+                      theme={activeTheme === 'theme-dark' ? 'dark' : 'light'}
                       options={(() => {
                         const selectedTurma = turmas.find(t => t.id === horarioForm.turma_id);
                         const turmaEscolaId = selectedTurma?.escola_id || schools[0]?.id || '';
@@ -21329,10 +21855,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   </div>
 
                   {/* MATÉRIA (PLANO DE AULAS) & EXTRAORDINÁRIO */}
-                  <div className="p-4 bg-slate-50/90 border border-slate-200/90 rounded-2xl space-y-3">
+                  <div className="p-4 bg-slate-50/90 dark:bg-[#090d16] border border-slate-200/90 dark:border-slate-800 rounded-2xl space-y-3">
                     <div className="flex items-center justify-between">
-                      <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                        <BookOpenCheck className="w-4 h-4 text-indigo-600" />
+                      <label className="text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
+                        <BookOpenCheck className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
                         {t('calendario_materia_dropdown') || 'Matéria (Plano de Aulas)'}
                         {!horarioForm.extraordinario && <span className="text-rose-500">*</span>}
                       </label>
@@ -21351,10 +21877,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                               materia_topico: isExtra ? horarioForm.materia_topico : ''
                             });
                           }}
-                          className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 cursor-pointer"
+                          className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 dark:border-slate-700 cursor-pointer"
                         />
-                        <span className="text-xs font-bold text-slate-700 flex items-center gap-1">
-                          <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+                        <span className="text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1">
+                          <Sparkles className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
                           {t('calendario_extraordinario_check') || 'Extraordinário'}
                         </span>
                       </label>
@@ -21385,7 +21911,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                   materia_topico: selItem ? selItem.topico : ''
                                 });
                               }}
-                              className="w-full bg-white border border-slate-200 rounded-xl p-2.5 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                              className="w-full bg-white dark:bg-[#0e1422] border border-slate-200 dark:border-slate-800 rounded-xl p-2.5 text-xs font-semibold text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             >
                               <option value="">{t('calendario_selecione_materia') || '-- Selecione a Matéria Planeada --'}</option>
                               {availableTopics.length === 0 ? (
@@ -21406,7 +21932,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       </div>
                     ) : (
                       <div className="space-y-1.5 animate-fadeIn">
-                        <label className="block text-[11px] font-bold text-slate-600">
+                        <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300">
                           {t('calendario_extraordinario_label') || 'Matéria a leccionar (Tópico)'} <span className="text-rose-500">*</span>
                         </label>
                         <input
@@ -21415,9 +21941,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                           placeholder={t('calendario_digite_materia') || 'Escreva o tópico ou matéria da aula extraordinária...'}
                           value={horarioForm.materia_topico}
                           onChange={(e) => setHorarioForm({ ...horarioForm, materia_topico: e.target.value })}
-                          className="w-full bg-white border border-purple-300 rounded-xl p-2.5 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                          className="w-full bg-white dark:bg-[#0e1422] border border-purple-300 dark:border-purple-700 rounded-xl p-2.5 text-xs font-semibold text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-purple-500"
                         />
-                        <p className="text-[10px] text-purple-700 font-medium">
+                        <p className="text-[10px] text-purple-700 dark:text-purple-400 font-medium">
                            Ao salvar, este tópico será adicionado automaticamente ao Plano de Aulas com a insígnia "Extraordinário".
                         </p>
                       </div>
@@ -21426,30 +21952,30 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Hora Início</label>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Hora Início</label>
                       <input 
                         type="time"
                         required
                         value={horarioForm.hora_inicio}
                         onChange={(e) => setHorarioForm({ ...horarioForm, hora_inicio: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold text-slate-800"
+                        className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm font-semibold text-slate-800 dark:text-slate-100"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Hora Fim</label>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Hora Fim</label>
                       <input 
                         type="time"
                         required
                         value={horarioForm.hora_fim}
                         onChange={(e) => setHorarioForm({ ...horarioForm, hora_fim: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold text-slate-800"
+                        className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm font-semibold text-slate-800 dark:text-slate-100"
                       />
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Data da Aula</label>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Data da Aula</label>
                       <input 
                         type="date"
                         required
@@ -21462,12 +21988,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             dia_semana: getDiaSemanaFromDate(dVal)
                           });
                         }}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold text-slate-800"
+                        className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm font-semibold text-slate-800 dark:text-slate-100"
                       />
                     </div>
                     <div>
                       <SearchableDropdown
                         label="Sala de Aula"
+                        theme={activeTheme === 'theme-dark' ? 'dark' : 'light'}
                         options={rawSalas.map(s => ({ value: s.nome, label: `${s.nome} (${s.tipo})` }))}
                         value={horarioForm.sala || rawSalas[0]?.nome || ''}
                         onChange={(val) => setHorarioForm({ ...horarioForm, sala: val })}
@@ -21484,12 +22011,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                     if (isWeekendOrHoliday) {
                       return (
-                        <div className="p-3.5 bg-amber-50/80 border border-amber-200 rounded-xl space-y-2 animate-fadeIn">
-                          <div className="flex items-center gap-2 text-amber-800 font-bold text-xs">
+                        <div className="p-3.5 bg-amber-50/80 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl space-y-2 animate-fadeIn">
+                          <div className="flex items-center gap-2 text-amber-800 dark:text-amber-300 font-bold text-xs">
                             <span className="text-base"></span>
                             <span>Atenção: A data selecionada é um {isWeekend ? 'Final de Semana' : ''}{isWeekend && isHoliday ? ' e ' : ''}{isHoliday ? 'Feriado' : ''}!</span>
                           </div>
-                          <label className="block text-xs font-bold text-amber-900">
+                          <label className="block text-xs font-bold text-amber-900 dark:text-amber-200">
                             Justificativa Obrigatória <span className="text-red-500">*</span>
                           </label>
                           <textarea
@@ -21498,7 +22025,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                             placeholder="Motivo do agendamento em dia não letivo (ex: Reposição de aula, Aulão preparatório, Exame especial)..."
                             value={horarioForm.justificativa || ''}
                             onChange={(e) => setHorarioForm({ ...horarioForm, justificativa: e.target.value })}
-                            className="w-full bg-white border border-amber-300 rounded-lg p-2 text-xs text-amber-950 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                            className="w-full bg-white dark:bg-[#090d16] border border-amber-300 dark:border-amber-700 rounded-lg p-2 text-xs text-amber-950 dark:text-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
                           />
                         </div>
                       );
@@ -21512,31 +22039,32 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               {modalType === 'feriado' && (
                 <>
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">Nome do Feriado</label>
+                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Nome do Feriado</label>
                     <input 
                       type="text"
                       required
                       placeholder="Ex: Dia da Independência Nacional, Dia da Paz"
                       value={feriadoForm.nome}
                       onChange={(e) => setFeriadoForm({ ...feriadoForm, nome: e.target.value })}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold text-slate-800"
+                      className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm font-semibold text-slate-800 dark:text-slate-100"
                     />
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Data do Feriado</label>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Data do Feriado</label>
                       <input 
                         type="date"
                         required
                         value={feriadoForm.data}
                         onChange={(e) => setFeriadoForm({ ...feriadoForm, data: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold text-slate-800"
+                        className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm font-semibold text-slate-800 dark:text-slate-100"
                       />
                     </div>
                     <div>
                       <SearchableDropdown
                         label="País"
+                        theme={activeTheme === 'theme-dark' ? 'dark' : 'light'}
                         options={WORLD_COUNTRIES.map(c => ({ value: c.name, label: c.name }))}
                         value={feriadoForm.pais || config?.pais || 'Moçambique'}
                         onChange={(val) => setFeriadoForm({ ...feriadoForm, pais: val })}
@@ -21546,11 +22074,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">Tipo de Feriado</label>
+                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Tipo de Feriado</label>
                     <select
                       value={feriadoForm.tipo || 'Nacional'}
                       onChange={(e) => setFeriadoForm({ ...feriadoForm, tipo: e.target.value as any })}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold text-slate-800"
+                      className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm font-semibold text-slate-800 dark:text-slate-100"
                     >
                       <option value="Nacional">Nacional</option>
                       <option value="Municipal">Municipal / Local</option>
@@ -21560,13 +22088,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">Descrição / Observações</label>
+                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Descrição / Observações</label>
                     <textarea 
                       rows={2}
                       placeholder="Detalhes adicionais sobre o feriado..."
                       value={feriadoForm.descricao || ''}
                       onChange={(e) => setFeriadoForm({ ...feriadoForm, descricao: e.target.value })}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-800"
+                      className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm text-slate-800 dark:text-slate-100"
                     />
                   </div>
                 </>
@@ -21575,18 +22103,46 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
               {/* AGENDAR EXAME / AVALIACAO FORM */}
               {modalType === 'agendar_exame' && (
                 <>
-                  <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 space-y-1">
+                  <div className="bg-amber-50/80 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl p-3 text-xs text-amber-900 dark:text-amber-200 space-y-1">
                     <p className="font-bold flex items-center gap-1.5">
                       <span></span> Agendamento de Exames & Avaliações
                     </p>
-                    <p className="text-[11px] text-amber-800/90 font-medium">
+                    <p className="text-[11px] text-amber-800/90 dark:text-amber-300/90 font-medium">
                       O agendamento será exibido com destaque no Calendário da turma e sincronizado com o cronograma acadêmico.
                     </p>
                   </div>
 
+                  {(() => {
+                    const liveExamConflict = (exameForm.hora_inicio && exameForm.hora_fim && exameForm.data)
+                      ? checkScheduleConflictDetails(
+                          exameForm.hora_inicio,
+                          exameForm.hora_fim,
+                          exameForm.data,
+                          getDiaSemanaFromDate(exameForm.data),
+                          exameForm.turma_id,
+                          exameForm.docente_id || '',
+                          exameForm.sala || '',
+                          rawClasses,
+                          undefined,
+                          rawExames,
+                          editingItem?.id
+                        )
+                      : { conflict: false };
+                    return liveExamConflict.conflict ? (
+                      <div className="p-3 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 rounded-xl flex items-start gap-2 text-xs text-rose-800 dark:text-rose-200">
+                        <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-extrabold">Conflito Detectado (Agendamento Bloqueado)</p>
+                          <p className="text-[11px] opacity-90 mt-0.5">{liveExamConflict.reason}</p>
+                        </div>
+                      </div>
+                    ) : null;
+                  })()}
+
                     <div>
                     <SearchableDropdown
                       label="Turma Destino"
+                      theme={activeTheme === 'theme-dark' ? 'dark' : 'light'}
                       options={turmas.map(t => ({ value: t.id, label: `${t.nome || 'Turma'} (${t.turno || 'Geral'})` }))}
                       value={exameForm.turma_id}
                       onChange={(val) => {
@@ -21603,11 +22159,11 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Tipo de Avaliação</label>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Tipo de Avaliação</label>
                       <select
                         value={exameForm.tipo}
                         onChange={(e) => setExameForm({ ...exameForm, tipo: e.target.value as any })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                        className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm font-semibold text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-amber-500"
                       >
                         <option value="Exame Normal">Exame Normal</option>
                         <option value="Exame Recurso">Exame de Recurso</option>
@@ -21620,14 +22176,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Disciplina / Matéria</label>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Disciplina / Matéria</label>
                       <input 
                         type="text"
                         required
                         placeholder="Ex: Matemática, Física, Português"
                         value={exameForm.disciplina_nome}
                         onChange={(e) => setExameForm({ ...exameForm, disciplina_nome: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                        className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm font-semibold text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-amber-500"
                       />
                     </div>
                   </div>
@@ -21636,6 +22192,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     <div>
                       <SearchableDropdown
                         label="Docente / Vigilante"
+                        theme={activeTheme === 'theme-dark' ? 'dark' : 'light'}
                         options={teachers.map(t => ({ value: t.id, label: t.nome || tenantUsers.find(u => u.id === t.user_id)?.nome || 'Docente' }))}
                         value={exameForm.docente_id}
                         onChange={(val) => {
@@ -21650,6 +22207,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     <div>
                       <SearchableDropdown
                         label="Sala de Exame"
+                        theme={activeTheme === 'theme-dark' ? 'dark' : 'light'}
                         options={rawSalas.length > 0 ? rawSalas.map(s => ({ value: s.nome, label: `${s.nome} (Cap: ${s.capacidade || 30})` })) : [{ value: 'Sala 01', label: 'Sala 01' }, { value: 'Sala 02', label: 'Sala 02' }, { value: 'Anfiteatro', label: 'Anfiteatro' }]}
                         value={exameForm.sala}
                         onChange={(val) => setExameForm({ ...exameForm, sala: val })}
@@ -21660,59 +22218,59 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
                   <div className="grid grid-cols-3 gap-3">
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Data</label>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Data</label>
                       <input 
                         type="date"
                         required
                         value={exameForm.data}
                         onChange={(e) => setExameForm({ ...exameForm, data: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs font-semibold text-slate-800"
+                        className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-xs font-semibold text-slate-800 dark:text-slate-100"
                       />
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Hora Início</label>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Hora Início</label>
                       <input 
                         type="time"
                         required
                         value={exameForm.hora_inicio}
                         onChange={(e) => setExameForm({ ...exameForm, hora_inicio: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs font-semibold text-slate-800"
+                        className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-xs font-semibold text-slate-800 dark:text-slate-100"
                       />
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Hora Fim</label>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Hora Fim</label>
                       <input 
                         type="time"
                         required
                         value={exameForm.hora_fim}
                         onChange={(e) => setExameForm({ ...exameForm, hora_fim: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs font-semibold text-slate-800"
+                        className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-xs font-semibold text-slate-800 dark:text-slate-100"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">Peso na Nota Final (%)</label>
+                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Peso na Nota Final (%)</label>
                     <input 
                       type="number"
                       min={1}
                       max={100}
                       value={exameForm.peso_nota || 100}
                       onChange={(e) => setExameForm({ ...exameForm, peso_nota: Number(e.target.value) })}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-semibold text-slate-800"
+                      className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm font-semibold text-slate-800 dark:text-slate-100"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">Instruções / Observações para Alunos</label>
+                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Instruções / Observações para Alunos</label>
                     <textarea 
                       rows={2}
                       placeholder="Ex: Trazer calculadora científica, documento de identificação e caneta azul/preta..."
                       value={exameForm.observacoes || ''}
                       onChange={(e) => setExameForm({ ...exameForm, observacoes: e.target.value })}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-800"
+                      className="w-full bg-slate-50 dark:bg-[#090d16] border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 text-sm text-slate-800 dark:text-slate-100"
                     />
                   </div>
                 </>
@@ -22467,41 +23025,55 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       })()}
 
       {/* MODAL FORMULÁRIO DO DOCENTE (NOVO/EDIÇÃO) */}
-      <DocenteFormModal
-        isOpen={isDocenteModalOpen}
-        onClose={() => {
-          setIsDocenteModalOpen(false);
-          setEditingDocente(null);
-        }}
-        onSave={handleSaveDocente}
-        editingDocente={editingDocente}
-        schools={schools}
-        tenantUsers={tenantUsers}
-        isSaving={isSaving}
-        customFields={docenteCustomFields}
-      />
+      {isDocenteModalOpen && (
+        <Suspense fallback={null}>
+          <DocenteFormModal
+            isOpen={isDocenteModalOpen}
+            onClose={() => {
+              setIsDocenteModalOpen(false);
+              setEditingDocente(null);
+            }}
+            onSave={handleSaveDocente}
+            editingDocente={editingDocente}
+            schools={schools}
+            tenantUsers={tenantUsers}
+            isSaving={isSaving}
+            customFields={docenteCustomFields}
+          />
+        </Suspense>
+      )}
 
       {/* FICHA ACADÉMICA COMPLETA DO ESTUDANTE (9 ABAS) */}
       {selectedProcessoStudent && (
-        <ProcessoAlunoFicha
-          student={selectedProcessoStudent}
-          tenantTipoInstituicao={tenant?.tipoInstituicao || 'escola'}
-          cursos={rawCursos}
-          cadeiras={rawCadeiras}
-          inscricoes={rawInscricoes}
-          pautas={rawPautas}
-          classes={rawClasses}
-          turmas={rawTurmas}
-          schools={rawSchools}
-          tenantUsers={tenantUsers}
-          currentUserRole={currentUserRole}
-          onClose={() => setSelectedProcessoStudent(null)}
-        />
+        <ModuleErrorBoundary title="Ficha Académica">
+          <Suspense fallback={<ModuleSkeleton title="A carregar ficha académica..." variant="compact" />}>
+            <ProcessoAlunoFicha
+              student={selectedProcessoStudent}
+              tenantTipoInstituicao={tenant?.tipoInstituicao || 'escola'}
+              cursos={rawCursos}
+              cadeiras={rawCadeiras}
+              inscricoes={rawInscricoes}
+              pautas={rawPautas}
+              classes={rawClasses}
+              turmas={rawTurmas}
+              schools={rawSchools}
+              tenantUsers={tenantUsers}
+              currentUserRole={currentUserRole}
+              onClose={() => setSelectedProcessoStudent(null)}
+            />
+          </Suspense>
+        </ModuleErrorBoundary>
       )}
 
       {isCookiePolicyOpen && (
-        <CookiePolicyModal onClose={() => setIsCookiePolicyOpen(false)} />
+        <Suspense fallback={null}>
+          <CookiePolicyModal onClose={() => setIsCookiePolicyOpen(false)} />
+        </Suspense>
       )}
+
+      <Suspense fallback={null}>
+        <AsyncJobsPanel tenantId={currentTenantId} />
+      </Suspense>
     </div>
   );
 }

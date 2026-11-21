@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { 
   Plus, 
   Search, 
@@ -27,10 +28,13 @@ import {
   X,
 } from 'lucide-react';
 import { Livro, Edicao, PermissaoBiblioteca, HistoricoLeitura, Avaliacao, Escola } from '../types';
-import { collection, doc, setDoc, getDocs, addDoc, deleteDoc, query, where } from 'firebase/firestore';
+import { collection, doc, setDoc, getDocs, addDoc, deleteDoc, query, where, orderBy, limit, QueryDocumentSnapshot, DocumentData } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { InternalPdfViewer } from './InternalPdfViewer';
 import { compressImageFile } from '../lib/imageCompression';
+import { fetchTenantPage } from '../lib/firestoreScalable';
+import { resolveCdnMediaUrl, prefetchMediaAssets } from '../lib/mediaCdn';
+import { buildAuthHeaders, waitForAsyncJob, getStatusLabelPt } from '../lib/asyncJobsClient';
 
 interface BibliotecaModuleProps {
   currentUserRole: string;
@@ -131,8 +135,12 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
   const [activeEditionToRead, setActiveEditionToRead] = useState<{livro: Livro, edicao: Edicao} | null>(null);
   const [readerPageNum, setReaderPageNum] = useState<number>(1);
   const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearchQuery = useDebouncedValue(searchQuery, 250);
   const [categoryFilter, setCategoryFilter] = useState('todas');
   const [schoolFilter, setSchoolFilter] = useState('todas');
+  const [livrosCursor, setLivrosCursor] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [hasMoreLivros, setHasMoreLivros] = useState(false);
+  const [loadingMoreLivros, setLoadingMoreLivros] = useState(false);
 
   // Custom Delete and Notification States
   const [confirmDeleteData, setConfirmDeleteData] = useState<{
@@ -146,6 +154,7 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
     message: string;
     type: 'sucesso' | 'erro';
   } | null>(null);
+  const [synopsisProgressLabel, setSynopsisProgressLabel] = useState<string>('');
 
   const showToast = (message: string, type: 'sucesso' | 'erro' = 'sucesso') => {
     setActionNotification({ message, type });
@@ -206,47 +215,79 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
     }
   }, [bookForm.numero_paginas, detectedPdfPages]);
 
-  // Carregar e sincronizar dados da biblioteca do Firestore
+  // Carregar e sincronizar dados da biblioteca do Firestore (particionados por tenant + paginação por cursor)
   useEffect(() => {
     let active = true;
     const fetchBibliotecaFromFirestore = async () => {
       if (!tenantId) return;
       try {
-        // 1. Livros
-        const livrosCol = collection(db, 'livros');
-        const livrosSnapshot = await getDocs(livrosCol);
-        if (!active) return;
-        const fetchedLivros: Livro[] = [];
-        livrosSnapshot.forEach((d) => {
-          const data = d.data() as Livro;
-          if (!data.tenant_id || data.tenant_id === tenantId || tenantId === 'all') {
-            fetchedLivros.push({ id: d.id, ...data });
+        // 1. Livros (paginação por cursor, máx 50 por página)
+        if (tenantId === 'all') {
+          const livrosSnapshot = await getDocs(query(collection(db, 'livros'), limit(100)));
+          if (!active) return;
+          const fetchedLivros: Livro[] = livrosSnapshot.docs.map(d => ({ id: d.id, ...(d.data() as Livro) }));
+          if (fetchedLivros.length > 0) setLivros(fetchedLivros);
+          setLivrosCursor(null);
+          setHasMoreLivros(false);
+        } else {
+          try {
+            const page = await fetchTenantPage<Livro>({
+              collectionName: 'livros',
+              tenantId,
+              orderByField: 'criado_em',
+              orderDirection: 'desc',
+              pageSize: 50,
+            });
+            if (!active) return;
+            if (page.items.length > 0) {
+              setLivros(page.items);
+              prefetchMediaAssets(page.items.map(l => l.capa_url || '').filter(Boolean));
+            }
+            setLivrosCursor(page.nextCursor);
+            setHasMoreLivros(page.hasMore);
+          } catch {
+            const fallbackSnap = await getDocs(
+              query(collection(db, 'livros'), where('tenant_id', '==', tenantId), limit(50))
+            );
+            if (!active) return;
+            const fetchedLivros: Livro[] = fallbackSnap.docs.map(d => ({ id: d.id, ...(d.data() as Livro) }));
+            if (fetchedLivros.length > 0) {
+              setLivros(fetchedLivros);
+              prefetchMediaAssets(fetchedLivros.map(l => l.capa_url || '').filter(Boolean));
+            }
+            setLivrosCursor(null);
+            setHasMoreLivros(false);
           }
-        });
-        if (fetchedLivros.length > 0) {
-          setLivros(fetchedLivros);
         }
 
-        // 2. Edicoes
-        const edicoesCol = collection(db, 'edicoes');
-        const edicoesSnapshot = await getDocs(edicoesCol);
+        // 2. Edicoes (filtradas por tenant + limite máximo)
+        const edicoesQuery = tenantId === 'all'
+          ? query(collection(db, 'edicoes'), limit(200))
+          : query(collection(db, 'edicoes'), where('tenant_id', '==', tenantId), limit(200));
+        const edicoesSnapshot = await getDocs(edicoesQuery);
         if (!active) return;
-        const fetchedEdicoes: Edicao[] = [];
-        edicoesSnapshot.forEach((d) => {
-          fetchedEdicoes.push({ id: d.id, ...d.data() } as Edicao);
-        });
+        const fetchedEdicoes: Edicao[] = edicoesSnapshot.docs.map(d => ({ id: d.id, ...(d.data() as Edicao) }));
         if (fetchedEdicoes.length > 0) {
           setEdicoes(fetchedEdicoes);
         }
 
-        // 3. Avaliacoes
-        const avaliacoesCol = collection(db, 'avaliacoes');
-        const avaliacoesSnapshot = await getDocs(avaliacoesCol);
+        // 3. Avaliacoes (filtradas por tenant + limite máximo)
+        let avaliacoesSnapshot;
+        if (tenantId === 'all') {
+          avaliacoesSnapshot = await getDocs(query(collection(db, 'avaliacoes'), limit(200)));
+        } else {
+          try {
+            avaliacoesSnapshot = await getDocs(
+              query(collection(db, 'avaliacoes'), where('tenant_id', '==', tenantId), orderBy('criado_em', 'desc'), limit(200))
+            );
+          } catch {
+            avaliacoesSnapshot = await getDocs(
+              query(collection(db, 'avaliacoes'), where('tenant_id', '==', tenantId), limit(200))
+            );
+          }
+        }
         if (!active) return;
-        const fetchedAvaliacoes: Avaliacao[] = [];
-        avaliacoesSnapshot.forEach((d) => {
-          fetchedAvaliacoes.push({ id: d.id, ...d.data() } as Avaliacao);
-        });
+        const fetchedAvaliacoes: Avaliacao[] = avaliacoesSnapshot.docs.map(d => ({ id: d.id, ...(d.data() as Avaliacao) }));
         if (fetchedAvaliacoes.length > 0) {
           setAvaliacoes(fetchedAvaliacoes);
         }
@@ -260,6 +301,35 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
       active = false;
     };
   }, [tenantId]);
+
+  const handleLoadMoreLivros = async () => {
+    if (!tenantId || tenantId === 'all' || !livrosCursor || loadingMoreLivros) return;
+    setLoadingMoreLivros(true);
+    try {
+      const page = await fetchTenantPage<Livro>({
+        collectionName: 'livros',
+        tenantId,
+        orderByField: 'criado_em',
+        orderDirection: 'desc',
+        pageSize: 50,
+        cursor: livrosCursor,
+      });
+      setLivros(prev => {
+        const existingIds = new Set(prev.map(item => item.id));
+        const merged = [...prev];
+        for (const item of page.items) {
+          if (!existingIds.has(item.id)) merged.push(item);
+        }
+        return merged;
+      });
+      setLivrosCursor(page.nextCursor);
+      setHasMoreLivros(page.hasMore);
+    } catch (error) {
+      console.error("Erro ao carregar mais livros:", error);
+    } finally {
+      setLoadingMoreLivros(false);
+    }
+  };
 
   // Save state to localStorage on updates
   useEffect(() => {
@@ -282,24 +352,21 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
     localStorage.setItem(`lib_historico_${tenantId}`, JSON.stringify(historicoLeitura));
   }, [historicoLeitura, tenantId]);
 
-  // Sincronização automática do histórico de leitura com o Firestore
+  // Sincronização automática do histórico de leitura com o Firestore (filtrado por utilizador + limite)
   useEffect(() => {
     let active = true;
     const fetchHistoryFromFirestore = async () => {
       if (!tenantId || !currentUserId) return;
       try {
-        const colRef = collection(db, "tenants", tenantId, "historicoLeitura");
+        const colRef = query(
+          collection(db, "tenants", tenantId, "historicoLeitura"),
+          where('utilizador_id', '==', currentUserId),
+          limit(100)
+        );
         const snapshot = await getDocs(colRef);
         if (!active) return;
-        
-        const list: HistoricoLeitura[] = [];
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          if (data && data.utilizador_id === currentUserId) {
-            list.push(data as HistoricoLeitura);
-          }
-        });
 
+        const list: HistoricoLeitura[] = snapshot.docs.map(d => d.data() as HistoricoLeitura);
         if (list.length > 0) {
           setHistoricoLeitura(list);
         }
@@ -337,19 +404,23 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
   // Category list derived from current books
   const categories = ['todas', ...Array.from(new Set(livros.map(l => l.categoria || 'Outros').filter(Boolean)))];
 
-  // Filtered books
-  const filteredLivros = livros.filter(l => {
-    const matchesSearch = 
-      l.titulo.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      l.autor.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (l.isbn && l.isbn.includes(searchQuery)) ||
-      (l.tags && l.tags.some(t => t.toLowerCase().includes(searchQuery.toLowerCase())));
+  // Filtered books (memoizado com debounce para listas extensas)
+  const filteredLivros = useMemo(() => {
+    const q = debouncedSearchQuery.trim().toLowerCase();
+    return livros.filter(l => {
+      const matchesSearch =
+        !q ||
+        l.titulo.toLowerCase().includes(q) ||
+        l.autor.toLowerCase().includes(q) ||
+        (l.isbn && l.isbn.includes(debouncedSearchQuery.trim())) ||
+        (l.tags && l.tags.some(t => t.toLowerCase().includes(q)));
 
-    const matchesCategory = categoryFilter === 'todas' || l.categoria === categoryFilter;
-    const matchesSchool = schoolFilter === 'todas' || l.escola_origem === schoolFilter;
+      const matchesCategory = categoryFilter === 'todas' || l.categoria === categoryFilter;
+      const matchesSchool = schoolFilter === 'todas' || l.escola_origem === schoolFilter;
 
-    return matchesSearch && matchesCategory && matchesSchool;
-  });
+      return matchesSearch && matchesCategory && matchesSchool;
+    });
+  }, [livros, debouncedSearchQuery, categoryFilter, schoolFilter]);
 
   // Average Rating
   const getAverageRating = (livroId: string) => {
@@ -478,29 +549,54 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
 
   const generateSynopsis = async (fileName: string, textSample: string) => {
     setIsGeneratingSynopsis(true);
+    setSynopsisProgressLabel('A enviar para fila de IA...');
     try {
+      const headers = await buildAuthHeaders();
       const response = await fetch('/api/biblioteca/generate-synopsis', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
+        credentials: 'include',
         body: JSON.stringify({
           title: bookForm.titulo,
           author: bookForm.autor,
           category: bookForm.categoria,
           textSample,
           fileName,
+          async: true,
         }),
       });
 
       const data = await response.json();
-      if (data.synopsis) {
+      if (data.queued && data.jobId) {
+        setSynopsisProgressLabel('Pendente na fila...');
+        const completed = await waitForAsyncJob(
+          {
+            id: data.jobId,
+            tenant_id: tenantId,
+            type: 'ai_task',
+            title: `Sinopse IA: ${bookForm.titulo || fileName}`,
+            status: data.status || 'pendente',
+            progress: 15,
+            progress_message: 'Na fila para análise editorial...',
+            created_at: new Date().toISOString(),
+          },
+          {
+            onUpdate: (job) => {
+              setSynopsisProgressLabel(`${getStatusLabelPt(job.status)} (${job.progress}%)`);
+            },
+          }
+        );
+        if (completed.result?.synopsis) {
+          setBookForm(prev => ({ ...prev, sinopse: completed.result.synopsis }));
+        }
+      } else if (data.synopsis) {
         setBookForm(prev => ({ ...prev, sinopse: data.synopsis }));
       }
     } catch (err) {
       console.error("Error generating synopsis:", err);
     } finally {
       setIsGeneratingSynopsis(false);
+      setSynopsisProgressLabel('');
     }
   };
 
@@ -542,8 +638,9 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
     // If PDF was uploaded during book registration, automatically create and bind Edition 1
     if (uploadedPdfBase64) {
       const newEditionId = `edicao-${Date.now()}`;
-      const newEdition: Edicao = {
+      const newEdition: Edicao & { tenant_id: string } = {
         id: newEditionId,
+        tenant_id: tenantId,
         livro_id: newBookId,
         numero_edicao: 1,
         pdf_url: uploadedPdfBase64,
@@ -587,8 +684,9 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
     if (!selectedLivro || !editionForm.pdf_url) return;
 
     const newEditionId = `edicao-${Date.now()}`;
-    const newEdition: Edicao = {
+    const newEdition: Edicao & { tenant_id: string } = {
       id: newEditionId,
+      tenant_id: tenantId,
       livro_id: selectedLivro.id,
       numero_edicao: Number(editionForm.numero_edicao) || 1,
       pdf_url: editionForm.pdf_url,
@@ -622,8 +720,9 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
     if (!selectedLivro) return;
 
     const newReviewId = `av-${Date.now()}`;
-    const newReview: Avaliacao = {
+    const newReview: Avaliacao & { tenant_id: string } = {
       id: newReviewId,
+      tenant_id: tenantId,
       utilizador_id: currentUserId,
       livro_id: selectedLivro.id,
       nota: reviewForm.nota,
@@ -949,8 +1048,10 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                         
                         {l.capa_url ? (
                           <img 
-                            src={l.capa_url} 
+                            src={resolveCdnMediaUrl(l.capa_url, { width: 480, quality: 82 })} 
                             alt={l.titulo} 
+                            loading="lazy"
+                            decoding="async"
                             referrerPolicy="no-referrer"
                             className="absolute inset-0 w-full h-full object-cover" 
                           />
@@ -1024,6 +1125,19 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                 })}
               </div>
             )}
+
+            {hasMoreLivros && (
+              <div className="flex justify-center pt-2">
+                <button
+                  type="button"
+                  onClick={handleLoadMoreLivros}
+                  disabled={loadingMoreLivros}
+                  className="px-5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs rounded-xl border border-indigo-200 transition disabled:opacity-50 cursor-pointer"
+                >
+                  {loadingMoreLivros ? 'A carregar livros...' : 'Carregar mais livros'}
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -1066,7 +1180,7 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                 <div className="h-64 rounded-xl bg-gradient-to-br from-indigo-900 to-slate-900 flex flex-col justify-between p-6 text-white shadow-md relative overflow-hidden">
                   <div className="absolute inset-0 bg-black/40" />
                   {selectedLivro.capa_url ? (
-                    <img src={selectedLivro.capa_url} alt={selectedLivro.titulo} className="absolute inset-0 w-full h-full object-cover" />
+                    <img src={resolveCdnMediaUrl(selectedLivro.capa_url, { width: 640, quality: 85 })} alt={selectedLivro.titulo} loading="lazy" decoding="async" className="absolute inset-0 w-full h-full object-cover" />
                   ) : (
                     <div className="relative z-10 h-full flex flex-col justify-between">
                       <span className="text-[10px] bg-indigo-500/30 px-3 py-1 rounded-full font-mono self-start uppercase font-extrabold">{selectedLivro.categoria}</span>
@@ -1208,17 +1322,23 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
           </div>
         )}
 
-        {/* INTERACTIVE INTERNAL PDF READER */}
+        {/* INTERACTIVE INTERNAL PDF READER (SLIDING RIGHT DRAWER) */}
         {activeEditionToRead && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setActiveEditionToRead(null);
+            }}
+            className="fixed inset-0 z-[160000] flex justify-end bg-black/75 backdrop-blur-xs overflow-hidden animate-in fade-in duration-200"
+          >
             <div
-              className="w-full max-w-5xl h-[92vh] flex flex-col bg-white dark:bg-slate-900 rounded-2xl shadow-2xl overflow-hidden border border-slate-700/50 animate-in zoom-in-95 fade-in duration-150"
+              className="w-full max-w-4xl h-full flex flex-col bg-white dark:bg-slate-900 rounded-l-2xl sm:rounded-l-3xl rounded-r-none shadow-2xl overflow-hidden border-l border-slate-700/50 animate-in slide-in-from-right duration-300"
             >
               <InternalPdfViewer
                 pdfUrl={activeEditionToRead.edicao.pdf_url}
                 bookTitle={activeEditionToRead.livro.titulo}
                 editionNumber={activeEditionToRead.edicao.numero_edicao}
                 initialPage={readerPageNum}
+                tenantId={tenantId}
                 onPageChange={(pageNum, totalPages) => handlePageChange(pageNum, totalPages)}
                 onClose={() => setActiveEditionToRead(null)}
               />
@@ -1486,7 +1606,7 @@ export const BibliotecaModule: React.FC<BibliotecaModuleProps> = ({
                     {isGeneratingSynopsis && (
                       <span className="text-[10px] text-indigo-600 font-bold animate-pulse flex items-center gap-1">
                         <span className="w-2 h-2 rounded-full bg-indigo-600 animate-ping" />
-                        IA gerando sinopse inteligente baseada no PDF...
+                        {synopsisProgressLabel || 'IA a gerar sinopse baseada no PDF...'}
                       </span>
                     )}
                   </div>

@@ -1,130 +1,103 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * 
+ *
  * Serviço de Exclusão Autorizada de Clientes / Instituições (SysEdu)
- * Executa exclusões em cascata com validação estrita RBAC, expurgo de usuários
- * associados, revogação de sessões e trilha de auditoria imutável (OWASP Compliant).
+ * Executa exclusões em lote (writeBatch de até 450 documentos) sem consultas N+1
+ * nem credenciais hardcoded em código-fonte.
  */
 
-import config from '../../firebase-applet-config.json';
+import { getFirestoreInstance } from '../middleware/auth';
 import { serverSessions } from '../security/authManager';
+import { recordAuditLog } from '../security/audit';
 
-const API_KEY = config.apiKey;
-const PROJECT_ID = config.projectId;
-const DATABASE_ID = (config as any).firestoreDatabaseId || '(default)';
-const BASE_FIRESTORE_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/${DATABASE_ID}/documents`;
-
-let cachedMasterToken: string | null = null;
-let masterTokenExpiry = 0;
+const BATCH_LIMIT = 450;
 
 /**
- * Obtém ou renova token administrativo do serviço master
+ * Remove em lotes paginados todos os documentos de uma colecção pertencentes a um tenant.
  */
-export async function getMasterAdminToken(): Promise<string> {
-  const now = Date.now();
-  if (cachedMasterToken && masterTokenExpiry > now + 60000) {
-    return cachedMasterToken;
-  }
-
-  const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${API_KEY}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      email: 'admin.master@sysedu.internal',
-      password: 'SuperAdminMaster@2026!',
-      returnSecureToken: true,
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(`Falha na autenticação do serviço administrativo master: ${err.error?.message || res.statusText}`);
-  }
-
-  const data = await res.json();
-  cachedMasterToken = data.idToken;
-  masterTokenExpiry = now + (parseInt(data.expiresIn || '3600', 10) * 1000);
-  return cachedMasterToken!;
-}
-
-/**
- * Busca e remove todos os utilizadores vinculados a um tenant no Firestore
- */
-async function cascadeDeleteTenantUsers(tenantId: string, token: string): Promise<number> {
-  let deletedCount = 0;
+async function deleteTenantCollectionInBatches(
+  db: any,
+  collectionName: string,
+  tenantField: string,
+  tenantId: string
+): Promise<number> {
+  let deleted = 0;
   try {
-    const queryFields = ['tenant_id', 'tenantId'];
-    for (const field of queryFields) {
-      const queryRes = await fetch(`${BASE_FIRESTORE_URL}:runQuery`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          structuredQuery: {
-            from: [{ collectionId: 'users' }],
-            where: {
-              fieldFilter: {
-                field: { fieldPath: field },
-                op: 'EQUAL',
-                value: { stringValue: tenantId },
-              },
-            },
-          },
-        }),
-      });
+    while (true) {
+      const snap = await db
+        .collection(collectionName)
+        .where(tenantField, '==', tenantId)
+        .limit(BATCH_LIMIT)
+        .get();
 
-      if (queryRes.ok) {
-        const results = await queryRes.json();
-        if (Array.isArray(results)) {
-          for (const item of results) {
-            if (item.document?.name) {
-              const docPath = item.document.name;
-              await fetch(`https://firestore.googleapis.com/v1/${docPath}`, {
-                method: 'DELETE',
-                headers: { 'Authorization': `Bearer ${token}` },
-              }).catch(() => {});
-              deletedCount++;
-            }
-          }
-        }
+      if (snap.empty || snap.docs.length === 0) break;
+
+      const batch = db.batch();
+      for (const d of snap.docs) {
+        batch.delete(d.ref);
       }
+      await batch.commit();
+      deleted += snap.docs.length;
+
+      if (snap.docs.length < BATCH_LIMIT) break;
     }
   } catch (err) {
-    console.warn(`[cascadeDeleteTenantUsers] Aviso ao remover usuários do tenant ${tenantId}:`, err);
+    console.warn(`[deleteTenantCollectionInBatches] Aviso em ${collectionName}:`, err);
   }
-  return deletedCount;
+  return deleted;
 }
 
 /**
- * Exclui permanentemente um cliente/tenant com expurgo em cascata e revogação de sessões
+ * Exclui permanentemente um cliente/tenant com expurgo em lote e revogação de sessões.
  */
-export async function deleteTenantServer(tenantId: string, actorEmail: string): Promise<{ success: boolean; deletedUsers: number }> {
-  // 1. Sanitização estrita do identificador (anti-path traversal / injection)
+export async function deleteTenantServer(
+  tenantId: string,
+  actorEmail: string
+): Promise<{ success: boolean; deletedUsers: number; deletedRecords: number }> {
   if (!tenantId || typeof tenantId !== 'string' || !/^[a-zA-Z0-9_-]{3,128}$/.test(tenantId)) {
     throw new Error('Identificador de instituição inválido.');
   }
 
-  const token = await getMasterAdminToken();
+  const db = getFirestoreInstance();
 
-  // 2. Expurgo em cascata de usuários associados no Firestore
-  const deletedUsers = await cascadeDeleteTenantUsers(tenantId, token);
+  // 1. Expurgo em lotes de utilizadores associados
+  const deletedUsersPrimary = await deleteTenantCollectionInBatches(db, 'users', 'tenant_id', tenantId);
+  const deletedUsersAlt = await deleteTenantCollectionInBatches(db, 'users', 'tenantId', tenantId);
+  const deletedUsers = deletedUsersPrimary + deletedUsersAlt;
 
-  // 3. Exclusão do documento do Tenant na coleção 'tenants'
-  const tenantUrl = `${BASE_FIRESTORE_URL}/tenants/${encodeURIComponent(tenantId)}`;
-  const delRes = await fetch(tenantUrl, {
-    method: 'DELETE',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-    },
-  });
+  // 2. Expurgo em lotes das partições do tenant e agregado analítico
+  let deletedRecords = deletedUsers;
+  const tenantCollections = [
+    'estudantes',
+    'docentes',
+    'turmas',
+    'escolas',
+    'provincias',
+    'classes',
+    'salas',
+    'pautas',
+    'processos_aluno',
+    'processos_docentes',
+    'atividades',
+    'assiduidade_logs',
+    'notificacoes',
+    'faturas_estudantes',
+    'cursos',
+    'cadeiras',
+    'inscricoes_cadeiras',
+    'custom_forms',
+  ];
 
-  if (!delRes.ok && delRes.status !== 404) {
-    const errData = await delRes.json().catch(() => ({}));
-    throw new Error(errData.error?.message || `Falha ao excluir instituição no Firestore (código ${delRes.status})`);
+  for (const col of tenantCollections) {
+    deletedRecords += await deleteTenantCollectionInBatches(db, col, 'tenant_id', tenantId);
   }
+  deletedRecords += await deleteTenantCollectionInBatches(db, 'planoAulas', 'tenantId', tenantId);
+
+  await db.collection('tenant_analytics').doc(tenantId).delete().catch(() => {});
+
+  // 3. Exclusão do documento do Tenant na colecção 'tenants'
+  await db.collection('tenants').doc(tenantId).delete();
 
   // 4. Revogação de sessões em memória para este tenant
   for (const [sId, sess] of serverSessions.entries()) {
@@ -133,37 +106,28 @@ export async function deleteTenantServer(tenantId: string, actorEmail: string): 
     }
   }
 
-  // 5. Registro de Auditoria no Firestore
-  try {
-    await fetch(`${BASE_FIRESTORE_URL}/audit_logs`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        fields: {
-          action: { stringValue: 'Excluir Conta (Servidor)' },
-          resource: { stringValue: 'Tenant' },
-          target_id: { stringValue: tenantId },
-          details: { stringValue: `Instituição ${tenantId} excluída com sucesso por ${actorEmail}. ${deletedUsers} usuários revogados.` },
-          actor_email: { stringValue: actorEmail },
-          timestamp: { stringValue: new Date().toISOString() },
-        },
-      }),
-    });
-  } catch (auditErr) {
-    console.warn('[deleteTenantServer] Falha ao registrar log de auditoria no Firestore:', auditErr);
-  }
+  // 5. Registo de Auditoria
+  await recordAuditLog({
+    actor_id: actorEmail || 'super_admin',
+    actor_email: actorEmail || 'super_admin',
+    actor_role: 'super_admin',
+    action: 'delete',
+    entity: 'Tenant',
+    entity_id: tenantId,
+    tenant_id: tenantId,
+    metadata: { deletedUsers, deletedRecords },
+  });
 
-  console.log(`[deleteTenantServer] Instituição "${tenantId}" excluída com sucesso por ${actorEmail}. Usuários removidos: ${deletedUsers}`);
-  return { success: true, deletedUsers };
+  return { success: true, deletedUsers, deletedRecords };
 }
 
 /**
- * Exclusão em lote de clientes/tenants
+ * Exclusão em lote de clientes/tenants.
  */
-export async function deleteTenantsBatchServer(tenantIds: string[], actorEmail: string): Promise<{ success: boolean; deletedCount: number; errors: string[] }> {
+export async function deleteTenantsBatchServer(
+  tenantIds: string[],
+  actorEmail: string
+): Promise<{ success: boolean; deletedCount: number; errors: string[] }> {
   if (!Array.isArray(tenantIds) || tenantIds.length === 0) {
     throw new Error('Nenhum identificador de instituição fornecido para exclusão em lote.');
   }
@@ -188,27 +152,15 @@ export async function deleteTenantsBatchServer(tenantIds: string[], actorEmail: 
 }
 
 /**
- * Exclusão de contas bancárias no módulo financeiro
+ * Exclusão de contas bancárias no módulo financeiro.
  */
 export async function deleteBankAccountServer(accountId: string, actorEmail: string): Promise<boolean> {
   if (!accountId || typeof accountId !== 'string') {
     throw new Error('Identificador de conta bancária inválido.');
   }
 
-  const token = await getMasterAdminToken();
-  const url = `${BASE_FIRESTORE_URL}/super_admin_bank_accounts/${encodeURIComponent(accountId)}`;
-  const res = await fetch(url, {
-    method: 'DELETE',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-    },
-  });
-
-  if (!res.ok && res.status !== 404) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error?.message || `Erro ao excluir conta bancária (${res.status})`);
-  }
-
+  const db = getFirestoreInstance();
+  await db.collection('super_admin_bank_accounts').doc(accountId).delete();
   console.log(`[deleteBankAccountServer] Conta bancária "${accountId}" excluída por ${actorEmail}`);
   return true;
 }

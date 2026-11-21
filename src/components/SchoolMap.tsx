@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Search, MapPin, Maximize2, Minimize2 } from 'lucide-react';
+import { Search, MapPin, Maximize2, Minimize2, Lock, Unlock } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -54,17 +54,51 @@ const MAP_LAYERS = {
   }
 };
 
+function detectDesktopPointer(): boolean {
+  if (typeof window === 'undefined') return true;
+  const finePointer = window.matchMedia?.('(pointer: fine)').matches ?? false;
+  const anyFinePointer = window.matchMedia?.('(any-pointer: fine)').matches ?? false;
+  const coarseOnly = window.matchMedia?.('(pointer: coarse)').matches && !anyFinePointer;
+  if (coarseOnly) return false;
+  return finePointer || window.innerWidth >= 1024;
+}
+
 export function SchoolMap({ schools, provinces }: SchoolMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<HTMLDivElement>(null);
   const leafletMapInstance = useRef<any>(null);
   const markersRef = useRef<Record<string, any>>({});
   const tileLayerRef = useRef<any>(null);
-  
-  const [leafletLoaded, setLeafletLoaded] = useState(true);
+
+  const [leafletLoaded] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeLayer, setActiveLayer] = useState<keyof typeof MAP_LAYERS>('streets');
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isDesktop, setIsDesktop] = useState<boolean>(detectDesktopPointer);
+  const [isCtrlPressed, setIsCtrlPressed] = useState(false);
+  const [showCtrlHint, setShowCtrlHint] = useState(false);
+  const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const triggerCtrlHint = () => {
+    setShowCtrlHint(true);
+    if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+    hintTimerRef.current = setTimeout(() => setShowCtrlHint(false), 2600);
+  };
+
+  // Detect desktop vs touch/mobile dynamically
+  useEffect(() => {
+    const updateDeviceType = () => {
+      setIsDesktop(detectDesktopPointer());
+    };
+    updateDeviceType();
+    window.addEventListener('resize', updateDeviceType);
+    const mq = window.matchMedia?.('(pointer: fine)');
+    mq?.addEventListener?.('change', updateDeviceType);
+    return () => {
+      window.removeEventListener('resize', updateDeviceType);
+      mq?.removeEventListener?.('change', updateDeviceType);
+    };
+  }, []);
 
   // Filter schools for search auto-complete
   const filteredSchools = searchQuery.trim() === ''
@@ -79,45 +113,46 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
       if (!isNaN(lat) && !isNaN(lng)) return [lat, lng];
     }
 
-    // Determine coordinate base from province ID
     const baseCoords = PROVINCE_COORDS[school.provincia_id] || PROVINCE_COORDS['maputo_cidade'];
-    
-    // Add stable pseudo-random jitter based on the school's ID to prevent overlap
+
     let hash = 0;
     for (let i = 0; i < school.id.length; i++) {
       hash = school.id.charCodeAt(i) + ((hash << 5) - hash);
     }
-    const latJitter = ((hash % 100) / 1000) - 0.05; // -0.05 to +0.05
+    const latJitter = ((hash % 100) / 1000) - 0.05;
     const lngJitter = (((hash >> 3) % 100) / 1000) - 0.05;
 
     return [baseCoords[0] + latJitter, baseCoords[1] + lngJitter];
   };
 
-  // 1. Initialize Map Instance
+  // 1. Initialize Map Instance (Standard interactions enabled on non-desktop; desktop gated by CTRL)
   useEffect(() => {
     if (!mapRef.current) return;
 
-    // Destroy existing instance if any
     if (leafletMapInstance.current) {
       leafletMapInstance.current.remove();
       leafletMapInstance.current = null;
     }
 
-    // Centered in Mozambique
+    const initialDesktop = detectDesktopPointer();
     const map = L.map(mapRef.current, {
       center: [-18.6657, 35.5296],
       zoom: 5.5,
-      zoomControl: false // Add it manually at the top right
+      zoomControl: false,
+      dragging: !initialDesktop,
+      scrollWheelZoom: !initialDesktop,
+      doubleClickZoom: !initialDesktop,
+      boxZoom: !initialDesktop,
+      touchZoom: true,
+      keyboard: !initialDesktop
     });
 
     leafletMapInstance.current = map;
 
-    // Add Zoom Control at custom position
     L.control.zoom({
       position: 'topright'
     }).addTo(map);
 
-    // Initial tile layer
     const layerInfo = MAP_LAYERS[activeLayer];
     tileLayerRef.current = L.tileLayer(layerInfo.url, {
       attribution: layerInfo.attribution,
@@ -125,13 +160,12 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
       maxZoom: 19
     }).addTo(map);
 
-    // Ensure map tiles and dimensions calculate accurately across tabs/renders
     const resizeTimer1 = setTimeout(() => {
       map.invalidateSize();
     }, 100);
     const resizeTimer2 = setTimeout(() => {
       map.invalidateSize();
-    }, 400);
+    }, 450);
 
     let ro: ResizeObserver | null = null;
     if (typeof ResizeObserver !== 'undefined' && mapRef.current) {
@@ -144,6 +178,7 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
     return () => {
       clearTimeout(resizeTimer1);
       clearTimeout(resizeTimer2);
+      if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
       if (ro) ro.disconnect();
       if (leafletMapInstance.current) {
         leafletMapInstance.current.remove();
@@ -151,6 +186,74 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
       }
     };
   }, []);
+
+  // Track CTRL key state (only relevant on desktop)
+  useEffect(() => {
+    if (!isDesktop) {
+      setIsCtrlPressed(false);
+      setShowCtrlHint(false);
+      return;
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Control' || e.ctrlKey) {
+        setIsCtrlPressed(true);
+        setShowCtrlHint(false);
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Control' || !e.ctrlKey) {
+        setIsCtrlPressed(false);
+      }
+    };
+
+    const handleWindowBlur = () => {
+      setIsCtrlPressed(false);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleWindowBlur);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleWindowBlur);
+    };
+  }, [isDesktop]);
+
+  // Toggle Leaflet interactions: standard on non-desktop; CTRL-gated on desktop
+  useEffect(() => {
+    const map = leafletMapInstance.current;
+    if (!map) return;
+
+    const allowMouseInteraction = !isDesktop || isCtrlPressed;
+    const mouseHandlers = [
+      map.dragging,
+      map.scrollWheelZoom,
+      map.doubleClickZoom,
+      map.boxZoom,
+      map.keyboard
+    ];
+
+    mouseHandlers.forEach((handler) => {
+      if (!handler) return;
+      if (allowMouseInteraction) {
+        handler.enable();
+      } else {
+        handler.disable();
+      }
+    });
+
+    if (map.touchZoom) {
+      if (!isDesktop || isCtrlPressed) {
+        map.touchZoom.enable();
+      } else {
+        map.touchZoom.disable();
+      }
+    }
+  }, [isDesktop, isCtrlPressed]);
 
   // 2. Tile Layer Switcher
   useEffect(() => {
@@ -174,11 +277,13 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
     if (!leafletMapInstance.current) return;
     const map = leafletMapInstance.current;
 
-    // Clear old markers
     Object.values(markersRef.current).forEach((m: any) => m.remove());
     markersRef.current = {};
 
-    if (schools.length === 0) return;
+    if (schools.length === 0) {
+      map.invalidateSize();
+      return;
+    }
 
     const coordsList: [number, number][] = [];
 
@@ -187,7 +292,6 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
       coordsList.push(coords);
       const prov = provinces.find(p => p.id === school.provincia_id);
 
-      // Create highly styled custom HTML marker using Leaflet divIcon
       const customIcon = L.divIcon({
         className: 'custom-map-marker',
         html: `
@@ -204,20 +308,19 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
         iconAnchor: [12, 12]
       });
 
-      // HTML Content for the popup
       const popupContent = document.createElement('div');
       popupContent.className = 'p-3 font-sans max-w-xs space-y-2';
       popupContent.innerHTML = `
         <div class="border-b border-slate-100 pb-2">
           <h4 class="font-bold text-slate-900 text-sm leading-tight">${school.nome}</h4>
           <p class="text-[10px] text-indigo-600 font-bold mt-1 uppercase tracking-wider flex items-center gap-1">
-            📍 ${prov?.nome || 'Província'}
+            ${prov?.nome || 'Província'}
           </p>
         </div>
         <div class="space-y-1 text-xs text-slate-600">
-          <p>📞 <span class="font-medium text-slate-800">${school.telefone}</span></p>
-          <p>✉️ <span class="font-medium text-slate-800">${school.email}</span></p>
-          <p class="text-[11px] leading-relaxed text-slate-500">${school.endereco}</p>
+          <p>Tel: <span class="font-medium text-slate-800">${school.telefone || '-'}</span></p>
+          <p>Email: <span class="font-medium text-slate-800">${school.email || '-'}</span></p>
+          <p class="text-[11px] leading-relaxed text-slate-500">${school.endereco || ''}</p>
         </div>
         <div class="flex justify-between items-center pt-2 text-[10px] text-slate-400 font-mono">
           <span>Lat: ${coords[0].toFixed(4)}</span>
@@ -225,7 +328,6 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
         </div>
       `;
 
-      // Create marker and bind popup
       const marker = L.marker(coords, { icon: customIcon })
         .addTo(map)
         .bindPopup(popupContent, {
@@ -236,26 +338,26 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
       markersRef.current[school.id] = marker;
     });
 
-    // Zoom Handling
     if (schools.length > 1) {
       const bounds = L.latLngBounds(coordsList);
       map.fitBounds(bounds, { padding: [50, 50] });
     } else if (schools.length === 1) {
       map.setView(coordsList[0], 14);
     }
+
+    setTimeout(() => {
+      map.invalidateSize();
+    }, 150);
   }, [leafletLoaded, schools, provinces]);
 
-  // Handle flying/panning to school from search
   const handleSelectSchool = (school: School) => {
     if (!leafletMapInstance.current) return;
     const coords = getSchoolCoordinates(school);
-    
-    // Pan and Zoom map
+
     leafletMapInstance.current.flyTo(coords, 14, {
       duration: 1.5
     });
 
-    // Open school popup with delay to let flight finish
     setTimeout(() => {
       const marker = markersRef.current[school.id];
       if (marker) {
@@ -270,10 +372,9 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
     setActiveLayer(layer);
   };
 
-  // Fullscreen toggle handler
   const toggleFullscreen = () => {
     if (!containerRef.current) return;
-    
+
     if (!document.fullscreenElement) {
       containerRef.current.requestFullscreen?.()
         .then(() => setIsFullscreen(true))
@@ -288,7 +389,6 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
   useEffect(() => {
     const handleFullscreenChange = () => {
       setIsFullscreen(!!document.fullscreenElement);
-      // Trigger map resize so leaflet redraws itself properly
       setTimeout(() => {
         if (leafletMapInstance.current) {
           leafletMapInstance.current.invalidateSize();
@@ -302,14 +402,15 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
     };
   }, []);
 
+  const blockMouseOnDesktop = isDesktop && !isCtrlPressed;
+
   return (
-    <div 
-      ref={containerRef} 
-      className={`relative border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs bg-slate-50 dark:bg-slate-950 ${isFullscreen ? 'p-2 bg-slate-950 w-screen h-screen' : ''}`}
+    <div
+      ref={containerRef}
+      className={`sge-map-container relative border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs bg-slate-100 dark:bg-slate-900 ${isFullscreen ? 'p-2 bg-slate-950 w-screen h-screen' : ''}`}
     >
       {/* MAP OVERLAY: Search, Layers and Fullscreen */}
       <div className="absolute top-4 left-4 right-4 z-40 flex flex-wrap gap-2 items-center justify-between pointer-events-none">
-        {/* Search Input Box */}
         <div className="relative max-w-xs w-full pointer-events-auto">
           <div className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md rounded-xl border border-slate-200/90 dark:border-slate-700/80 shadow-md hover:border-indigo-400 dark:hover:border-indigo-500/60 transition-all duration-200 flex items-center p-2">
             <Search className="w-4 h-4 text-slate-400 dark:text-slate-500 ml-1 shrink-0" />
@@ -322,7 +423,6 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
             />
           </div>
 
-          {/* Search autocomplete results */}
           {filteredSchools.length > 0 && (
             <div className="absolute top-full left-0 right-0 mt-1.5 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl shadow-xl max-h-56 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/60 z-50">
               {filteredSchools.map((s) => (
@@ -344,9 +444,7 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
           )}
         </div>
 
-        {/* Controls Overlay */}
         <div className="flex gap-2 items-center pointer-events-auto">
-          {/* Map Type Switcher */}
           <div className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200/90 dark:border-slate-700/80 shadow-md rounded-xl p-1 flex gap-1 items-center">
             {(Object.keys(MAP_LAYERS) as Array<keyof typeof MAP_LAYERS>).map((key) => (
               <button
@@ -363,7 +461,6 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
             ))}
           </div>
 
-          {/* Fullscreen Button */}
           <button
             onClick={toggleFullscreen}
             className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 border border-slate-200/90 dark:border-slate-700/80 rounded-xl p-2.5 shadow-md hover:shadow-lg transition-all duration-200 cursor-pointer flex items-center justify-center shrink-0"
@@ -374,7 +471,6 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
         </div>
       </div>
 
-      {/* Loading Canvas Placeholder */}
       {!leafletLoaded && (
         <div className="w-full h-[400px] flex flex-col items-center justify-center bg-slate-50/50 text-slate-400 gap-2">
           <div className="w-8 h-8 rounded-full border-4 border-slate-300 border-t-indigo-600 animate-spin"></div>
@@ -382,11 +478,98 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
         </div>
       )}
 
-      {/* Actual Map Target div */}
-      <div 
-        ref={mapRef} 
-        className={`w-full ${isFullscreen ? 'h-[calc(100vh-20px)]' : 'h-[400px]'} rounded-2xl overflow-hidden z-10 transition-all`} 
-      />
+      {/* Actual Map Target div — fully transparent & crisp so tiles are always 100% visible */}
+      <div className="relative w-full">
+        <div
+          ref={mapRef}
+          className={`w-full ${isFullscreen ? 'h-[calc(100vh-20px)]' : 'h-[400px]'} z-10`}
+          style={{ minHeight: isFullscreen ? 'calc(100vh - 20px)' : '400px' }}
+        />
+
+        {/* Desktop-only transparent mouse blocker when CTRL is NOT pressed */}
+        {isDesktop && (
+          <div
+            onMouseMove={(e) => {
+              if (e.ctrlKey && !isCtrlPressed) {
+                setIsCtrlPressed(true);
+                setShowCtrlHint(false);
+              } else if (!e.ctrlKey && isCtrlPressed) {
+                setIsCtrlPressed(false);
+              }
+            }}
+            onMouseDown={(e) => {
+              if (e.ctrlKey) {
+                setIsCtrlPressed(true);
+                setShowCtrlHint(false);
+                return;
+              }
+              e.preventDefault();
+              e.stopPropagation();
+              triggerCtrlHint();
+            }}
+            onClick={(e) => {
+              if (!e.ctrlKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                triggerCtrlHint();
+              }
+            }}
+            onDoubleClick={(e) => {
+              if (!e.ctrlKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                triggerCtrlHint();
+              }
+            }}
+            onWheel={(e) => {
+              if (e.ctrlKey) {
+                setIsCtrlPressed(true);
+                setShowCtrlHint(false);
+                return;
+              }
+              triggerCtrlHint();
+            }}
+            className={`absolute inset-0 z-20 ${
+              blockMouseOnDesktop ? 'pointer-events-auto cursor-not-allowed' : 'pointer-events-none'
+            }`}
+            style={{ backgroundColor: 'transparent', backdropFilter: 'none' }}
+            title={blockMouseOnDesktop ? 'Mapa bloqueado no desktop: mantenha CTRL pressionado para interagir com o rato' : 'CTRL pressionado: interação liberada'}
+          />
+        )}
+
+        {/* Desktop floating feedback banner when user clicks/scrolls without CTRL */}
+        {blockMouseOnDesktop && showCtrlHint && (
+          <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 z-30 flex justify-center px-4 pointer-events-none animate-in fade-in zoom-in-95 duration-150">
+            <div className="bg-slate-900/95 text-white border border-slate-700/80 rounded-xl px-4 py-2.5 shadow-2xl flex items-center gap-2.5 text-xs font-bold">
+              <Lock className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>Mantenha a tecla <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-600 rounded text-[11px] font-mono text-amber-300">CTRL</kbd> pressionada para interagir com o mapa no desktop</span>
+            </div>
+          </div>
+        )}
+
+        {/* Desktop bottom-left indicator */}
+        {isDesktop && (
+          <div className="absolute bottom-3 left-3 z-30 pointer-events-none">
+            <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold shadow-md border transition-all ${
+              isCtrlPressed
+                ? 'bg-emerald-950/90 text-emerald-300 border-emerald-700/70'
+                : 'bg-white/95 dark:bg-slate-900/95 text-slate-700 dark:text-slate-200 border-slate-200/90 dark:border-slate-700/80'
+            }`}>
+              {isCtrlPressed ? (
+                <>
+                  <Unlock className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>CTRL ativo — Interação liberada</span>
+                </>
+              ) : (
+                <>
+                  <Lock className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Segure <kbd className="px-1 py-0.2 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded text-[10px] font-mono">CTRL</kbd> para usar o mapa com o rato</span>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

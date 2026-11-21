@@ -1,7 +1,67 @@
-import { addDoc, collection } from 'firebase/firestore';
+import { addDoc, collection, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Notificacao } from '../types';
 import { sendBrowserNotification } from '../lib/browserNotifications';
+import { commitBatchOperations, BatchMutationOp } from '../lib/firestoreScalable';
+import { buildAuthHeaders, watchAsyncJob } from '../lib/asyncJobsClient';
+
+async function tryDispatchBulkViaQueue(params: {
+  tenant_id: string;
+  title: string;
+  modulo: string;
+  tipo?: 'info' | 'alerta' | 'limite' | 'sistema' | 'sucesso' | 'cadastro';
+  ops: BatchMutationOp[];
+}): Promise<boolean> {
+  if (params.ops.length < 15) return false;
+  try {
+    const headers = await buildAuthHeaders();
+    const recipients = params.ops
+      .filter((op): op is Extract<BatchMutationOp, { data: Record<string, any> }> => op.type !== 'delete')
+      .map((op) => ({
+        destinatario_id: String(op.data.destinatario_id || ''),
+        destinatario_role: op.data.destinatario_role || 'todos',
+        destinatario_email: op.data.destinatario_email || '',
+        estudante_id: op.data.estudante_id || '',
+        docente_id: op.data.docente_id || '',
+        turma_id: op.data.turma_id || '',
+        titulo: op.data.titulo || params.title,
+        mensagem: op.data.mensagem || '',
+      }));
+
+    const res = await fetch('/api/notifications/bulk', {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+      body: JSON.stringify({
+        action: 'broadcast_recipients',
+        titulo: params.title,
+        tipo: params.tipo || 'info',
+        modulo: params.modulo,
+        recipients,
+      }),
+    });
+
+    if (res.status === 202 || res.ok) {
+      const data = await res.json();
+      if (data?.jobId) {
+        watchAsyncJob({
+          id: data.jobId,
+          tenant_id: params.tenant_id,
+          type: 'bulk_notification',
+          title: `${params.title} (${recipients.length} dest.)`,
+          status: data.status || 'pendente',
+          progress: 15,
+          progress_message: `Enfileiradas ${recipients.length} notificações...`,
+          created_at: new Date().toISOString(),
+        });
+      }
+      return true;
+    }
+  } catch {
+    // Fallback automático para writeBatch no cliente
+  }
+  return false;
+}
 
 export interface BaseNotificationPayload {
   tenant_id: string;
@@ -121,86 +181,112 @@ export async function notifyScheduleCreatedOrUpdated(params: {
   } = params;
 
   const actionText = isUpdate ? 'atualizado' : 'agendado';
-  const title = `📅 Horário de Aula ${actionText}: ${disciplina_nome}`;
+  const title = `Horário de Aula ${actionText}: ${disciplina_nome}`;
   const details = `${disciplina_nome} na turma ${turma_nome}${data_aula ? ` para ${data_aula}` : ''} (${hora_inicio} - ${hora_fim})${sala ? ` na ${sala}` : ''}.`;
+  const nowIso = new Date().toISOString();
 
-  const promises: Promise<any>[] = [];
+  const buildNotifOp = (data: Record<string, any>): BatchMutationOp => {
+    const newRef = doc(collection(db, 'notificacoes'));
+    return {
+      type: 'set',
+      path: ['notificacoes', newRef.id],
+      data: {
+        tenant_id: tenant_id || '',
+        destinatario_email: '',
+        usuario_id: data.destinatario_id,
+        estudante_id: '',
+        docente_id: '',
+        turma_id,
+        turma_nome,
+        escola_id: '',
+        disciplina_id: '',
+        disciplina_nome,
+        atividade_id: '',
+        exame_id: '',
+        processo_id: '',
+        link: '',
+        lido: false,
+        created_at: nowIso,
+        ...data,
+      },
+    };
+  };
+
+  const ops: BatchMutationOp[] = [];
 
   // 1. Notify the assigned teacher
   if (docente_user_id || docente_id) {
-    promises.push(
-      sendAppNotification({
-        tenant_id,
+    ops.push(
+      buildNotifOp({
         destinatario_id: docente_user_id || docente_id!,
         destinatario_role: 'docente',
         docente_id: docente_id || '',
-        turma_id,
-        turma_nome,
-        disciplina_nome,
         titulo: title,
         mensagem: `Foi ${actionText} o seu horário de ${details}`,
         tipo: 'info',
-        modulo: 'horarios'
+        modulo: 'horarios',
       })
     );
   }
 
   // 2. Notify the Turma (all students in class)
-  promises.push(
-    sendAppNotification({
-      tenant_id,
+  ops.push(
+    buildNotifOp({
       destinatario_id: turma_id,
       destinatario_role: 'estudante',
-      turma_id,
-      turma_nome,
-      disciplina_nome,
       titulo: title,
       mensagem: `Novo horário de aula ${details}`,
       tipo: 'info',
-      modulo: 'horarios'
+      modulo: 'horarios',
     })
   );
 
-  // 3. Notify each student individually and their parents
+  // 3. Notify each student individually and their parents in batch
   for (const s of students) {
     if (s.user_id || s.id) {
-      promises.push(
-        sendAppNotification({
-          tenant_id,
+      ops.push(
+        buildNotifOp({
           destinatario_id: s.user_id || s.id,
           destinatario_role: 'estudante',
           estudante_id: s.id,
-          turma_id,
-          turma_nome,
-          disciplina_nome,
           titulo: title,
           mensagem: `Atenção: Horário de aula ${details}`,
           tipo: 'info',
-          modulo: 'horarios'
+          modulo: 'horarios',
         })
       );
     }
     if (s.pai_id || s.pai_email) {
-      promises.push(
-        sendAppNotification({
-          tenant_id,
+      ops.push(
+        buildNotifOp({
           destinatario_id: s.pai_id || s.pai_email!,
           destinatario_role: 'pai',
           destinatario_email: s.pai_email || '',
           estudante_id: s.id,
-          turma_id,
-          turma_nome,
-          disciplina_nome,
-          titulo: `📅 Horário de Aula (${s.nome || 'Educando'})`,
+          titulo: `Horário de Aula (${s.nome || 'Educando'})`,
           mensagem: `Informamos que foi ${actionText} o horário de ${details}`,
           tipo: 'info',
-          modulo: 'horarios'
+          modulo: 'horarios',
         })
       );
     }
   }
 
-  await Promise.allSettled(promises);
+  try {
+    const offloaded = await tryDispatchBulkViaQueue({
+      tenant_id,
+      title,
+      modulo: 'horarios',
+      tipo: 'info',
+      ops,
+    });
+    if (!offloaded) {
+      await commitBatchOperations(ops);
+    }
+    sendBrowserNotification({ title, body: details, tag: `notif-sched-${turma_id}` });
+  } catch (error) {
+    console.error('[NotificationDispatcher] Erro ao despachar notificações em lote:', error);
+  }
 }
 
 /**
@@ -238,86 +324,112 @@ export async function notifyExamScheduled(params: {
   } = params;
 
   const actionText = isUpdate ? 'alterado' : 'marcado';
-  const title = `📝 Avaliação/Exame ${actionText}: ${disciplina_nome}`;
+  const title = `Avaliação/Exame ${actionText}: ${disciplina_nome}`;
   const details = `${tipo_exame} de ${disciplina_nome} para a turma ${turma_nome} no dia ${data_exame} das ${hora_inicio} às ${hora_fim}${sala ? ` na ${sala}` : ''}.`;
+  const nowIso = new Date().toISOString();
 
-  const promises: Promise<any>[] = [];
+  const buildNotifOp = (data: Record<string, any>): BatchMutationOp => {
+    const newRef = doc(collection(db, 'notificacoes'));
+    return {
+      type: 'set',
+      path: ['notificacoes', newRef.id],
+      data: {
+        tenant_id: tenant_id || '',
+        destinatario_email: '',
+        usuario_id: data.destinatario_id,
+        estudante_id: '',
+        docente_id: '',
+        turma_id,
+        turma_nome,
+        escola_id: '',
+        disciplina_id: '',
+        disciplina_nome,
+        atividade_id: '',
+        exame_id: '',
+        processo_id: '',
+        link: '',
+        lido: false,
+        created_at: nowIso,
+        ...data,
+      },
+    };
+  };
+
+  const ops: BatchMutationOp[] = [];
 
   // 1. Notify Teacher
   if (docente_user_id || docente_id) {
-    promises.push(
-      sendAppNotification({
-        tenant_id,
+    ops.push(
+      buildNotifOp({
         destinatario_id: docente_user_id || docente_id!,
         destinatario_role: 'docente',
         docente_id: docente_id || '',
-        turma_id,
-        turma_nome,
-        disciplina_nome,
         titulo: title,
         mensagem: `Você tem uma avaliação agendada: ${details}`,
         tipo: 'alerta',
-        modulo: 'exames'
+        modulo: 'exames',
       })
     );
   }
 
   // 2. Notify Turma
-  promises.push(
-    sendAppNotification({
-      tenant_id,
+  ops.push(
+    buildNotifOp({
       destinatario_id: turma_id,
       destinatario_role: 'estudante',
-      turma_id,
-      turma_nome,
-      disciplina_nome,
       titulo: title,
       mensagem: `Atenção: ${details} Prepare-se!`,
       tipo: 'alerta',
-      modulo: 'exames'
+      modulo: 'exames',
     })
   );
 
-  // 3. Notify individual students and parents
+  // 3. Notify individual students and parents in batch
   for (const s of students) {
     if (s.user_id || s.id) {
-      promises.push(
-        sendAppNotification({
-          tenant_id,
+      ops.push(
+        buildNotifOp({
           destinatario_id: s.user_id || s.id,
           destinatario_role: 'estudante',
           estudante_id: s.id,
-          turma_id,
-          turma_nome,
-          disciplina_nome,
           titulo: title,
           mensagem: `Atenção estudante: ${details}`,
           tipo: 'alerta',
-          modulo: 'exames'
+          modulo: 'exames',
         })
       );
     }
     if (s.pai_id || s.pai_email) {
-      promises.push(
-        sendAppNotification({
-          tenant_id,
+      ops.push(
+        buildNotifOp({
           destinatario_id: s.pai_id || s.pai_email!,
           destinatario_role: 'pai',
           destinatario_email: s.pai_email || '',
           estudante_id: s.id,
-          turma_id,
-          turma_nome,
-          disciplina_nome,
-          titulo: `📝 Agendamento de Exame: ${s.nome || 'Educando'}`,
+          titulo: `Agendamento de Exame: ${s.nome || 'Educando'}`,
           mensagem: `Informamos que foi marcado: ${details}`,
           tipo: 'alerta',
-          modulo: 'exames'
+          modulo: 'exames',
         })
       );
     }
   }
 
-  await Promise.allSettled(promises);
+  try {
+    const offloaded = await tryDispatchBulkViaQueue({
+      tenant_id,
+      title,
+      modulo: 'exames',
+      tipo: 'alerta',
+      ops,
+    });
+    if (!offloaded) {
+      await commitBatchOperations(ops);
+    }
+    sendBrowserNotification({ title, body: details, tag: `notif-exam-${turma_id}` });
+  } catch (error) {
+    console.error('[NotificationDispatcher] Erro ao despachar notificações de exame em lote:', error);
+  }
 }
 
 /**

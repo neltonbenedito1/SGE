@@ -4,7 +4,7 @@
  * Módulo Processo do Aluno — Ficha Académica Completa (9 Abas + Exportação PDF)
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   User as UserIcon, 
   GraduationCap, 
@@ -156,78 +156,93 @@ export const ProcessoAlunoFicha: React.FC<ProcessoAlunoFichaProps> = ({
     return 'Período Lectivo';
   }, [isUniversidade, isInstituto, isEscola]);
 
+  useEffect(() => {
+    if (!onClose) return;
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [onClose]);
+
   const handlePrintPdf = () => {
     window.print();
   };
 
   return (
-    <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[92vh] text-left animate-in fade-in duration-200">
-      {/* 1. CABEÇALHO DO PROCESSO DO ALUNO (ESTILO FICHA OFICIAL) */}
-      <div className="p-5 md:p-6 bg-slate-950 text-white border-b border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
-        <div className="flex items-center gap-4 min-w-0">
-          {estudante.foto_url ? (
-            <img 
-              src={estudante.foto_url} 
-              alt={estudante.nome} 
-              className="w-16 h-16 md:w-20 md:h-20 rounded-2xl object-cover border-2 border-indigo-400 shadow-lg shrink-0"
-              referrerPolicy="no-referrer"
-            />
-          ) : (
-            <div className="w-16 h-16 md:w-20 md:h-20 rounded-2xl bg-indigo-950/60 border border-indigo-800/50 flex items-center justify-center text-indigo-400 shrink-0">
-              <UserIcon className="w-8 h-8" />
-            </div>
-          )}
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget && onClose) onClose();
+      }}
+      className="fixed inset-0 z-[160000] bg-slate-950/65 backdrop-blur-xs flex justify-end overflow-hidden animate-in fade-in duration-200"
+    >
+      <div className="w-full max-w-5xl h-full bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden flex flex-col text-left rounded-l-2xl sm:rounded-l-3xl rounded-r-none animate-in slide-in-from-right duration-300">
+        {/* 1. CABEÇALHO DO PROCESSO DO ALUNO (ESTILO FICHA OFICIAL) */}
+        <div className="p-5 md:p-6 bg-slate-950 text-white border-b border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
+          <div className="flex items-center gap-4 min-w-0">
+            {estudante.foto_url ? (
+              <img 
+                src={estudante.foto_url} 
+                alt={estudante.nome} 
+                className="w-16 h-16 md:w-20 md:h-20 rounded-2xl object-cover border-2 border-indigo-400 shadow-lg shrink-0"
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <div className="w-16 h-16 md:w-20 md:h-20 rounded-2xl bg-indigo-950/60 border border-indigo-800/50 flex items-center justify-center text-indigo-400 shrink-0">
+                <UserIcon className="w-8 h-8" />
+              </div>
+            )}
 
-          <div className="min-w-0 space-y-1">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className={`text-[10px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
-                config.id === 'universidade' ? 'bg-purple-900/60 text-purple-300 border border-purple-700' :
-                config.id === 'instituto' ? 'bg-emerald-900/60 text-emerald-300 border border-emerald-700' :
-                config.id === 'global' ? 'bg-amber-900/60 text-amber-300 border border-amber-700' :
-                'bg-sky-900/60 text-sky-300 border border-sky-700'
-              }`}>
-                {config.label}
-              </span>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                {estudante.ativo !== false ? 'Matrícula Activa' : 'Matrícula Inactiva'}
-              </span>
-            </div>
-            
-            <h2 className="text-lg md:text-xl font-black text-white truncate tracking-tight">
-              {estudante.nome}
-            </h2>
+            <div className="min-w-0 space-y-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={`text-[10px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                  config.id === 'universidade' ? 'bg-purple-900/60 text-purple-300 border border-purple-700' :
+                  config.id === 'instituto' ? 'bg-emerald-900/60 text-emerald-300 border border-emerald-700' :
+                  config.id === 'global' ? 'bg-amber-900/60 text-amber-300 border border-amber-700' :
+                  'bg-sky-900/60 text-sky-300 border border-sky-700'
+                }`}>
+                  {config.label}
+                </span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  {estudante.ativo !== false ? 'Matrícula Activa' : 'Matrícula Inactiva'}
+                </span>
+              </div>
+              
+              <h2 className="text-lg md:text-xl font-black text-white truncate tracking-tight">
+                {estudante.nome}
+              </h2>
 
-            <p className="text-xs text-slate-300 flex items-center gap-3 flex-wrap">
-              <span className="font-mono">🆔 {estudante.numero_matricula || 'Sem Nº Matrícula'}</span>
-              <span>🎓 {curso?.nome || (estudante as any).dados_nivel?.curso || turma?.nivel || 'Ensino Geral'}</span>
-              <span>🏫 {escola?.nome || 'Unidade Geral'}</span>
-            </p>
+              <p className="text-xs text-slate-300 flex items-center gap-3 flex-wrap">
+                <span className="font-mono">🆔 {estudante.numero_matricula || 'Sem Nº Matrícula'}</span>
+                <span>🎓 {curso?.nome || (estudante as any).dados_nivel?.curso || turma?.nivel || 'Ensino Geral'}</span>
+                <span>🏫 {escola?.nome || 'Unidade Geral'}</span>
+              </p>
+            </div>
           </div>
-        </div>
 
-        {/* Action Buttons: Imprimir / Fechar */}
-        <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
-          <button
-            type="button"
-            onClick={handlePrintPdf}
-            className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-3.5 rounded-xl text-xs flex items-center gap-1.5 shadow-lg shadow-indigo-600/30 transition-all cursor-pointer"
-            title="Exportar ou Imprimir Ficha em PDF (A4)"
-          >
-            <Printer className="w-4 h-4" />
-            <span>Exportar PDF</span>
-          </button>
-          {onClose && (
+          {/* Action Buttons: Imprimir / Fechar */}
+          <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
             <button
               type="button"
-              onClick={onClose}
-              className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors cursor-pointer"
-              title="Fechar Ficha"
+              onClick={handlePrintPdf}
+              className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-3.5 rounded-xl text-xs flex items-center gap-1.5 shadow-lg shadow-indigo-600/30 transition-all cursor-pointer"
+              title="Exportar ou Imprimir Ficha em PDF (A4)"
             >
-              <X className="w-5 h-5" />
+              <Printer className="w-4 h-4" />
+              <span>Exportar PDF</span>
             </button>
-          )}
+            {onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors cursor-pointer"
+                title="Fechar Ficha"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            )}
+          </div>
         </div>
-      </div>
 
       {/* 2. BARRA DE NAVEGAÇÃO DAS 9 ABAS */}
       <div className="bg-slate-100 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 px-4 flex items-center gap-1 overflow-x-auto no-scrollbar shrink-0">
@@ -739,6 +754,7 @@ export const ProcessoAlunoFicha: React.FC<ProcessoAlunoFichaProps> = ({
       <div className="p-4 bg-slate-50 dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-2 text-[10px] text-slate-500 shrink-0">
         <span>Ficha Académica Oficial &bull; SysEdu Enterprise Edition</span>
         <span>Autenticação Criptográfica: {estudante.id} &bull; Emissão: {new Date().toLocaleDateString('pt-MZ')}</span>
+      </div>
       </div>
     </div>
   );

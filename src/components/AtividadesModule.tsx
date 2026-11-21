@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { 
   CheckSquare, Plus, Search, Filter, AlertTriangle, CheckCircle, 
   Clock, UserCheck, Shield, ChevronLeft, ChevronRight, Edit, 
@@ -70,6 +71,7 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
 
   // Filtering & Searching
   const [searchTerm, setSearchTerm] = useState('');
+  const debouncedSearchTerm = useDebouncedValue(searchTerm, 250);
   const [severityFilter, setSeverityFilter] = useState<string>('todos');
   const [categoryFilter, setCategoryFilter] = useState<string>('todos');
   const [responsibleFilter, setResponsibleFilter] = useState<string>('todos');
@@ -470,12 +472,13 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
 
   // Apply Search & Filters to Active List
   const filteredActiveList = useMemo(() => {
+    const q = debouncedSearchTerm.trim().toLowerCase();
     return activeActivities.filter(act => {
       const respResolvedName = resolveUserName(act.responsavel_id, act.responsavel_nome);
-      const matchesSearch = !searchTerm || 
-        act.titulo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        act.detalhes.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        respResolvedName.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesSearch = !q ||
+        act.titulo.toLowerCase().includes(q) ||
+        act.detalhes.toLowerCase().includes(q) ||
+        respResolvedName.toLowerCase().includes(q);
 
       const matchesSeverity = severityFilter === 'todos' || act.severidade === severityFilter;
       const matchesCategory = categoryFilter === 'todos' || act.categoria_atribuicao === categoryFilter;
@@ -483,36 +486,38 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
 
       return matchesSearch && matchesSeverity && matchesCategory && matchesResponsible;
     });
-  }, [activeActivities, searchTerm, severityFilter, categoryFilter, responsibleFilter, resolveUserName]);
+  }, [activeActivities, debouncedSearchTerm, severityFilter, categoryFilter, responsibleFilter, resolveUserName]);
 
   // Apply Search & Filters to "Minhas Actividades" List
   const filteredMinhasList = useMemo(() => {
+    const q = debouncedSearchTerm.trim().toLowerCase();
     return minhasActivities.filter(act => {
       const respResolvedName = resolveUserName(act.responsavel_id, act.responsavel_nome);
-      const matchesSearch = !searchTerm || 
-        act.titulo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        act.detalhes.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        respResolvedName.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesSearch = !q ||
+        act.titulo.toLowerCase().includes(q) ||
+        act.detalhes.toLowerCase().includes(q) ||
+        respResolvedName.toLowerCase().includes(q);
 
       const matchesSeverity = severityFilter === 'todos' || act.severidade === severityFilter;
       const matchesCategory = categoryFilter === 'todos' || act.categoria_atribuicao === categoryFilter;
 
       return matchesSearch && matchesSeverity && matchesCategory;
     });
-  }, [minhasActivities, searchTerm, severityFilter, categoryFilter, resolveUserName]);
+  }, [minhasActivities, debouncedSearchTerm, severityFilter, categoryFilter, resolveUserName]);
 
   // Apply Search & Filters to Completed List
   const filteredCompletedList = useMemo(() => {
+    const q = debouncedSearchTerm.trim().toLowerCase();
     return completedActivities.filter(act => {
       const respResolvedName = resolveUserName(act.responsavel_id, act.responsavel_nome);
       const completedByResolvedName = resolveUserName(act.concluido_por_id || act.finalizado_por_id, act.concluido_por_nome || act.finalizado_por_nome);
-      
-      const matchesSearch = !searchTerm || 
-        act.titulo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        act.detalhes.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (act.nota_finalizacao && act.nota_finalizacao.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        respResolvedName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        completedByResolvedName.toLowerCase().includes(searchTerm.toLowerCase());
+
+      const matchesSearch = !q ||
+        act.titulo.toLowerCase().includes(q) ||
+        act.detalhes.toLowerCase().includes(q) ||
+        (act.nota_finalizacao && act.nota_finalizacao.toLowerCase().includes(q)) ||
+        respResolvedName.toLowerCase().includes(q) ||
+        completedByResolvedName.toLowerCase().includes(q);
 
       const matchesSeverity = severityFilter === 'todos' || act.severidade === severityFilter;
       const matchesCategory = categoryFilter === 'todos' || act.categoria_atribuicao === categoryFilter;
@@ -520,7 +525,7 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
 
       return matchesSearch && matchesSeverity && matchesCategory && matchesResponsible;
     });
-  }, [completedActivities, searchTerm, severityFilter, categoryFilter, responsibleFilter, resolveUserName]);
+  }, [completedActivities, debouncedSearchTerm, severityFilter, categoryFilter, responsibleFilter, resolveUserName]);
 
   // Paginated Results (25 items per page)
   const paginatedActive = useMemo(() => {
@@ -548,7 +553,7 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
     setMinhasPage(1);
     setCompletedPage(1);
     setSelectedActivityIds([]);
-  }, [searchTerm, severityFilter, categoryFilter, responsibleFilter, activeTab]);
+  }, [debouncedSearchTerm, severityFilter, categoryFilter, responsibleFilter, activeTab]);
 
   // Current tab items for selection
   const currentTabItems = useMemo(() => {
@@ -963,14 +968,42 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
     }
   }, [tenantId, atividades, pautas, processos, turmas, schools, faturas, students, onRefreshData, isScanning]);
 
-  // Real-time listener effect for automatic scanner
+  const lastScanTimestampRef = useRef<number>(0);
+
+  // Atualização orientada a eventos (visibilidade/online/refresh) em vez de polling contínuo
   useEffect(() => {
-    runAutomaticScanSilently();
-    // Periodic real-time interval (every 2 minutes)
-    const interval = setInterval(() => {
+    const triggerScanIfDue = (force = false) => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+      if (isFirestoreQuotaExhausted()) return;
+      const now = Date.now();
+      if (!force && now - lastScanTimestampRef.current < 120_000) return;
+      lastScanTimestampRef.current = now;
       runAutomaticScanSilently();
-    }, 120000);
-    return () => clearInterval(interval);
+    };
+
+    triggerScanIfDue(true);
+
+    const handleVisibility = () => {
+      if (!document.hidden) triggerScanIfDue(false);
+    };
+    const handleOnline = () => triggerScanIfDue(false);
+    const handleModuleRefresh = (ev: Event) => {
+      const detail = (ev as CustomEvent)?.detail;
+      if (!detail || detail.module === 'atividades') {
+        triggerScanIfDue(true);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('sge-module-refresh', handleModuleRefresh);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('sge-module-refresh', handleModuleRefresh);
+    };
   }, [runAutomaticScanSilently]);
 
   // --- MANUAL CREATION / EDIT HANDLERS ---

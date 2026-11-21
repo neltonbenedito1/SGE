@@ -3,7 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, Suspense } from 'react';
+import { lazyWithRetry } from '../lib/lazyWithRetry';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
+import { ModuleSkeleton } from './Skeletons';
+import { ModuleErrorBoundary } from './ErrorBoundary';
+import { VirtualList } from './VirtualList';
 import { 
   collection, 
   getDocs, 
@@ -15,11 +20,16 @@ import {
   where,
   orderBy,
   limit,
+  startAfter,
   serverTimestamp,
   setDoc,
-  onSnapshot
+  onSnapshot,
+  QueryDocumentSnapshot,
+  DocumentData
 } from 'firebase/firestore';
 import { db, auth, registerUserInFirebaseAuth } from '../lib/firebase';
+import { countGlobalDocs } from '../lib/firestoreScalable';
+import { invalidateGlobalCache, invalidateTenantCache, clearTenantCaches } from '../lib/referenceCache';
 import { authSecurityService } from '../services/authSecurityService';
 import { LANGUAGES, translate } from '../lib/translation';
 import { localDb, syncLocalDataToFirestore, isFirestoreQuotaExhausted } from '../lib/localDb';
@@ -30,9 +40,17 @@ import { INSTITUTION_FORM_SCHEMAS } from '../config/institutionFormSchemas';
 import { migrateInstitutionTypes } from '../utils/dataMigration';
 import { createGmailRawPayload, EmailTemplates } from '../lib/emailUtils';
 import { escapeHtml } from '../lib/sanitize';
-import { SuperAdminFinancePanel } from './SuperAdminFinancePanel';
+const SuperAdminFinancePanel = lazyWithRetry(
+  () => import('./SuperAdminFinancePanel').then((m) => ({ default: m.SuperAdminFinancePanel })),
+  'SuperAdminFinancePanel'
+);
+const AsyncJobsPanel = lazyWithRetry(
+  () => import('./AsyncJobsPanel').then((m) => ({ default: m.AsyncJobsPanel })),
+  'AsyncJobsPanel'
+);
 import { SysEduLogo } from './SysEduLogo';
 import { SamsungLoadingScreen } from './SamsungLoadingScreen';
+import { watchAsyncJob } from '../lib/asyncJobsClient';
 import { 
   Building2, 
   CreditCard, 
@@ -76,7 +94,8 @@ import {
   CheckCircle2,
   Upload,
   UserCheck,
-  ShieldCheck
+  ShieldCheck,
+  Activity
 } from 'lucide-react';
 
 import {
@@ -84,8 +103,18 @@ import {
   getCookie,
   saveSettingIfAllowed
 } from '../lib/cookies';
-import { CookiePolicyModal } from './CookiePolicyModal';
-import { SederAdministracaoSection } from './SederAdministracaoSection';
+const CookiePolicyModal = lazyWithRetry(
+  () => import('./CookiePolicyModal').then((m) => ({ default: m.CookiePolicyModal })),
+  'CookiePolicyModal'
+);
+const SederAdministracaoSection = lazyWithRetry(
+  () => import('./SederAdministracaoSection').then((m) => ({ default: m.SederAdministracaoSection })),
+  'SederAdministracaoSection'
+);
+const ObservabilityPanel = lazyWithRetry(
+  () => import('./ObservabilityPanel').then((m) => ({ default: m.ObservabilityPanel })),
+  'ObservabilityPanel'
+);
 import { SearchableDropdown } from './SearchableDropdown';
 import { WORLD_COUNTRIES, getAutomaticProvincesForCountries } from '../shared/catalogs';
 
@@ -155,9 +184,9 @@ export default function SuperAdminPortal({
   onChangeLanguage
 }: SuperAdminPortalProps) {
   const [isCookiePolicyOpen, setIsCookiePolicyOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'tenants' | 'plans' | 'payments' | 'logs' | 'smtp' | 'seder_administracao'>(() => {
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'tenants' | 'plans' | 'payments' | 'logs' | 'smtp' | 'seder_administracao' | 'observabilidade'>(() => {
     const saved = getCookie('last_module');
-    if (saved === 'dashboard' || saved === 'tenants' || saved === 'plans' || saved === 'payments' || saved === 'logs' || saved === 'smtp' || saved === 'seder_administracao') {
+    if (saved === 'dashboard' || saved === 'tenants' || saved === 'plans' || saved === 'payments' || saved === 'logs' || saved === 'smtp' || saved === 'seder_administracao' || saved === 'observabilidade') {
       return saved as any;
     }
     return 'dashboard';
@@ -234,9 +263,15 @@ export default function SuperAdminPortal({
   
   // Data State
   const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [tenantsCursor, setTenantsCursor] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [hasMoreTenants, setHasMoreTenants] = useState(false);
+  const [loadingMoreTenants, setLoadingMoreTenants] = useState(false);
   const [plans, setPlans] = useState<Plano[]>([]);
   const [payments, setPayments] = useState<Pagamento[]>([]);
   const [logs, setLogs] = useState<LogAdmin[]>([]);
+  const [logsCursor, setLogsCursor] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [hasMoreLogs, setHasMoreLogs] = useState(false);
+  const [loadingMoreLogs, setLoadingMoreLogs] = useState(false);
   const [smtpConfigs, setSmtpConfigs] = useState<SmtpConfig[]>([]);
   const [systemEscolasCount, setSystemEscolasCount] = useState<number>(0);
   const [systemUsersCount, setSystemUsersCount] = useState<number>(0);
@@ -348,6 +383,7 @@ export default function SuperAdminPortal({
 
   // Search & Filter state
   const [searchTerm, setSearchTerm] = useState('');
+  const debouncedSearchTerm = useDebouncedValue(searchTerm, 250);
   const [statusFilter, setStatusFilter] = useState('todos');
 
   // Batch selection states
@@ -736,24 +772,42 @@ export default function SuperAdminPortal({
       }
     }
 
-    // 2. Dispatch via backend endpoint (handles configured manual SMTP or smooth fallback simulation)
+    // 2. Dispatch via backend endpoint (enfileira assincronamente HTTP 202 ou fallback síncrono)
+    const token = await auth.currentUser?.getIdToken().catch(() => null);
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
     const res = await fetch("/api/send-email", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
+      credentials: "include",
       body: JSON.stringify({
         smtpConfig: globalSmtp,
         to,
         subject,
-        body
+        body,
+        async: true,
       })
     });
 
-    if (!res.ok) {
+    if (!res.ok && res.status !== 202) {
       const errJson = await res.json().catch(() => ({}));
       throw new Error(errJson.error || "Falha na comunicação com o servidor de e-mail.");
     }
 
     const resData = await res.json();
+    if (resData.queued && resData.jobId) {
+      watchAsyncJob({
+        id: resData.jobId,
+        tenant_id: 'super-admin',
+        type: 'email_send',
+        title: `E-mail: ${to}`,
+        status: resData.status || 'pendente',
+        progress: 15,
+        progress_message: 'E-mail na fila para transmissão SMTP...',
+        created_at: new Date().toISOString(),
+      });
+    }
     return { success: true, method: resData.simulated ? 'simulated' : 'smtp', resData };
   }
 
@@ -906,16 +960,20 @@ export default function SuperAdminPortal({
       setLoading(true);
     }
     
-    // 1. Load Tenants
+    // 1. Load Tenants (paginação por cursor, máx 100 por página)
     let tenantsList: Tenant[] = [];
     try {
-      const tenantsSnap = await getDocs(collection(db, 'tenants'));
-      tenantsSnap.forEach((d) => {
+      const tenantsSnap = await getDocs(query(collection(db, 'tenants'), limit(101)));
+      const hasMoreT = tenantsSnap.docs.length > 100;
+      const tenantDocs = hasMoreT ? tenantsSnap.docs.slice(0, 100) : tenantsSnap.docs;
+      tenantDocs.forEach((d) => {
         const t = d.data() as Tenant;
         if (!t.deleted_at) {
           tenantsList.push({ ...t, id: d.id });
         }
       });
+      setTenantsCursor(hasMoreT && tenantDocs.length > 0 ? tenantDocs[tenantDocs.length - 1] : null);
+      setHasMoreTenants(hasMoreT);
     } catch (err) {
       console.warn("Firestore error loading tenants, falling back to local database:", err);
     }
@@ -931,7 +989,7 @@ export default function SuperAdminPortal({
     // 2. Load Plans
     let plansList: Plano[] = [];
     try {
-      const plansSnap = await getDocs(collection(db, 'planos'));
+      const plansSnap = await getDocs(query(collection(db, 'planos'), limit(50)));
       plansSnap.forEach((d) => {
         plansList.push({ ...(d.data() as Plano), id: d.id });
       });
@@ -977,10 +1035,10 @@ export default function SuperAdminPortal({
     }
     setPlans(plansList);
 
-    // 3. Load Payments
+    // 3. Load Payments (limitado a 100 registos mais recentes)
     const paymentsList: Pagamento[] = [];
     try {
-      const paymentsSnap = await getDocs(collection(db, 'pagamentos'));
+      const paymentsSnap = await getDocs(query(collection(db, 'pagamentos'), limit(100)));
       paymentsSnap.forEach((d) => {
         paymentsList.push({ ...(d.data() as Pagamento), id: d.id });
       });
@@ -995,15 +1053,21 @@ export default function SuperAdminPortal({
     });
     setPayments(paymentsList);
 
-    // 4. Load Logs
+    // 4. Load Logs (paginação por cursor, máx 100 por página)
     const logsList: LogAdmin[] = [];
     try {
-      const logsSnap = await getDocs(collection(db, 'log_admins'));
-      logsSnap.forEach((d) => {
+      const logsSnap = await getDocs(query(collection(db, 'log_admins'), orderBy('timestamp', 'desc'), limit(101)));
+      const hasMoreL = logsSnap.docs.length > 100;
+      const logDocs = hasMoreL ? logsSnap.docs.slice(0, 100) : logsSnap.docs;
+      logDocs.forEach((d) => {
         logsList.push({ ...(d.data() as LogAdmin), id: d.id });
       });
+      setLogsCursor(hasMoreL && logDocs.length > 0 ? logDocs[logDocs.length - 1] : null);
+      setHasMoreLogs(hasMoreL);
     } catch (err) {
       console.warn("Firestore error loading logs, falling back to local database:", err);
+      setLogsCursor(null);
+      setHasMoreLogs(false);
     }
     const tempLogs = localDb.getLogs();
     tempLogs.forEach(tl => {
@@ -1017,7 +1081,7 @@ export default function SuperAdminPortal({
     // 5. Load SMTP
     const smtpList: SmtpConfig[] = [];
     try {
-      const smtpSnap = await getDocs(collection(db, 'smtp_configs'));
+      const smtpSnap = await getDocs(query(collection(db, 'smtp_configs'), limit(50)));
       smtpSnap.forEach((d) => {
         smtpList.push({ ...(d.data() as SmtpConfig), id: d.id });
       });
@@ -1042,21 +1106,21 @@ export default function SuperAdminPortal({
       }
     }
 
-    // 6. Load Global System Counts from Firestore
+    // 6. Load Global System Counts via server-side aggregation (getCountFromServer, sem descarregar colecções)
     try {
-      const [escolasSnap, usersSnap, estudantesSnap] = await Promise.allSettled([
-        getDocs(collection(db, 'escolas')),
-        getDocs(collection(db, 'utilizadores')),
-        getDocs(collection(db, 'estudantes'))
+      const [escolasCountRes, usersCountRes, estudantesCountRes] = await Promise.allSettled([
+        countGlobalDocs('escolas'),
+        countGlobalDocs('users'),
+        countGlobalDocs('estudantes')
       ]);
-      if (escolasSnap.status === 'fulfilled') {
-        setSystemEscolasCount(escolasSnap.value.size);
+      if (escolasCountRes.status === 'fulfilled') {
+        setSystemEscolasCount(escolasCountRes.value);
       }
-      if (usersSnap.status === 'fulfilled') {
-        setSystemUsersCount(usersSnap.value.size);
+      if (usersCountRes.status === 'fulfilled') {
+        setSystemUsersCount(usersCountRes.value);
       }
-      if (estudantesSnap.status === 'fulfilled') {
-        setSystemEstudantesCount(estudantesSnap.value.size);
+      if (estudantesCountRes.status === 'fulfilled') {
+        setSystemEstudantesCount(estudantesCountRes.value);
       }
     } catch (err) {
       console.warn("Could not load global counts from Firestore:", err);
@@ -1070,14 +1134,17 @@ export default function SuperAdminPortal({
     loadData();
   }, []);
 
-  // Background worker to check and send pending emails when SMTP becomes available or online, and sync local DB to Firestore
+  // Sincronização orientada a eventos (visibilidade/reconexão) em vez de polling contínuo
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let lastRunAt = 0;
 
-    async function runBackgroundSyncAndQueue() {
-      if (isFirestoreQuotaExhausted()) {
-        return;
-      }
+    async function runBackgroundSyncAndQueue(force = false) {
+      if (isFirestoreQuotaExhausted()) return;
+      if (typeof document !== 'undefined' && document.hidden) return;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+      const now = Date.now();
+      if (!force && now - lastRunAt < 120_000) return;
+      lastRunAt = now;
 
       // 1. Sync local temporary database records to Firestore
       try {
@@ -1092,7 +1159,7 @@ export default function SuperAdminPortal({
           syncRes.plansSynced > 0
         ) {
           console.log("[Background Sync] Successfully synchronized offline/temporary data to Firestore!");
-          loadData(); // reload UI with newly synced production data
+          loadData();
         }
       } catch (err: any) {
         if (!err?.message?.includes('Quota limit exceeded')) {
@@ -1102,7 +1169,6 @@ export default function SuperAdminPortal({
 
       // 2. Process pending emails
       if (!globalSmtp) return;
-      const effectiveGmailToken = gmailToken || globalSmtp.gmail_token || localStorage.getItem('superadmin_gmail_oauth_token');
       if (globalSmtp.smtp_type === 'gmail' && (!globalSmtp.user || globalSmtp.status !== 'ativo')) return;
       if (globalSmtp.smtp_type !== 'gmail' && (!globalSmtp.host || globalSmtp.host.trim() === '')) return;
 
@@ -1112,12 +1178,9 @@ export default function SuperAdminPortal({
       try {
         const localEmails = localDb.getEmails().filter(e => e.status === 'pendente');
         if (localEmails.length > 0) {
-          console.log(`[Queue] Encontrados ${localEmails.length} e-mails pendentes locais. Processando...`);
           for (const email of localEmails) {
             const success = await processPendingEmail(email.id, email, true);
-            if (success) {
-              processedAny = true;
-            }
+            if (success) processedAny = true;
           }
         }
       } catch (err) {
@@ -1127,16 +1190,13 @@ export default function SuperAdminPortal({
       // B. Process Firestore pending emails (skip if quota is exhausted)
       if (!isFirestoreQuotaExhausted()) {
         try {
-          const q = query(collection(db, 'pending_emails'), where('status', '==', 'pendente'));
+          const q = query(collection(db, 'pending_emails'), where('status', '==', 'pendente'), limit(50));
           const querySnap = await getDocs(q);
           if (!querySnap.empty) {
-            console.log(`[Queue] Encontrados ${querySnap.size} e-mails pendentes em Firestore. Processando...`);
             for (const docSnap of querySnap.docs) {
               const emailData = docSnap.data();
               const success = await processPendingEmail(docSnap.id, emailData, false);
-              if (success) {
-                processedAny = true;
-              }
+              if (success) processedAny = true;
             }
           }
         } catch (error: any) {
@@ -1147,44 +1207,90 @@ export default function SuperAdminPortal({
       }
 
       if (processedAny) {
-        loadData(); // refresh logs/notifications
+        loadData();
       }
     }
 
-    // Run check on mount/changes
-    runBackgroundSyncAndQueue();
+    void runBackgroundSyncAndQueue(true);
 
-    // Periodic check every 2 minutes (prevent quota exhaustion)
-    interval = setInterval(() => {
-      if (!isFirestoreQuotaExhausted()) {
-        runBackgroundSyncAndQueue();
-      }
-    }, 120000);
-
-    // Event listener for online connection recovery
     const handleOnline = () => {
-      console.log("[Queue] Conexão de rede restabelecida. Executando sincronização e processamento da fila...");
-      if (!isFirestoreQuotaExhausted()) {
-        runBackgroundSyncAndQueue();
+      void runBackgroundSyncAndQueue(false);
+    };
+    const handleVisibility = () => {
+      if (!document.hidden) {
+        void runBackgroundSyncAndQueue(false);
       }
     };
     window.addEventListener('online', handleOnline);
+    document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
-      clearInterval(interval);
       window.removeEventListener('online', handleOnline);
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, [globalSmtp, gmailToken]);
 
+  const handleLoadMoreTenants = async () => {
+    if (!tenantsCursor || loadingMoreTenants) return;
+    setLoadingMoreTenants(true);
+    try {
+      const snap = await getDocs(query(collection(db, 'tenants'), startAfter(tenantsCursor), limit(101)));
+      const hasMoreT = snap.docs.length > 100;
+      const docsPage = hasMoreT ? snap.docs.slice(0, 100) : snap.docs;
+      const more: Tenant[] = [];
+      docsPage.forEach((d) => {
+        const t = d.data() as Tenant;
+        if (!t.deleted_at) more.push({ ...t, id: d.id });
+      });
+      setTenants(prev => {
+        const seen = new Set(prev.map(x => x.id));
+        const merged = [...prev];
+        for (const t of more) if (!seen.has(t.id)) merged.push(t);
+        return merged;
+      });
+      setTenantsCursor(hasMoreT && docsPage.length > 0 ? docsPage[docsPage.length - 1] : null);
+      setHasMoreTenants(hasMoreT);
+    } catch (err) {
+      console.warn("Error loading more tenants:", err);
+    } finally {
+      setLoadingMoreTenants(false);
+    }
+  };
+
+  const handleLoadMoreLogs = async () => {
+    if (!logsCursor || loadingMoreLogs) return;
+    setLoadingMoreLogs(true);
+    try {
+      const snap = await getDocs(query(collection(db, 'log_admins'), orderBy('timestamp', 'desc'), startAfter(logsCursor), limit(101)));
+      const hasMoreL = snap.docs.length > 100;
+      const docsPage = hasMoreL ? snap.docs.slice(0, 100) : snap.docs;
+      const more = docsPage.map(d => ({ ...(d.data() as LogAdmin), id: d.id }));
+      setLogs(prev => {
+        const seen = new Set(prev.map(x => x.id));
+        const merged = [...prev];
+        for (const l of more) if (!seen.has(l.id)) merged.push(l);
+        return merged;
+      });
+      setLogsCursor(hasMoreL && docsPage.length > 0 ? docsPage[docsPage.length - 1] : null);
+      setHasMoreLogs(hasMoreL);
+    } catch (err) {
+      console.warn("Error loading more logs:", err);
+    } finally {
+      setLoadingMoreLogs(false);
+    }
+  };
+
   useEffect(() => {
-    const q = query(collection(db, 'notificacoes'));
+    const q = query(
+      collection(db, 'notificacoes'),
+      where('destinatario_id', 'in', ['super_admin', 'todos']),
+      limit(50)
+    );
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list: Notificacao[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        if (data.destinatario_id === 'super_admin' || data.destinatario_id === 'todos') {
-          list.push({ ...data, id: doc.id } as Notificacao);
-        }
+      snapshot.forEach((d) => {
+        const data = d.data();
+        list.push({ ...data, id: d.id } as Notificacao);
       });
       list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
       setNotifications(list);
@@ -1248,13 +1354,8 @@ export default function SuperAdminPortal({
         timestamp: new Date().toISOString(),
         detalhes: details
       };
-      await addDoc(collection(db, "log_admins"), newLog);
-      // Refresh logs
-      const logsSnap = await getDocs(collection(db, 'log_admins'));
-      const logsList: LogAdmin[] = [];
-      logsSnap.forEach((d) => logsList.push({ ...(d.data() as LogAdmin), id: d.id }));
-      logsList.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-      setLogs(logsList);
+      const docRef = await addDoc(collection(db, "log_admins"), newLog);
+      setLogs(prev => [{ ...(newLog as LogAdmin), id: docRef.id }, ...prev].slice(0, 100));
     } catch (err) {
       console.error("Error writing audit log:", err);
     }
@@ -1450,6 +1551,8 @@ export default function SuperAdminPortal({
         try {
           const tenantRef = doc(db, 'tenants', editingTenant.id);
           await updateDoc(tenantRef, updatedData);
+          invalidateGlobalCache(['tenants_public']).catch(() => {});
+          invalidateTenantCache(editingTenant.id, ['tenant_profile', 'provincias']).catch(() => {});
 
           // Auto-seed provinces for updated countries
           try {
@@ -1572,6 +1675,7 @@ export default function SuperAdminPortal({
         try {
           // Attempt Firestore save
           await setDoc(doc(db, 'tenants', generatedId), newTenant);
+          invalidateGlobalCache(['tenants_public']).catch(() => {});
           await setDoc(doc(db, 'users', tenantAdminUser.id), tenantAdminUser);
           await registerUserInFirebaseAuth(adminEmailClean, tempPassword);
           await setDoc(doc(db, 'configuracoes', tenantConfig.id), tenantConfig);
@@ -1786,6 +1890,8 @@ export default function SuperAdminPortal({
     try {
       // 1. Apagar documento do tenant da coleção 'tenants' no Firestore
       await deleteDoc(doc(db, 'tenants', id));
+      clearTenantCaches(id).catch(() => {});
+      invalidateGlobalCache(['tenants_public']).catch(() => {});
 
       // 2. Apagar utilizadores associados na coleção 'users' do Firestore e revogar acessos
       try {
@@ -1837,6 +1943,8 @@ export default function SuperAdminPortal({
         try {
           const tenantRef = doc(db, 'tenants', tenant.id);
           await updateDoc(tenantRef, { status: nextStatus });
+          invalidateGlobalCache(['tenants_public']).catch(() => {});
+          invalidateTenantCache(tenant.id, ['tenant_profile']).catch(() => {});
           await auditLog(`${nextStatus === 'suspenso' ? 'Suspender' : 'Reativar'} Conta`, "Tenant", tenant.id, `Status alterado para ${nextStatus}`);
           loadData();
         } catch (err) {
@@ -2038,8 +2146,10 @@ export default function SuperAdminPortal({
             await Promise.all(selectedTenantIds.map(async (id) => {
               const tenantRef = doc(db, 'tenants', id);
               await updateDoc(tenantRef, { status: 'suspenso' });
+              invalidateTenantCache(id, ['tenant_profile']).catch(() => {});
               await auditLog("Suspender Conta (Lote)", "Tenant", id, `Status alterado para suspenso via ação em lote`);
             }));
+            invalidateGlobalCache(['tenants_public']).catch(() => {});
             loadData();
             setSelectedTenantIds([]);
           } catch (err) {
@@ -2057,8 +2167,10 @@ export default function SuperAdminPortal({
             await Promise.all(selectedTenantIds.map(async (id) => {
               const tenantRef = doc(db, 'tenants', id);
               await updateDoc(tenantRef, { status: 'ativo' });
+              invalidateTenantCache(id, ['tenant_profile']).catch(() => {});
               await auditLog("Reativar Conta (Lote)", "Tenant", id, `Status alterado para ativo via ação em lote`);
             }));
+            invalidateGlobalCache(['tenants_public']).catch(() => {});
             loadData();
             setSelectedTenantIds([]);
           } catch (err) {
@@ -2075,6 +2187,8 @@ export default function SuperAdminPortal({
             await Promise.all(selectedTenantIds.map(async (id) => {
               // Apagar documento do tenant
               await deleteDoc(doc(db, 'tenants', id));
+              clearTenantCaches(id).catch(() => {});
+              invalidateGlobalCache(['tenants_public']).catch(() => {});
               
               // Apagar usuários vinculados
               try {
@@ -2217,6 +2331,7 @@ export default function SuperAdminPortal({
         limits: planForm.limits
       };
       await setDoc(doc(db, 'planos', generatedId), planData);
+      invalidateGlobalCache(['planos']).catch(() => {});
       await auditLog(editingPlan ? "Editar Plano" : "Criar Plano", "Plano", generatedId, `Definidos limites de escolas: ${planForm.limits.max_escolas}, docentes: ${planForm.limits.max_docentes}`);
       
       setIsPlanModalOpen(false);
@@ -2352,14 +2467,19 @@ export default function SuperAdminPortal({
     return maxVal > 0 ? maxVal : 1;
   }, [monthlyRevenueData]);
 
-  // Filter Tenants list
-  const filteredTenants = tenants.filter(t => {
-    const matchesSearch = t.nome.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          t.email_admin.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = statusFilter === 'todos' || t.status === statusFilter;
-    const matchesPlan = planFilter === 'todos' || t.plano_id === planFilter;
-    return matchesSearch && matchesStatus && matchesPlan;
-  });
+  // Filter Tenants list (memoizado com debounce)
+  const filteredTenants = useMemo(() => {
+    const q = debouncedSearchTerm.trim().toLowerCase();
+    return tenants.filter(t => {
+      const matchesSearch =
+        !q ||
+        t.nome.toLowerCase().includes(q) ||
+        t.email_admin.toLowerCase().includes(q);
+      const matchesStatus = statusFilter === 'todos' || t.status === statusFilter;
+      const matchesPlan = planFilter === 'todos' || t.plano_id === planFilter;
+      return matchesSearch && matchesStatus && matchesPlan;
+    });
+  }, [tenants, debouncedSearchTerm, statusFilter, planFilter]);
 
   const renderMenuItem = (tab: string, label: string, icon: React.ReactNode) => {
     const isActive = activeTab === tab;
@@ -2620,6 +2740,7 @@ export default function SuperAdminPortal({
           {renderGroupHeader('Auditoria')}
           {renderMenuItem('logs', 'Auditoria Geral', <History className="w-4.5 h-4.5" />)}
           {renderMenuItem('logs_instituicoes', 'Logs Criptografados', <ShieldAlert className="w-4.5 h-4.5" />)}
+          {renderMenuItem('observabilidade', 'Observabilidade & SLO', <Activity className="w-4.5 h-4.5 text-emerald-400" />)}
         </nav>
 
         {/* Footer / User Profile */}
@@ -2692,6 +2813,7 @@ export default function SuperAdminPortal({
               {(activeTab as string) === 'notificacoes_config' && 'Regras Globais de Notificação'}
               {(activeTab as string) === 'logs_instituicoes' && 'Logs Criptografados por Unidade'}
               {(activeTab as string) === 'seder_administracao' && 'Seder Administracao'}
+              {(activeTab as string) === 'observabilidade' && 'Observabilidade, Métricas & SLO'}
             </h1>
           </div>
           
@@ -3403,6 +3525,19 @@ export default function SuperAdminPortal({
                     </div>
                   )}
                 </div>
+
+                {hasMoreTenants && (
+                  <div className="flex justify-center pt-2">
+                    <button
+                      type="button"
+                      onClick={handleLoadMoreTenants}
+                      disabled={loadingMoreTenants}
+                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition disabled:opacity-50 cursor-pointer"
+                    >
+                      {loadingMoreTenants ? 'A carregar instituições...' : 'Carregar mais instituições'}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -3557,36 +3692,40 @@ export default function SuperAdminPortal({
             {/* TAB: PAYMENTS */}
             {activeTab === 'payments' && (
               <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm animate-fadeIn">
-                <SuperAdminFinancePanel 
-                  payments={payments}
-                  tenants={tenants}
-                  plans={plans}
-                  onUpdatePaymentStatus={updatePaymentStatus}
-                  onDeletePayment={handleDeletePayment}
-                  onAddLog={async (acao, entidade, entidadeId, detalhes) => {
-                    await addDoc(collection(db, "log_admins"), {
-                      admin_id: "super_admin_finance",
-                      admin_nome: "Super Admin Finanças",
-                      acao,
-                      entidade,
-                      entidade_id: entidadeId,
-                      timestamp: new Date().toISOString(),
-                      detalhes
-                    });
-                  }}
-                  onReloadTenants={async () => {
-                    const tenantsSnap = await getDocs(collection(db, 'tenants'));
-                    const tenantsList: any[] = [];
-                    tenantsSnap.forEach(d => tenantsList.push({ ...d.data(), id: d.id }));
-                    setTenants(tenantsList);
-                  }}
-                  onReloadPayments={async () => {
-                    const paymentsSnap = await getDocs(collection(db, 'pagamentos'));
-                    const paymentsList: any[] = [];
-                    paymentsSnap.forEach(d => paymentsList.push({ ...d.data(), id: d.id }));
-                    setPayments(paymentsList);
-                  }}
-                />
+                <ModuleErrorBoundary title="Finanças e Pagamentos">
+                  <Suspense fallback={<ModuleSkeleton title="A carregar painel financeiro..." variant="table" rows={6} />}>
+                    <SuperAdminFinancePanel
+                      payments={payments}
+                      tenants={tenants}
+                      plans={plans}
+                      onUpdatePaymentStatus={updatePaymentStatus}
+                      onDeletePayment={handleDeletePayment}
+                      onAddLog={async (acao, entidade, entidadeId, detalhes) => {
+                        await addDoc(collection(db, "log_admins"), {
+                          admin_id: "super_admin_finance",
+                          admin_nome: "Super Admin Finanças",
+                          acao,
+                          entidade,
+                          entidade_id: entidadeId,
+                          timestamp: new Date().toISOString(),
+                          detalhes
+                        });
+                      }}
+                      onReloadTenants={async () => {
+                        const tenantsSnap = await getDocs(query(collection(db, 'tenants'), limit(100)));
+                        const tenantsList: any[] = [];
+                        tenantsSnap.forEach(d => tenantsList.push({ ...d.data(), id: d.id }));
+                        setTenants(tenantsList);
+                      }}
+                      onReloadPayments={async () => {
+                        const paymentsSnap = await getDocs(query(collection(db, 'pagamentos'), limit(100)));
+                        const paymentsList: any[] = [];
+                        paymentsSnap.forEach(d => paymentsList.push({ ...d.data(), id: d.id }));
+                        setPayments(paymentsList);
+                      }}
+                    />
+                  </Suspense>
+                </ModuleErrorBoundary>
               </div>
             )}
 
@@ -3602,9 +3741,18 @@ export default function SuperAdminPortal({
                   </p>
                 </div>
 
-                <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 divide-y divide-slate-100">
-                  {logs.map(log => (
-                    <div key={log.id} className="pt-3 flex flex-col md:flex-row justify-between items-start md:items-center gap-2">
+                <VirtualList
+                  items={logs}
+                  itemHeight={86}
+                  maxHeight={500}
+                  virtualizeThreshold={30}
+                  className="pr-2 divide-y divide-slate-100"
+                  getKey={(log) => log.id}
+                  emptyState={
+                    <p className="text-slate-400 text-xs py-8 text-center">Nenhum log de auditoria disponível.</p>
+                  }
+                  renderItem={(log) => (
+                    <div className="py-3 flex flex-col md:flex-row justify-between items-start md:items-center gap-2">
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="bg-indigo-50 text-indigo-700 text-xs font-bold px-2 py-0.5 rounded">
@@ -3619,11 +3767,21 @@ export default function SuperAdminPortal({
                         {new Date(log.timestamp).toLocaleString('pt-BR')}
                       </span>
                     </div>
-                  ))}
-                  {logs.length === 0 && (
-                    <p className="text-slate-400 text-xs py-8 text-center">Nenhum log de auditoria disponível.</p>
                   )}
-                </div>
+                />
+
+                {hasMoreLogs && (
+                  <div className="flex justify-center pt-2">
+                    <button
+                      type="button"
+                      onClick={handleLoadMoreLogs}
+                      disabled={loadingMoreLogs}
+                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition disabled:opacity-50 cursor-pointer"
+                    >
+                      {loadingMoreLogs ? 'A carregar logs...' : 'Carregar mais logs'}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -4327,10 +4485,25 @@ export default function SuperAdminPortal({
             {/* TAB: SEDER ADMINISTRACAO */}
             {(activeTab as string) === 'seder_administracao' && (
               <div className="animate-fadeIn">
-                <SederAdministracaoSection
-                  currentSuperAdminEmail={currentUserEmail}
-                  onTransferComplete={onLogout}
-                />
+                <ModuleErrorBoundary title="Administração de Sede">
+                  <Suspense fallback={<ModuleSkeleton title="A carregar painel de transferência..." rows={4} />}>
+                    <SederAdministracaoSection
+                      currentSuperAdminEmail={currentUserEmail}
+                      onTransferComplete={onLogout}
+                    />
+                  </Suspense>
+                </ModuleErrorBoundary>
+              </div>
+            )}
+
+            {/* TAB: OBSERVABILIDADE & SLO */}
+            {(activeTab as string) === 'observabilidade' && (
+              <div className="animate-fadeIn">
+                <ModuleErrorBoundary title="Observabilidade & SLO">
+                  <Suspense fallback={<ModuleSkeleton title="A carregar métricas e alertas SLO..." rows={6} />}>
+                    <ObservabilityPanel />
+                  </Suspense>
+                </ModuleErrorBoundary>
               </div>
             )}
           </>
@@ -6492,8 +6665,14 @@ export default function SuperAdminPortal({
       )}
 
       {isCookiePolicyOpen && (
-        <CookiePolicyModal onClose={() => setIsCookiePolicyOpen(false)} />
+        <Suspense fallback={null}>
+          <CookiePolicyModal onClose={() => setIsCookiePolicyOpen(false)} />
+        </Suspense>
       )}
+
+      <Suspense fallback={null}>
+        <AsyncJobsPanel />
+      </Suspense>
     </div>
   );
 }

@@ -1,16 +1,19 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * 
- * Gerenciador de Autenticação Segura a Nível de Servidor (SysEdu)
- * Implementa validação com PBKDF2-SHA512 (100.000 iterações), salt criptográfico,
- * comparação em tempo constante (anti-timing attack) e sessões HttpOnly.
+ *
+ * Gerenciador de Autenticação Segura & Sessões Stateless/Distribuídas (SysEdu — Fase 5)
+ * - Validação com PBKDF2-SHA512 (100.000 iterações) e comparação em tempo constante
+ * - Tokens de sessão assinados via HMAC-SHA256 (`st1.<payload>.<sig>`) + espelho em Firestore (`server_sessions`)
+ * - Revogação global distribuída (`user_revocations`) para permitir auto-scaling horizontal sem sticky sessions
+ * - Circuit Breaker e Timeout estrito para chamadas REST ao Firebase Identity Toolkit
  */
 
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { getFirestoreInstance } from '../middleware/auth';
+import { firebaseAuthRestBreaker } from '../services/circuitBreaker';
 
 export interface AuthenticatedUserProfile {
   id: string;
@@ -30,28 +33,322 @@ export interface ServerSession {
   email: string;
   createdAt: number;
   lastActivity: number;
+  expiresAt?: number;
   must_reset_password?: boolean;
+  revoked?: boolean;
+  sessionHash?: string;
 }
 
-export const serverSessions = new Map<string, ServerSession>();
+const SESSIONS_COLLECTION = 'server_sessions';
+const REVOCATIONS_COLLECTION = 'user_revocations';
 export const SESSION_INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
+export const SESSION_MAX_LIFETIME_MS = 24 * 60 * 60 * 1000;
+const L1_SESSION_TTL_MS = 15 * 1000;
+const ACTIVITY_PERSIST_THROTTLE_MS = 60 * 1000;
 
-export function getSession(sessionId: string): ServerSession | undefined {
-  if (!sessionId) return undefined;
-  const session = serverSessions.get(sessionId);
-  if (!session) return undefined;
+const SESSION_SECRET =
+  process.env.SESSION_SIGNING_SECRET ||
+  process.env.QR_SIGNING_SECRET ||
+  process.env.AUTH_SALT ||
+  'sysedu_cluster_stateless_session_key_v1_2026';
 
+// Cache L1 curta apenas para aceleração (nunca fonte exclusiva da verdade)
+interface CachedSessionEntry {
+  session: ServerSession;
+  cachedAt: number;
+  lastPersistedActivity: number;
+}
+export const serverSessions = new Map<string, ServerSession>();
+const l1SessionCache = new Map<string, CachedSessionEntry>();
+const l1RevocationCache = new Map<string, { revokedAfter: number; checkedAt: number }>();
+
+function hashSessionId(sessionId: string): string {
+  return crypto.createHash('sha256').update(sessionId).digest('hex').slice(0, 40);
+}
+
+function signTokenPayload(encodedPayload: string): string {
+  return crypto.createHmac('sha256', SESSION_SECRET).update(encodedPayload).digest('base64url');
+}
+
+export function issueStatelessSessionToken(session: ServerSession): string {
+  const payload = {
+    sid: crypto.randomUUID(),
+    uid: session.userId,
+    rol: session.role,
+    tid: session.tenantId,
+    eml: session.email,
+    iat: session.createdAt,
+    exp: session.createdAt + SESSION_MAX_LIFETIME_MS,
+    mrp: Boolean(session.must_reset_password),
+  };
+  const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  const sig = signTokenPayload(encoded);
+  return `st1.${encoded}.${sig}`;
+}
+
+export function verifyStatelessSessionToken(token: string): ServerSession | null {
+  if (!token || !token.startsWith('st1.')) return null;
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  const [, encoded, sig] = parts;
+  if (!encoded || !sig) return null;
+
+  const expectedSig = signTokenPayload(encoded);
+  if (!timingSafeCompare(sig, expectedSig)) return null;
+
+  try {
+    const raw = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+    const now = Date.now();
+    if (typeof raw.exp === 'number' && now > raw.exp) {
+      return null;
+    }
+    return {
+      userId: String(raw.uid || ''),
+      role: String(raw.rol || 'estudante'),
+      tenantId: String(raw.tid || 'default'),
+      email: String(raw.eml || ''),
+      createdAt: Number(raw.iat || now),
+      lastActivity: now,
+      expiresAt: Number(raw.exp || now + SESSION_MAX_LIFETIME_MS),
+      must_reset_password: Boolean(raw.mrp),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function getUserRevokedAfter(userId: string): Promise<number> {
+  if (!userId) return 0;
   const now = Date.now();
-  if (now - session.lastActivity > SESSION_INACTIVITY_TIMEOUT_MS) {
-    serverSessions.delete(sessionId);
+  const cached = l1RevocationCache.get(userId);
+  if (cached && now - cached.checkedAt < L1_SESSION_TTL_MS) {
+    return cached.revokedAfter;
+  }
+  try {
+    const db = getFirestoreInstance();
+    const snap = await db.collection(REVOCATIONS_COLLECTION).doc(userId).get();
+    const revokedAfter = snap.exists ? Number(snap.data()?.revokedAfter || 0) : 0;
+    l1RevocationCache.set(userId, { revokedAfter, checkedAt: now });
+    if (l1RevocationCache.size > 5000) {
+      const oldest = l1RevocationCache.keys().next().value;
+      if (oldest) l1RevocationCache.delete(oldest);
+    }
+    return revokedAfter;
+  } catch {
+    return cached?.revokedAfter || 0;
+  }
+}
+
+function cacheSessionL1(sessionId: string, session: ServerSession, persistedAt: number) {
+  if (l1SessionCache.size >= 2000 && !l1SessionCache.has(sessionId)) {
+    const oldest = l1SessionCache.keys().next().value;
+    if (oldest) l1SessionCache.delete(oldest);
+  }
+  l1SessionCache.set(sessionId, {
+    session,
+    cachedAt: Date.now(),
+    lastPersistedActivity: persistedAt,
+  });
+  serverSessions.set(sessionId, session);
+}
+
+/**
+ * Cria sessão stateless (token HMAC-SHA256) + persiste no Firestore para revogação/inatividade distribuída.
+ */
+export async function createSession(sessionData: Omit<ServerSession, 'sessionHash'>): Promise<{
+  sessionId: string;
+  session: ServerSession;
+}> {
+  const now = Date.now();
+  const session: ServerSession = {
+    ...sessionData,
+    createdAt: sessionData.createdAt || now,
+    lastActivity: sessionData.lastActivity || now,
+    expiresAt: sessionData.expiresAt || now + SESSION_MAX_LIFETIME_MS,
+    revoked: false,
+  };
+
+  const sessionToken = issueStatelessSessionToken(session);
+  const docId = hashSessionId(sessionToken);
+  session.sessionHash = docId;
+
+  cacheSessionL1(sessionToken, session, now);
+
+  try {
+    const db = getFirestoreInstance();
+    await db.collection(SESSIONS_COLLECTION).doc(docId).set({
+      userId: session.userId,
+      role: session.role,
+      tenantId: session.tenantId,
+      email: session.email,
+      createdAt: session.createdAt,
+      lastActivity: session.lastActivity,
+      expiresAt: session.expiresAt,
+      must_reset_password: Boolean(session.must_reset_password),
+      revoked: false,
+    });
+  } catch {
+    // Mesmo se a escrita externa falhar momentaneamente, o token HMAC-SHA256 continua válido entre réplicas
+  }
+
+  return { sessionId: sessionToken, session };
+}
+
+/**
+ * Obtém e valida sessão em modo stateless/distribuído entre réplicas.
+ */
+export async function getSession(sessionId: string): Promise<ServerSession | undefined> {
+  if (!sessionId) return undefined;
+  const now = Date.now();
+  const docId = hashSessionId(sessionId);
+
+  // 1. Verificar cache L1 fresca
+  const cachedEntry = l1SessionCache.get(sessionId);
+  if (cachedEntry && now - cachedEntry.cachedAt < L1_SESSION_TTL_MS) {
+    const sess = cachedEntry.session;
+    if (now - sess.lastActivity > SESSION_INACTIVITY_TIMEOUT_MS || (sess.expiresAt && now > sess.expiresAt)) {
+      await deleteSession(sessionId);
+      return undefined;
+    }
+    const revokedAfter = await getUserRevokedAfter(sess.userId);
+    if (revokedAfter > 0 && sess.createdAt <= revokedAfter) {
+      await deleteSession(sessionId);
+      return undefined;
+    }
+    sess.lastActivity = now;
+    if (now - cachedEntry.lastPersistedActivity > ACTIVITY_PERSIST_THROTTLE_MS) {
+      cachedEntry.lastPersistedActivity = now;
+      void persistLastActivity(docId, now);
+    }
+    return sess;
+  }
+
+  // 2. Consultar store externo (Firestore) para sincronização cross-instance
+  let resolved: ServerSession | undefined;
+  let loadedFromDb = false;
+
+  try {
+    const db = getFirestoreInstance();
+    const snap = await db.collection(SESSIONS_COLLECTION).doc(docId).get();
+    if (snap.exists) {
+      const data = snap.data() as ServerSession;
+      if (data.revoked) {
+        l1SessionCache.delete(sessionId);
+        serverSessions.delete(sessionId);
+        return undefined;
+      }
+      resolved = {
+        userId: data.userId,
+        role: data.role,
+        tenantId: data.tenantId,
+        email: data.email,
+        createdAt: Number(data.createdAt || now),
+        lastActivity: Number(data.lastActivity || now),
+        expiresAt: data.expiresAt ? Number(data.expiresAt) : undefined,
+        must_reset_password: Boolean(data.must_reset_password),
+        revoked: false,
+      };
+      loadedFromDb = true;
+    }
+  } catch {
+    // Se Firestore falhar temporariamente, valida token stateless abaixo
+  }
+
+  // 3. Fallback / validação criptográfica stateless (`st1.*`) quando não existe no Firestore local
+  if (!resolved) {
+    const stateless = verifyStatelessSessionToken(sessionId);
+    if (stateless) {
+      resolved = stateless;
+    } else if (serverSessions.has(sessionId)) {
+      resolved = serverSessions.get(sessionId);
+    }
+  }
+
+  if (!resolved) return undefined;
+
+  // 4. Validar inatividade (30 min), validade absoluta (24h) e revogação global do utilizador
+  if (
+    now - resolved.lastActivity > SESSION_INACTIVITY_TIMEOUT_MS ||
+    (resolved.expiresAt && now > resolved.expiresAt)
+  ) {
+    await deleteSession(sessionId);
     return undefined;
   }
-  session.lastActivity = now;
-  return session;
+
+  const revokedAfter = await getUserRevokedAfter(resolved.userId);
+  if (revokedAfter > 0 && resolved.createdAt <= revokedAfter) {
+    await deleteSession(sessionId);
+    return undefined;
+  }
+
+  const previousActivity = resolved.lastActivity;
+  resolved.lastActivity = now;
+  cacheSessionL1(sessionId, resolved, loadedFromDb ? previousActivity : now);
+
+  if (loadedFromDb && now - previousActivity > ACTIVITY_PERSIST_THROTTLE_MS) {
+    void persistLastActivity(docId, now);
+  }
+
+  return resolved;
 }
 
-export function deleteSession(sessionId: string): void {
-  if (sessionId) serverSessions.delete(sessionId);
+async function persistLastActivity(docId: string, now: number): Promise<void> {
+  try {
+    const db = getFirestoreInstance();
+    await db.collection(SESSIONS_COLLECTION).doc(docId).set({ lastActivity: now }, { merge: true });
+  } catch {
+    // non-fatal
+  }
+}
+
+export async function deleteSession(sessionId: string): Promise<void> {
+  if (!sessionId) return;
+  l1SessionCache.delete(sessionId);
+  serverSessions.delete(sessionId);
+  const docId = hashSessionId(sessionId);
+  try {
+    const db = getFirestoreInstance();
+    await db.collection(SESSIONS_COLLECTION).doc(docId).set(
+      {
+        revoked: true,
+        revokedAt: Date.now(),
+      },
+      { merge: true }
+    );
+  } catch {
+    // non-fatal
+  }
+}
+
+/**
+ * Revoga globalmente todas as sessões de um utilizador em todas as instâncias.
+ */
+export async function revokeUserSessions(userId: string): Promise<void> {
+  if (!userId) return;
+  const now = Date.now();
+  l1RevocationCache.set(userId, { revokedAfter: now, checkedAt: now });
+
+  for (const [sid, sess] of serverSessions.entries()) {
+    if (sess.userId === userId) {
+      serverSessions.delete(sid);
+      l1SessionCache.delete(sid);
+    }
+  }
+
+  try {
+    const db = getFirestoreInstance();
+    await db.collection(REVOCATIONS_COLLECTION).doc(userId).set({ revokedAfter: now }, { merge: true });
+    const activeSnap = await db.collection(SESSIONS_COLLECTION).where('userId', '==', userId).limit(50).get();
+    if (!activeSnap.empty) {
+      const batch = db.batch();
+      for (const docSnap of activeSnap.docs) {
+        batch.set(docSnap.ref, { revoked: true, revokedAt: now }, { merge: true });
+      }
+      await batch.commit();
+    }
+  } catch {
+    // non-fatal
+  }
 }
 
 export function verifyCsrfToken(req: any): boolean {
@@ -60,7 +357,7 @@ export function verifyCsrfToken(req: any): boolean {
   }
   const cookieCsrf = req.cookies?.sysedu_csrf_token;
   const headerCsrf = req.headers['x-csrf-token'] || req.headers['x-xsrf-token'];
-  
+
   if (cookieCsrf && headerCsrf && typeof cookieCsrf === 'string' && typeof headerCsrf === 'string') {
     return timingSafeCompare(cookieCsrf, headerCsrf);
   }
@@ -101,19 +398,10 @@ export function getRoleLevel(role?: string): number {
   return ROLE_HIERARCHY[clean] ?? 20;
 }
 
-/**
- * Validates whether the caller can change the password of the target user.
- * Rules:
- * 1. Self-service: Any user can change their own password.
- * 2. Super Admin: Can manage any user's password across all tenants.
- * 3. Tenant Admin / Director: Can ONLY change passwords of users in their SAME tenant who are strictly BELOW their role level.
- * 4. Regular users (Docentes, Estudantes, Pais): Can only change their own password.
- */
 export function canManageUserPassword(
   caller: { role: string; tenant_id?: string; uid: string; email?: string },
   target: { role: string; tenant_id?: string; uid: string; email?: string }
 ): boolean {
-  // 1. Self-service
   if (caller.uid === target.uid || (caller.email && target.email && caller.email.toLowerCase() === target.email.toLowerCase())) {
     return true;
   }
@@ -122,19 +410,16 @@ export function canManageUserPassword(
   const callerLevel = getRoleLevel(caller.role);
   const targetLevel = getRoleLevel(target.role);
 
-  // 2. Super Admin: unrestricted across all tenants
   if (callerLevel >= 100 || callerRole === 'super_admin' || callerRole === 'superadmin') {
     return true;
   }
 
-  // 3. Multi-tenant isolation: caller and target MUST share the exact same institution
   const callerTenant = caller.tenant_id;
   const targetTenant = target.tenant_id;
   if (!callerTenant || !targetTenant || callerTenant !== targetTenant) {
     return false;
   }
 
-  // 4. Hierarchical rule: caller level must be at least 60 (Director or Admin) AND strictly higher than target level
   if (callerLevel >= 60 && callerLevel > targetLevel) {
     return true;
   }
@@ -172,12 +457,48 @@ export function verifyPasswordHash(password: string, salt: string, expectedHash:
     }
 
     return crypto.timingSafeEqual(computedBuffer, expectedBuffer);
-  } catch (err) {
+  } catch {
     return false;
   }
 }
 
 const SUPERADMIN_SALT = process.env.AUTH_SALT || 'sysedu_auth_salt_superadmin_sec_2026';
+
+async function verifyPasswordViaIdentityToolkit(
+  apiKey: string,
+  email: string,
+  password: string
+): Promise<{ ok: boolean; data?: any }> {
+  return firebaseAuthRestBreaker.execute(
+    async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 7500);
+      try {
+        const res = await fetch(
+          `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password, returnSecureToken: true }),
+            signal: controller.signal,
+          }
+        );
+        if (!res.ok) {
+          // 400 invalid credentials não deve abrir o circuit breaker; só 5xx/network abrem
+          if (res.status >= 500) {
+            throw new Error(`IdentityToolkit HTTP ${res.status}`);
+          }
+          return { ok: false };
+        }
+        const data = await res.json();
+        return { ok: true, data };
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    () => ({ ok: false })
+  );
+}
 
 /**
  * Autentica o usuário a nível do servidor com rigor criptográfico
@@ -189,7 +510,6 @@ export async function authenticateServerUser(
   const cleanEmail = email.trim().toLowerCase();
   const db = getFirestoreInstance();
 
-  // 1. Verificação dinâmica de Super Administrador (via superusers ou ownership no Firestore)
   let superData: any = null;
   let superusersSnapDocsId: string | null = null;
   let currentOwnerEmail: string | null = null;
@@ -199,7 +519,7 @@ export async function authenticateServerUser(
     if (ownershipDoc.exists) {
       currentOwnerEmail = ownershipDoc.data()?.currentOwnerEmail?.toLowerCase() || null;
     }
-  } catch (err) {
+  } catch {
     // Firestore query failed, proceed
   }
 
@@ -209,7 +529,6 @@ export async function authenticateServerUser(
       superData = superusersSnap.docs[0].data();
       superusersSnapDocsId = superusersSnap.docs[0].id;
     } else {
-      // Também verificar na coleção users
       const usersSnap = await db.collection('users').where('email', '==', cleanEmail).limit(1).get();
       if (!usersSnap.empty) {
         const uData = usersSnap.docs[0].data();
@@ -219,7 +538,7 @@ export async function authenticateServerUser(
         }
       }
     }
-  } catch (err) {
+  } catch {
     // Firestore query failed
   }
 
@@ -228,13 +547,11 @@ export async function authenticateServerUser(
     (currentOwnerEmail !== null && currentOwnerEmail === cleanEmail);
 
   if (isDesignatedSuperadmin) {
-    // A. Verificação via hash PBKDF2 armazenado no documento do Firestore
     let passwordMatches = false;
     if (superData?.passwordHash) {
       passwordMatches = verifyPasswordHash(password, superData.salt || SUPERADMIN_SALT, superData.passwordHash);
     }
 
-    // B. Verificação via Firebase Authentication REST API
     if (!passwordMatches) {
       try {
         const cfgPath = path.join(process.cwd(), 'firebase-applet-config.json');
@@ -242,20 +559,15 @@ export async function authenticateServerUser(
           const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
           const apiKey = process.env.FIREBASE_API_KEY || cfg.apiKey;
           if (apiKey) {
-            const authRes = await fetch(
-              `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`,
-              {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: cleanEmail, password, returnSecureToken: true }),
-              }
-            );
+            const authRes = await verifyPasswordViaIdentityToolkit(apiKey, cleanEmail, password);
             if (authRes.ok) {
               passwordMatches = true;
             }
           }
         }
-      } catch {}
+      } catch {
+        // non-fatal
+      }
     }
 
     if (passwordMatches) {
@@ -274,28 +586,23 @@ export async function authenticateServerUser(
     }
   }
 
-  // 2. Verificação de usuários institucionais (Tenant Admins, Directores, Docentes, Estudantes, etc.) no Firestore
   try {
-    const db = getFirestoreInstance();
     const querySnap = await db.collection('users').where('email', '==', cleanEmail).limit(1).get();
 
     if (!querySnap.empty) {
       const userDoc = querySnap.docs[0];
       const data = userDoc.data();
 
-      // Verificação de conta ativa
       if (data.ativo === false) {
         return null;
       }
 
       let passwordMatches = false;
 
-      // A. Senha criptografada com PBKDF2
       if (data.passwordHash && data.salt) {
         passwordMatches = verifyPasswordHash(password, data.salt, data.passwordHash);
       }
 
-      // B. Senha temporária no primeiro acesso
       if (!passwordMatches && (data.senha_temporaria || data.senha)) {
         if (data.senha_temporaria && timingSafeCompare(password, data.senha_temporaria)) {
           passwordMatches = true;
@@ -325,22 +632,15 @@ export async function authenticateServerUser(
     console.warn('[authenticateServerUser] Consulta Firestore:', err);
   }
 
-  // 3. Fallback: Autenticação direta via Firebase Authentication Identity Toolkit
   try {
     const cfgPath = path.join(process.cwd(), 'firebase-applet-config.json');
     if (fs.existsSync(cfgPath)) {
       const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-      if (cfg.apiKey) {
-        const authRes = await fetch(
-          `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${cfg.apiKey}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: cleanEmail, password, returnSecureToken: true }),
-          }
-        );
-        if (authRes.ok) {
-          const authData = await authRes.json();
+      const apiKey = process.env.FIREBASE_API_KEY || cfg.apiKey;
+      if (apiKey) {
+        const authRes = await verifyPasswordViaIdentityToolkit(apiKey, cleanEmail, password);
+        if (authRes.ok && authRes.data) {
+          const authData = authRes.data;
           let isSuper = false;
           try {
             const superSnap = await db.collection('superusers').where('email', '==', cleanEmail).limit(1).get();
@@ -355,7 +655,9 @@ export async function authenticateServerUser(
                 isSuper = true;
               }
             }
-          } catch {}
+          } catch {
+            // non-fatal
+          }
           return {
             id: authData.localId || 'user_' + Date.now(),
             email: cleanEmail,
@@ -369,7 +671,7 @@ export async function authenticateServerUser(
         }
       }
     }
-  } catch (fbErr) {
+  } catch {
     // Non-fatal
   }
 

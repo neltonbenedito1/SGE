@@ -1,6 +1,7 @@
 import { logSystemError } from './errorLoggingService';
 import { sendGmailViaRestApi } from '../lib/emailUtils';
 import { ErrorOrigem } from '../types';
+import { buildAuthHeaders, watchAsyncJob } from '../lib/asyncJobsClient';
 
 export interface EmailDispatchOptions {
   to: string;
@@ -10,12 +11,18 @@ export interface EmailDispatchOptions {
   gmailToken?: string | null;
   origin?: ErrorOrigem;
   actionName?: string;
+  async?: boolean;
+  tenantId?: string;
+  idempotencyKey?: string;
 }
 
 export interface EmailDispatchResult {
   success: boolean;
   method: 'gmail_api' | 'smtp' | 'simulated';
   simulated: boolean;
+  queued?: boolean;
+  jobId?: string;
+  status?: string;
   message: string;
   queueId?: string;
   warning?: string;
@@ -34,7 +41,10 @@ export async function dispatchSystemEmail(options: EmailDispatchOptions): Promis
     smtpConfig,
     gmailToken,
     origin = 'super_admin',
-    actionName = 'Envio de E-mail'
+    actionName = 'Envio de E-mail',
+    async: useAsync = true,
+    tenantId = 'global',
+    idempotencyKey,
   } = options;
 
   const resolvedGmailToken = gmailToken || smtpConfig?.gmail_token || localStorage.getItem('superadmin_gmail_oauth_token');
@@ -70,25 +80,44 @@ export async function dispatchSystemEmail(options: EmailDispatchOptions): Promis
     }
   }
 
-  // Layer 2: Express Backend (/api/send-email)
+  // Layer 2: Express Backend (/api/send-email -> HTTP 202 fila assíncrona)
   try {
+    const headers = await buildAuthHeaders();
     const res = await fetch("/api/send-email", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
+      credentials: "include",
       body: JSON.stringify({
         smtpConfig,
         to,
         subject,
-        body
+        body,
+        async: useAsync,
+        idempotencyKey,
       })
     });
 
-    if (res.ok) {
+    if (res.ok || res.status === 202) {
       const data = await res.json();
+      if (data.queued && data.jobId) {
+        watchAsyncJob({
+          id: data.jobId,
+          tenant_id: tenantId,
+          type: 'email_send',
+          title: `Envio de e-mail: ${to}`,
+          status: data.status || 'pendente',
+          progress: 15,
+          progress_message: 'E-mail na fila para transmissão SMTP...',
+          created_at: new Date().toISOString(),
+        });
+      }
       return {
         success: true,
         method: data.simulated ? 'simulated' : 'smtp',
         simulated: !!data.simulated,
+        queued: !!data.queued,
+        jobId: data.jobId,
+        status: data.status,
         message: data.message || 'E-mail processado com sucesso.',
         queueId: data.queueId
       };

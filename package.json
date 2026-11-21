@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
+    "worker": "tsx server/workers/asyncWorkerEntry.ts",
     "start": "node server.ts",
-    "build": "vite build && rm -rf dist/assets/aistudio && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "vite build && rm -rf dist/assets/aistudio && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && esbuild server/workers/asyncWorkerEntry.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/worker.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",

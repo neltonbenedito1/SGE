@@ -50,6 +50,7 @@ import {
 } from '../types';
 import { sendAppNotification } from '../services/notificationDispatcher';
 import { useLanguage } from '../hooks/useLanguage';
+import { enqueuePendingLessonNotification, upsertTrackedJob } from '../lib/asyncJobsClient';
 
 export interface PlanoAulasModuleProps {
   tenantId: string;
@@ -65,6 +66,10 @@ export interface PlanoAulasModuleProps {
   currentAcademicYear?: string;
   onAuditLog?: (action: string, entity: string, entityId: string, details: string) => void;
   showNotification?: (msg: string, type?: 'sucesso' | 'erro' | 'info') => void;
+  canCreate?: boolean;
+  canEdit?: boolean;
+  canDelete?: boolean;
+  canApprove?: boolean;
 }
 
 export const PlanoAulasModule: React.FC<PlanoAulasModuleProps> = ({
@@ -80,7 +85,11 @@ export const PlanoAulasModule: React.FC<PlanoAulasModuleProps> = ({
   tenantUsers = [],
   currentAcademicYear = '2026',
   onAuditLog,
-  showNotification
+  showNotification,
+  canCreate,
+  canEdit,
+  canDelete,
+  canApprove
 }) => {
   const { t } = useLanguage();
 
@@ -93,9 +102,13 @@ export const PlanoAulasModule: React.FC<PlanoAulasModuleProps> = ({
   const isPai = effectiveRole === 'pai' || effectiveRole.includes('encarregado');
   const isDocente = effectiveRole === 'docente' || effectiveRole.includes('prof');
 
+  const effectiveCanCreate = canCreate !== undefined ? canCreate : ((isDocente && !isSuperAdmin) || isSuperAdmin || isSchoolDirector || isSecretaria);
+  const effectiveCanEdit = canEdit !== undefined ? canEdit : (isDocente || isSuperAdmin || isSchoolDirector);
+  const effectiveCanDelete = canDelete !== undefined ? canDelete : (isDocente || isSuperAdmin || isSchoolDirector);
+
   // Can this role trigger notifications for skipped pending classes?
   // Only director da escola, director pedagógico, secretaria geral (and super admin)
-  const canSendPendingNotification = isSuperAdmin || isSchoolDirector || isSecretaria;
+  const canSendPendingNotification = isSuperAdmin || isSchoolDirector || isSecretaria || !!canApprove;
 
   // Find docente record corresponding to logged-in user if docente
   const currentDocenteRecord = useMemo(() => {
@@ -403,9 +416,14 @@ export const PlanoAulasModule: React.FC<PlanoAulasModuleProps> = ({
   };
 
   // Open Create Modal
-  const handleOpenCreateModal = () => {
+  const handleOpenCreateModal = (overrideDocenteId?: string) => {
+    if (!effectiveCanCreate) {
+      if (showNotification) showNotification('Não tem permissão para criar matérias no Plano de Aulas.', 'erro');
+      return;
+    }
+    const targetDocenteId = overrideDocenteId || activeTeacherId || currentDocenteRecord?.id || teachers[0]?.id || '';
     setEditingItem(null);
-    setFormDocenteId(activeTeacherId || currentDocenteRecord?.id || teachers[0]?.id || '');
+    setFormDocenteId(targetDocenteId);
     setFormDisciplinaId(teacherDisciplines[0]?.id || baseDisciplines[0]?.id || '');
     setFormTurmaId(turmas[0]?.id || '');
     setFormTopico('');
@@ -414,7 +432,7 @@ export const PlanoAulasModule: React.FC<PlanoAulasModuleProps> = ({
     setFormAnoLectivo(currentAcademicYear);
     setFormDataPrevista('');
     // Auto-calculate next order
-    const teacherItems = planoAulas.filter(p => p.docenteId === activeTeacherId);
+    const teacherItems = planoAulas.filter(p => p.docenteId === targetDocenteId);
     const maxOrder = teacherItems.reduce((max, cur) => Math.max(max, cur.ordem || 0), 0);
     setFormOrdem(maxOrder + 1);
     setIsModalOpen(true);
@@ -422,6 +440,10 @@ export const PlanoAulasModule: React.FC<PlanoAulasModuleProps> = ({
 
   // Open Edit Modal
   const handleOpenEditModal = (item: PlanoAula) => {
+    if (!effectiveCanEdit) {
+      if (showNotification) showNotification('Não tem permissão para editar matérias no Plano de Aulas.', 'erro');
+      return;
+    }
     if (item.status !== 'pendente') {
       if (showNotification) showNotification('Apenas matérias com status Pendente podem ser editadas.', 'info');
       return;
@@ -442,6 +464,14 @@ export const PlanoAulasModule: React.FC<PlanoAulasModuleProps> = ({
   // Save (Create or Update) Topic
   const handleSaveTopic = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (editingItem && !effectiveCanEdit) {
+      if (showNotification) showNotification('Não tem permissão para editar matérias no Plano de Aulas.', 'erro');
+      return;
+    }
+    if (!editingItem && !effectiveCanCreate) {
+      if (showNotification) showNotification('Não tem permissão para criar matérias no Plano de Aulas.', 'erro');
+      return;
+    }
     if (!formTopico.trim()) {
       if (showNotification) showNotification('Por favor, informe o tópico da matéria.', 'erro');
       return;
@@ -514,6 +544,10 @@ export const PlanoAulasModule: React.FC<PlanoAulasModuleProps> = ({
 
   // Toggle status (Mark as Lecionado / Revert to Pendente)
   const handleToggleStatus = async (item: PlanoAula) => {
+    if (!effectiveCanEdit) {
+      if (showNotification) showNotification('Não tem permissão para alterar o estado das matérias.', 'erro');
+      return;
+    }
     const newStatus: StatusPlanoAula = item.status === 'pendente' ? 'lecionado' : 'pendente';
     const now = new Date().toISOString();
 
@@ -579,6 +613,11 @@ export const PlanoAulasModule: React.FC<PlanoAulasModuleProps> = ({
   // Delete Item (only if pending)
   const handleDeleteItem = async () => {
     if (!isDeletingItem) return;
+    if (!effectiveCanDelete) {
+      if (showNotification) showNotification('Não tem permissão para eliminar matérias no Plano de Aulas.', 'erro');
+      setIsDeletingItem(null);
+      return;
+    }
     if (isDeletingItem.status !== 'pendente') {
       if (showNotification) showNotification('Apenas matérias com status Pendente podem ser eliminadas.', 'erro');
       setIsDeletingItem(null);
@@ -598,79 +637,136 @@ export const PlanoAulasModule: React.FC<PlanoAulasModuleProps> = ({
     }
   };
 
-  // Trigger Notification for Skipped Pending Lesson
+  // Trigger Notification for Skipped Pending Lesson (Assíncrono + Idempotente)
   const handleConfirmPendingNotification = async () => {
     if (!notifyingItem) return;
 
-    const teacher = teachers.find(t => t.id === notifyingItem.docenteId);
+    const itemSnapshot = notifyingItem;
+    const teacher = teachers.find(t => t.id === itemSnapshot.docenteId);
     const teacherUser = tenantUsers.find(u => u.id === teacher?.user_id);
-    const targetUserId = teacherUser?.id || teacher?.user_id || notifyingItem.docenteId;
+    const targetUserId = teacherUser?.id || teacher?.user_id || itemSnapshot.docenteId;
     const teacherName = teacherUser?.nome || teacher?.nome || 'Docente';
-    const discObj = classes.find(c => c.disciplina_id === notifyingItem.disciplinaId || c.id === notifyingItem.disciplinaId);
+    const discObj = classes.find(c => c.disciplina_id === itemSnapshot.disciplinaId || c.id === itemSnapshot.disciplinaId);
     const discNome = discObj?.nome || 'Disciplina';
+    const periodoLabel = `${itemSnapshot.periodoNumero}.º ${itemSnapshot.periodoTipo === 'semestre' ? 'Semestre' : 'Trimestre'}`;
 
+    // Fecha o modal imediatamente para não bloquear a interface
+    setNotifyingItem(null);
+
+    if (showNotification) {
+      showNotification(
+        'Notificação de aula pendente enfileirada para processamento.',
+        'info'
+      );
+    }
+
+    const queued = await enqueuePendingLessonNotification({
+      tenantId,
+      planoAulaId: itemSnapshot.id,
+      docenteId: itemSnapshot.docenteId,
+      targetUserId,
+      teacherName,
+      teacherEmail: teacherUser?.email || '',
+      disciplinaId: itemSnapshot.disciplinaId,
+      disciplinaNome: discNome,
+      topico: itemSnapshot.topico,
+      periodoLabel,
+      dataPrevista: itemSnapshot.dataPrevista || '',
+      createdByName: loggedInUser?.nome || loggedInUser?.email || 'Administração',
+    });
+
+    if (queued.queuedViaApi) {
+      return;
+    }
+
+    // Fallback resiliente no cliente (idempotente por dedup_key) caso backend não esteja acessível
+    const fallbackJobId = `local_notif_${itemSnapshot.id}`;
     const now = new Date().toISOString();
+    upsertTrackedJob({
+      id: fallbackJobId,
+      tenant_id: tenantId,
+      type: 'bulk_notification',
+      title: `Notificar Aula Pendente: ${itemSnapshot.topico}`,
+      status: 'em_processamento',
+      progress: 40,
+      progress_message: 'A notificar docente e registar actividade...',
+      created_at: now,
+      localFallback: true,
+    });
 
     try {
-      // 1. Send Notification to Teacher
       await sendAppNotification({
         tenant_id: tenantId,
         destinatario_id: targetUserId,
         destinatario_role: 'docente',
         destinatario_email: teacherUser?.email || '',
         usuario_id: targetUserId,
-        docente_id: notifyingItem.docenteId,
-        disciplina_id: notifyingItem.disciplinaId,
+        docente_id: itemSnapshot.docenteId,
+        disciplina_id: itemSnapshot.disciplinaId,
         disciplina_nome: discNome,
         titulo: 'Alerta: Aula Pendente no Plano de Aulas',
-        mensagem: `A aula '${notifyingItem.topico}' de ${discNome} está pendente e já foi leccionada uma aula posterior.`,
+        mensagem: `A aula '${itemSnapshot.topico}' de ${discNome} está pendente e já foi leccionada uma aula posterior.`,
         tipo: 'alerta',
         modulo: 'plano_aulas',
         link: 'plano_aulas'
       });
 
-      // 2. Automatically create an Activity in "Actividades"
-      const suggestedDeadline = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-      const periodoLabel = `${notifyingItem.periodoNumero}.º ${notifyingItem.periodoTipo === 'semestre' ? 'Semestre' : 'Trimestre'}`;
+      const dedupKey = `plano_aula_${itemSnapshot.id}`;
+      const existingAct = await getDocs(
+        query(collection(db, 'atividades'), where('tenant_id', '==', tenantId), where('dedup_key', '==', dedupKey))
+      );
 
-      const newActivity = {
-        tenant_id: tenantId,
-        titulo: `Regularizar aula pendente: ${notifyingItem.topico}`,
-        detalhes: `Disciplina: ${discNome} | Período: ${periodoLabel} | Data Prevista: ${notifyingItem.dataPrevista || 'N/A'}. A aula foi ultrapassada por uma posterior leccionada e necessita de regularização.`,
-        responsavel_id: targetUserId,
-        responsavel_nome: teacherName,
-        responsavel_cargo: 'Docente',
-        responsavel_email: teacherUser?.email || '',
-        severidade: 'Médio',
-        status: 'Pendente',
-        criado_por_id: loggedInUser?.id || 'admin',
-        criado_por_nome: loggedInUser?.nome || 'Direcção / Secretaria',
-        data_criacao: now,
-        data_prazo: suggestedDeadline,
-        categoria_atribuicao: 'Professores',
-        modulo_origem: 'Plano de Aulas',
-        dedup_key: `plano_aula_${notifyingItem.id}`,
-        plano_aula_id: notifyingItem.id
-      };
+      if (existingAct.empty) {
+        const suggestedDeadline = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        const newActivity = {
+          tenant_id: tenantId,
+          titulo: `Regularizar aula pendente: ${itemSnapshot.topico}`,
+          detalhes: `Disciplina: ${discNome} | Período: ${periodoLabel} | Data Prevista: ${itemSnapshot.dataPrevista || 'N/A'}. A aula foi ultrapassada por uma posterior leccionada e necessita de regularização.`,
+          responsavel_id: targetUserId,
+          responsavel_nome: teacherName,
+          responsavel_cargo: 'Docente',
+          responsavel_email: teacherUser?.email || '',
+          severidade: 'Médio',
+          status: 'Pendente',
+          criado_por_id: loggedInUser?.id || 'admin',
+          criado_por_nome: loggedInUser?.nome || 'Direcção / Secretaria',
+          data_criacao: now,
+          data_prazo: suggestedDeadline,
+          categoria_atribuicao: 'Professores',
+          modulo_origem: 'Plano de Aulas',
+          dedup_key: dedupKey,
+          plano_aula_id: itemSnapshot.id
+        };
+        await addDoc(collection(db, 'atividades'), newActivity);
+      }
 
-      await addDoc(collection(db, 'atividades'), newActivity);
-
-      // 3. Mark the topic as notified
-      await updateDoc(doc(db, 'planoAulas', notifyingItem.id), {
+      await updateDoc(doc(db, 'planoAulas', itemSnapshot.id), {
         notificadoEm: now,
         notificadoPor: loggedInUser?.nome || loggedInUser?.email || 'Administração',
         updatedAt: now
       });
 
-      // 4. Audit Log
       if (onAuditLog) {
         onAuditLog(
           'notificar_aula_pendente',
           'PlanoAula',
-          notifyingItem.id,
-          `Notificou docente ${teacherName} sobre aula pendente saltada: ${notifyingItem.topico}`
+          itemSnapshot.id,
+          `Notificou docente ${teacherName} sobre aula pendente saltada: ${itemSnapshot.topico}`
         );
       }
+
+      upsertTrackedJob({
+        id: fallbackJobId,
+        tenant_id: tenantId,
+        type: 'bulk_notification',
+        title: `Notificar Aula Pendente: ${itemSnapshot.topico}`,
+        status: 'concluido',
+        progress: 100,
+        progress_message: 'Docente notificado e actividade criada.',
+        created_at: now,
+        completed_at: new Date().toISOString(),
+        localFallback: true,
+      });
 
       if (showNotification) {
         showNotification(
@@ -678,9 +774,19 @@ export const PlanoAulasModule: React.FC<PlanoAulasModuleProps> = ({
           'sucesso'
         );
       }
-
-      setNotifyingItem(null);
     } catch (err: any) {
+      upsertTrackedJob({
+        id: fallbackJobId,
+        tenant_id: tenantId,
+        type: 'bulk_notification',
+        title: `Notificar Aula Pendente: ${itemSnapshot.topico}`,
+        status: 'dead_letter',
+        progress: 100,
+        progress_message: err?.message || 'Erro ao enviar notificação.',
+        last_error: err?.message || String(err),
+        created_at: now,
+        localFallback: true,
+      });
       console.error('[PlanoAulasModule] Erro ao notificar aula pendente:', err);
       if (showNotification) showNotification(`Erro ao notificar: ${err.message || err}`, 'erro');
     }
@@ -737,14 +843,16 @@ export const PlanoAulasModule: React.FC<PlanoAulasModuleProps> = ({
               <span className="text-xs font-bold px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-100 font-mono">
                 📅 {currentAcademicYear}
               </span>
-              <button
-                id="btn_adicionar_materia"
-                onClick={handleOpenCreateModal}
-                className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2.5 px-4 rounded-xl flex items-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-md"
-              >
-                <Plus className="w-4 h-4" />
-                {t('adicionar_materia') || 'Adicionar Matéria'}
-              </button>
+              {effectiveCanCreate && (
+                <button
+                  id="btn_adicionar_materia"
+                  onClick={() => handleOpenCreateModal()}
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2.5 px-4 rounded-xl flex items-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-md"
+                >
+                  <Plus className="w-4 h-4" />
+                  {t('adicionar_materia') || 'Adicionar Matéria'}
+                </button>
+              )}
             </div>
           </div>
 
@@ -848,12 +956,14 @@ export const PlanoAulasModule: React.FC<PlanoAulasModuleProps> = ({
               <p className="text-xs text-slate-400 max-w-sm mx-auto">
                 {t('nenhuma_materia_desc') || 'Comece por registar os tópicos e matérias a leccionar ao longo do período lectivo.'}
               </p>
-              <button
-                onClick={handleOpenCreateModal}
-                className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" /> {t('adicionar_materia') || 'Adicionar Matéria'}
-              </button>
+              {effectiveCanCreate && (
+                <button
+                  onClick={() => handleOpenCreateModal()}
+                  className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" /> {t('adicionar_materia') || 'Adicionar Matéria'}
+                </button>
+              )}
             </div>
           ) : (
             <>
@@ -918,20 +1028,22 @@ export const PlanoAulasModule: React.FC<PlanoAulasModuleProps> = ({
                         <td className="p-3.5 text-right sticky right-0 bg-white">
                           <div className="flex items-center justify-end gap-1.5">
                             {/* Toggle Lecionado / Pendente */}
-                            <button
-                              onClick={() => handleToggleStatus(item)}
-                              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-                                item.status === 'lecionado'
-                                  ? 'text-emerald-600 hover:bg-emerald-50'
-                                  : 'text-slate-400 hover:bg-slate-100 hover:text-emerald-600'
-                              }`}
-                              title={item.status === 'lecionado' ? t('desmarcar_lecionado') : t('marcar_lecionado')}
-                            >
-                              <Check className="w-4 h-4" />
-                            </button>
+                            {effectiveCanEdit && (
+                              <button
+                                onClick={() => handleToggleStatus(item)}
+                                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                                  item.status === 'lecionado'
+                                    ? 'text-emerald-600 hover:bg-emerald-50'
+                                    : 'text-slate-400 hover:bg-slate-100 hover:text-emerald-600'
+                                }`}
+                                title={item.status === 'lecionado' ? t('desmarcar_lecionado') : t('marcar_lecionado')}
+                              >
+                                <Check className="w-4 h-4" />
+                              </button>
+                            )}
 
                             {/* Edit (only if pending) */}
-                            {item.status === 'pendente' && (
+                            {effectiveCanEdit && item.status === 'pendente' && (
                               <button
                                 onClick={() => handleOpenEditModal(item)}
                                 className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
@@ -942,7 +1054,7 @@ export const PlanoAulasModule: React.FC<PlanoAulasModuleProps> = ({
                             )}
 
                             {/* Delete (only if pending) */}
-                            {item.status === 'pendente' && (
+                            {effectiveCanDelete && item.status === 'pendente' && (
                               <button
                                 onClick={() => setIsDeletingItem(item)}
                                 className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
@@ -997,20 +1109,22 @@ export const PlanoAulasModule: React.FC<PlanoAulasModuleProps> = ({
                     </div>
 
                     <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-                      <button
-                        onClick={() => handleToggleStatus(item)}
-                        className={`text-xs font-bold py-1.5 px-3 rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors ${
-                          item.status === 'lecionado'
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                        }`}
-                      >
-                        <Check className="w-3.5 h-3.5" />
-                        {item.status === 'lecionado' ? 'Lecionado' : 'Marcar Lecionado'}
-                      </button>
+                      {effectiveCanEdit ? (
+                        <button
+                          onClick={() => handleToggleStatus(item)}
+                          className={`text-xs font-bold py-1.5 px-3 rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors ${
+                            item.status === 'lecionado'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                          }`}
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          {item.status === 'lecionado' ? 'Lecionado' : 'Marcar Lecionado'}
+                        </button>
+                      ) : <span />}
 
                       <div className="flex items-center gap-1">
-                        {item.status === 'pendente' && (
+                        {effectiveCanEdit && item.status === 'pendente' && (
                           <button
                             onClick={() => handleOpenEditModal(item)}
                             className="p-2 text-slate-500 hover:text-indigo-600 rounded-lg hover:bg-slate-100 cursor-pointer"
@@ -1018,7 +1132,7 @@ export const PlanoAulasModule: React.FC<PlanoAulasModuleProps> = ({
                             <Edit3 className="w-4 h-4" />
                           </button>
                         )}
-                        {item.status === 'pendente' && (
+                        {effectiveCanDelete && item.status === 'pendente' && (
                           <button
                             onClick={() => setIsDeletingItem(item)}
                             className="p-2 text-slate-500 hover:text-rose-600 rounded-lg hover:bg-slate-100 cursor-pointer"
@@ -1055,10 +1169,20 @@ export const PlanoAulasModule: React.FC<PlanoAulasModuleProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs font-bold px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-100 font-mono">
                 Ano Lectivo: {currentAcademicYear}
               </span>
+              {effectiveCanCreate && (
+                <button
+                  id="btn_adicionar_materia_admin"
+                  onClick={() => handleOpenCreateModal()}
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-4 rounded-xl flex items-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-md"
+                >
+                  <Plus className="w-4 h-4" />
+                  {t('adicionar_materia') || 'Adicionar Matéria'}
+                </button>
+              )}
             </div>
           </div>
 
@@ -1195,13 +1319,25 @@ export const PlanoAulasModule: React.FC<PlanoAulasModuleProps> = ({
                   </div>
                 </div>
 
-                <button
-                  onClick={() => setSelectedTeacherForSlideOver(null)}
-                  className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
-                  title="Fechar (ESC)"
-                >
-                  <X className="w-5 h-5" />
-                </button>
+                <div className="flex items-center gap-2">
+                  {effectiveCanCreate && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenCreateModal(selectedTeacherForSlideOver.id)}
+                      className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3 rounded-xl flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      {t('adicionar_materia') || 'Adicionar Matéria'}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setSelectedTeacherForSlideOver(null)}
+                    className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+                    title="Fechar (ESC)"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
               </div>
 
               {/* Slide-over Filters Bar */}
@@ -1291,33 +1427,71 @@ export const PlanoAulasModule: React.FC<PlanoAulasModuleProps> = ({
                             {item.dataLecionada && ` • Lecionado em: ${item.dataLecionada}`}
                           </div>
 
-                          {/* NOTIFY BUTTON (Visible only to administrative roles, NOT to students/parents) */}
-                          {canSendPendingNotification && item.status === 'pendente' && (
-                            <div className="relative group">
+                          <div className="flex items-center gap-2 flex-wrap justify-end">
+                            {effectiveCanEdit && (
                               <button
-                                disabled={!notifyCheck.allowed || isAlreadyNotified}
-                                onClick={() => setNotifyingItem(item)}
-                                className={`text-xs font-bold py-1.5 px-3 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
-                                  isAlreadyNotified
-                                    ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                                    : notifyCheck.allowed
-                                    ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-xs'
-                                    : 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
+                                type="button"
+                                onClick={() => handleToggleStatus(item)}
+                                className={`text-[11px] font-bold py-1 px-2.5 rounded-lg flex items-center gap-1 cursor-pointer transition-colors ${
+                                  item.status === 'lecionado'
+                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                    : 'bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 border border-slate-200'
                                 }`}
+                                title={item.status === 'lecionado' ? t('desmarcar_lecionado') : t('marcar_lecionado')}
                               >
-                                <Bell className="w-3.5 h-3.5" />
-                                {isAlreadyNotified 
-                                  ? (t('notificado_em', { data: new Date(item.notificadoEm!).toLocaleDateString('pt-PT') }) || 'Notificado') 
-                                  : (t('notificar_aula_pendente') || 'Notificar Aula Pendente')}
+                                <Check className="w-3 h-3" />
+                                {item.status === 'lecionado' ? 'Lecionado' : 'Marcar Lecionado'}
                               </button>
+                            )}
+                            {effectiveCanEdit && item.status === 'pendente' && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditModal(item)}
+                                className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer border border-slate-200"
+                                title={t('editar_materia') || 'Editar'}
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            {effectiveCanDelete && item.status === 'pendente' && (
+                              <button
+                                type="button"
+                                onClick={() => setIsDeletingItem(item)}
+                                className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer border border-slate-200"
+                                title={t('eliminar_materia') || 'Eliminar'}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
 
-                              {!notifyCheck.allowed && !isAlreadyNotified && (
-                                <div className="absolute right-0 bottom-full mb-1.5 hidden group-hover:block w-64 p-2 bg-slate-900 text-white text-[11px] rounded-lg shadow-xl z-20">
-                                  {notifyCheck.reason}
-                                </div>
-                              )}
-                            </div>
-                          )}
+                            {/* NOTIFY BUTTON (Visible only to administrative roles, NOT to students/parents) */}
+                            {canSendPendingNotification && item.status === 'pendente' && (
+                              <div className="relative group">
+                                <button
+                                  disabled={!notifyCheck.allowed || isAlreadyNotified}
+                                  onClick={() => setNotifyingItem(item)}
+                                  className={`text-xs font-bold py-1.5 px-3 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
+                                    isAlreadyNotified
+                                      ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                                      : notifyCheck.allowed
+                                      ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-xs'
+                                      : 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
+                                  }`}
+                                >
+                                  <Bell className="w-3.5 h-3.5" />
+                                  {isAlreadyNotified 
+                                    ? (t('notificado_em', { data: new Date(item.notificadoEm!).toLocaleDateString('pt-PT') }) || 'Notificado') 
+                                    : (t('notificar_aula_pendente') || 'Notificar Aula Pendente')}
+                                </button>
+
+                                {!notifyCheck.allowed && !isAlreadyNotified && (
+                                  <div className="absolute right-0 bottom-full mb-1.5 hidden group-hover:block w-64 p-2 bg-slate-900 text-white text-[11px] rounded-lg shadow-xl z-20">
+                                    {notifyCheck.reason}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );

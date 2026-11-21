@@ -191,9 +191,25 @@ export default {
       return app.fetch(request, env, ctx);
     }
 
-    // Static assets fallback with SPA routing
+    // Static assets fallback with SPA routing + CDN Edge Cache-Control headers
     if (env.ASSETS) {
-      return env.ASSETS.fetch(request);
+      const assetRes = await env.ASSETS.fetch(request);
+      const headers = new Headers(assetRes.headers);
+      const path = url.pathname;
+
+      if (path.startsWith('/assets/')) {
+        headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+      } else if (/\.(png|jpe?g|webp|svg|gif|ico|woff2?|ttf|pdf)$/i.test(path)) {
+        headers.set('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
+      } else if (path === '/' || path === '/index.html' || path === '/sw.js' || path === '/manifest.json') {
+        headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+      }
+
+      return new Response(assetRes.body, {
+        status: assetRes.status,
+        statusText: assetRes.statusText,
+        headers,
+      });
     }
 
     return new Response('Not Found', { status: 404 });

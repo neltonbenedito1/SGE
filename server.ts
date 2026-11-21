@@ -14,7 +14,6 @@ import cookieParser from "cookie-parser";
 import crypto from "crypto";
 import helmet from "helmet";
 import cors from "cors";
-import rateLimit from "express-rate-limit";
 import { initializeApp, getApps, App } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
@@ -34,14 +33,16 @@ import { generatePdfAccessToken, verifyPdfAccessToken } from "./server/security/
 import {
   authenticateServerUser,
   verifyCsrfToken,
-  serverSessions,
   SESSION_INACTIVITY_TIMEOUT_MS,
   canManageUserPassword,
   getRoleLevel,
   hashPasswordPBKDF2,
   verifyPasswordHash,
   timingSafeCompare,
+  createSession,
   getSession,
+  deleteSession,
+  revokeUserSessions,
 } from "./server/security/authManager";
 import {
   deleteTenantServer,
@@ -74,13 +75,58 @@ import {
   PdfAccessRequestSchema,
   SessionRevokeSchema,
   BatchDeleteTenantsSchema,
+  EnqueueJobSchema,
+  BulkNotificationSchema,
+  ReportGenerateAsyncSchema,
+  PdfExportAsyncSchema,
 } from "./src/shared/schemas";
 import { validateFileMagicBytes } from "./server/security/fileValidator";
-import { logSecurityEvent } from "./server/security/logger";
+import { logSecurityEvent, requestContextStorage } from "./server/security/logger";
 import { validatePasswordPolicy } from "./src/shared/passwordPolicy";
+import {
+  enqueueJob,
+  getJobById,
+  listTenantJobs,
+  retryDeadLetterJob,
+  startAsyncWorkerLoop,
+  stopAsyncWorkerLoop,
+  getAsyncWorkerStats,
+  getQueueMetricsSnapshot,
+  asyncJobEvents,
+} from "./server/services/asyncJobQueue";
+import {
+  recordHttpMetric,
+  recordSlowQuery,
+  getObservabilitySnapshot,
+  renderPrometheusMetrics,
+  stopObservabilityMonitors,
+  SLO_TARGETS,
+} from "./server/services/observability";
+import { registerAllAsyncJobHandlers } from "./server/services/asyncJobHandlers";
+import {
+  createTenantRateLimiter,
+  getTenantEffectiveQuota,
+} from "./server/middleware/tenantRateLimiter";
+import {
+  stripeBreaker,
+  geminiBreaker,
+  smtpBreaker,
+  CircuitOpenError,
+  getCircuitBreakersSnapshot,
+} from "./server/services/circuitBreaker";
+import {
+  checkLoginLockout,
+  recordFailedLoginAttempt,
+  clearFailedLoginAttempts,
+  claimStripeEventIdempotently,
+  consumeDistributedTenantAiQuota,
+} from "./server/services/distributedStateStore";
 
 const app = express();
 const PORT = 3000;
+const EMBEDDED_WORKER_ENABLED = process.env.ENABLE_EMBEDDED_WORKER !== "false";
+let isShuttingDown = false;
+let inFlightRequests = 0;
 
 // Remove fingerprint header
 app.disable("x-powered-by");
@@ -100,10 +146,9 @@ if (process.env.NODE_ENV === "production") {
 }
 
 // ============================================================================
-// 1. SECURITY HEADERS, CSP, CORS & REQUEST TRACING
+// 1. SECURITY HEADERS, CSP, CORS & REQUEST TRACING + STRUCTURED LOG CONTEXT
 // ============================================================================
 
-// Helmet with CSP & HSTS (Strict-Transport-Security >= 1 year + subdomains)
 app.use(
   helmet({
     contentSecurityPolicy: {
@@ -130,13 +175,11 @@ app.use(
   })
 );
 
-// Permissions-Policy Header
 app.use((req: Request, res: Response, next: NextFunction) => {
   res.setHeader("Permissions-Policy", "camera=(self), microphone=(), geolocation=(self)");
   next();
 });
 
-// CORS: Whitelist configured via CORS_ALLOWED_ORIGINS and APP_URL
 const configuredOrigins = (process.env.CORS_ALLOWED_ORIGINS || "")
   .split(",")
   .map((s) => s.trim())
@@ -173,75 +216,82 @@ app.use(
   })
 );
 
-// Request Tracing (X-Request-ID)
+// Graceful Drain + Request Tracing (X-Request-ID + AsyncLocalStorage + Access Logs Estruturados)
 app.use((req: Request, res: Response, next: NextFunction) => {
+  if (isShuttingDown && req.path.startsWith("/api")) {
+    res.setHeader("Connection", "close");
+    return res.status(503).json({
+      code: "server_shutting_down",
+      error: "Servidor em reinicialização controlada. Repita o pedido dentro de segundos.",
+    });
+  }
+
   const reqId = (req.headers["x-request-id"] as string) || crypto.randomUUID();
   req.requestId = reqId;
   res.setHeader("X-Request-ID", reqId);
-  next();
+
+  inFlightRequests += 1;
+  const startHr = process.hrtime.bigint();
+  let countedDown = false;
+  const finalizeInFlight = () => {
+    if (!countedDown) {
+      countedDown = true;
+      inFlightRequests = Math.max(0, inFlightRequests - 1);
+    }
+  };
+
+  requestContextStorage.run(
+    {
+      requestId: reqId,
+      method: req.method,
+      path: req.path,
+    },
+    () => {
+      res.on("finish", () => {
+        finalizeInFlight();
+        if (req.path.startsWith("/api") || req.path === "/health" || req.path === "/ready") {
+          const durationMs = Number(process.hrtime.bigint() - startHr) / 1_000_000;
+          recordHttpMetric({
+            method: req.method,
+            path: req.path,
+            statusCode: res.statusCode,
+            durationMs,
+            tenantId: req.user?.tenant_id || "anonymous",
+            requestId: reqId,
+          });
+          const level = res.statusCode >= 500 ? "ERROR" : res.statusCode === 429 ? "WARN" : "INFO";
+          logSecurityEvent(level, "http_request_completed", {
+            method: req.method,
+            path: req.path,
+            statusCode: res.statusCode,
+            durationMs: Number(durationMs.toFixed(2)),
+            tenantId: req.user?.tenant_id || "anonymous",
+            userId: req.user?.uid || "anonymous",
+          });
+        }
+      });
+      res.on("close", finalizeInFlight);
+      next();
+    }
+  );
 });
 
 // Cookie Parser
 app.use(cookieParser());
 
 // ============================================================================
-// 2. RATE LIMITING
+// 2. RATE LIMITING POR TENANT, UTILIZADOR E QUOTA DE PLANO (DISTRIBUÍDO)
 // ============================================================================
 
-const rateLimitValidationConfig = {
-  xForwardedForHeader: false,
-  forwardedHeader: false,
-  default: true,
-};
-
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 500,
-  standardHeaders: true,
-  legacyHeaders: false,
-  validate: rateLimitValidationConfig,
-  handler: (req: Request, res: Response) => {
-    res.status(429).json({ error: "Muitas requisições. Tente novamente mais tarde." });
-  },
-});
-
-const aiLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000,
-  max: 30,
-  standardHeaders: true,
-  legacyHeaders: false,
-  validate: rateLimitValidationConfig,
-  handler: (req: Request, res: Response) => {
-    res.status(429).json({ error: "Limite de requisições de IA atingido. Aguarde um minuto." });
-  },
-});
-
-const emailLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000,
-  max: 30,
-  standardHeaders: true,
-  legacyHeaders: false,
-  validate: rateLimitValidationConfig,
-  handler: (req: Request, res: Response) => {
-    res.status(429).json({ error: "Limite de envio de e-mails atingido. Aguarde alguns minutos." });
-  },
-});
-
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 50,
-  standardHeaders: true,
-  legacyHeaders: false,
-  validate: rateLimitValidationConfig,
-  handler: (req: Request, res: Response) => {
-    res.status(429).json({ error: "Muitas tentativas de operação de segurança. Tente novamente em 15 minutos." });
-  },
-});
+const apiLimiter = createTenantRateLimiter("api");
+const aiLimiter = createTenantRateLimiter("ai");
+const emailLimiter = createTenantRateLimiter("email");
+const authLimiter = createTenantRateLimiter("auth");
 
 app.use("/api/", apiLimiter);
 
 // ============================================================================
-// 3. STRIPE INITIALIZATION & WEBHOOK (RAW BODY PARSER)
+// 3. STRIPE INITIALIZATION & WEBHOOK (RAW BODY PARSER + IDEMPOTÊNCIA DISTRIBUÍDA)
 // ============================================================================
 
 let stripeClient: Stripe | null = null;
@@ -250,15 +300,14 @@ function getStripe(): Stripe {
     const key = process.env.STRIPE_SECRET_KEY || "sk_test_placeholder_key";
     stripeClient = new Stripe(key, {
       apiVersion: "2023-10-16" as any,
+      maxNetworkRetries: 2,
+      timeout: 10_000,
     });
   }
   return stripeClient;
 }
 
-// Memory cache for event idempotency backup
-const processedStripeEvents = new Set<string>();
-
-// 3.1 Stripe Webhook with Raw Body Parser & Firestore Idempotency
+// 3.1 Stripe Webhook with Raw Body Parser & Atomic Distributed Firestore Idempotency
 app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async (req: Request, res: Response): Promise<any> => {
   const sig = req.headers["stripe-signature"] as string;
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -281,94 +330,36 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  // Idempotency check via Firestore Admin
-  const db = getFirestoreInstance();
-
   try {
-    const eventRef = db.collection("stripe_events").doc(event.id);
-    const eventDoc = await eventRef.get();
-
-    if (eventDoc.exists || processedStripeEvents.has(event.id)) {
-      console.log(`[Stripe Webhook] Event ${event.id} already processed. Skipping.`);
+    const { alreadyProcessed } = await claimStripeEventIdempotently(event.id, event.type);
+    if (alreadyProcessed) {
+      logSecurityEvent("INFO", "stripe_webhook_duplicate_ignored", { eventId: event.id, type: event.type });
       return res.json({ received: true, idempotent: true });
     }
 
-    // Mark event as being processed
-    await eventRef.set({
-      id: event.id,
-      type: event.type,
-      processed_at: FieldValue.serverTimestamp(),
+    const obj: any = event.data?.object || {};
+    const resolvedTenantId = obj?.metadata?.schoolId || obj?.client_reference_id || "global";
+
+    const { job, idempotent } = await enqueueJob({
+      tenantId: resolvedTenantId,
+      type: "stripe_webhook",
+      title: `Webhook Stripe: ${event.type}`,
+      idempotencyKey: `stripe_evt:${event.id}`,
+      payload: { event },
+      createdBy: "stripe_webhook",
     });
-    processedStripeEvents.add(event.id);
-  } catch (dbErr) {
-    console.warn("[Stripe Webhook] Idempotency DB check note:", dbErr);
-  }
 
-  console.log(`[Stripe Webhook] Processing Verified Event: ${event.type} (ID: ${event.id})`);
-
-  try {
-    switch (event.type) {
-      case "checkout.session.completed": {
-        const session = event.data.object as Stripe.Checkout.Session;
-        const tenantId = session.metadata?.schoolId || session.client_reference_id;
-        const planId = session.metadata?.planId || "plano-basico";
-
-        if (tenantId && tenantId !== "guest") {
-          await db.collection("tenants").doc(tenantId).set(
-            {
-              status: "ativo",
-              plano_id: planId,
-              stripe_customer_id: session.customer,
-              stripe_subscription_id: session.subscription,
-              last_payment_at: new Date().toISOString(),
-            },
-            { merge: true }
-          );
-
-          // Activate tenant admin users
-          const usersQuery = await db.collection("users").where("tenant_id", "==", tenantId).get();
-          for (const uDoc of usersQuery.docs) {
-            await uDoc.ref.update({ ativo: true });
-          }
-
-          await recordAuditLog({
-            actor_id: "stripe_webhook",
-            actor_email: "webhook@stripe.com",
-            actor_role: "system",
-            action: "payment",
-            entity: "Tenant",
-            entity_id: tenantId,
-            tenant_id: tenantId,
-            after_state: { status: "ativo", planId },
-          });
-        }
-        break;
-      }
-      case "invoice.paid": {
-        const invoice = event.data.object as Stripe.Invoice;
-        console.log(`[Stripe Webhook] Invoice paid: ${invoice.id} for Customer: ${invoice.customer}`);
-        break;
-      }
-      case "invoice.payment_failed": {
-        const invoice = event.data.object as Stripe.Invoice;
-        console.warn(`[Stripe Webhook] Invoice payment failed: ${invoice.id}. Marking subscription past_due.`);
-        break;
-      }
-      case "customer.subscription.updated": {
-        const subscription = event.data.object as Stripe.Subscription;
-        console.log(`[Stripe Webhook] Subscription updated: ${subscription.id} (Status: ${subscription.status})`);
-        break;
-      }
-      case "customer.subscription.deleted": {
-        const subscription = event.data.object as Stripe.Subscription;
-        console.warn(`[Stripe Webhook] Subscription canceled: ${subscription.id}`);
-        break;
-      }
-    }
-
-    return res.json({ received: true, status: "processed", type: event.type, eventId: event.id });
+    return res.status(202).json({
+      received: true,
+      queued: true,
+      idempotent,
+      jobId: job.id,
+      status: job.status,
+      type: event.type,
+      eventId: event.id,
+    });
   } catch (err: any) {
-    console.error(`[Stripe Webhook Error] Handler failure:`, err);
+    console.error(`[Stripe Webhook Error] Enqueue failure:`, err);
     return res.status(500).json({ error: err.message });
   }
 });
@@ -378,51 +369,176 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
 // ============================================================================
 app.use(express.json({ limit: "2mb" }));
 
-// Server-side session inactivity cleaner (30-minute window)
-setInterval(() => {
-  const now = Date.now();
-  for (const [sessionId, session] of serverSessions.entries()) {
-    if (now - session.lastActivity > SESSION_INACTIVITY_TIMEOUT_MS) {
-      serverSessions.delete(sessionId);
-    }
-  }
-}, 5 * 60 * 1000);
-
 // ============================================================================
-// 5. HEALTH & READINESS ENDPOINTS
+// 5. HEALTH, READINESS & QUOTA OBSERVABILITY ENDPOINTS
 // ============================================================================
 
 app.get("/health", (req: Request, res: Response) => {
+  const mem = process.memoryUsage();
   res.json({
-    status: "ok",
+    status: isShuttingDown ? "draining" : "ok",
     timestamp: new Date().toISOString(),
+    pid: process.pid,
     uptimeSeconds: Math.floor(process.uptime()),
+    statelessSessions: true,
+    workerMode: EMBEDDED_WORKER_ENABLED ? "embedded" : "external",
+    inFlightRequests,
+    memoryMb: {
+      rss: Math.round(mem.rss / 1024 / 1024),
+      heapUsed: Math.round(mem.heapUsed / 1024 / 1024),
+    },
+    circuitBreakers: getCircuitBreakersSnapshot(),
     version: "1.0.0",
   });
 });
 
 app.get("/ready", async (req: Request, res: Response): Promise<any> => {
+  if (isShuttingDown) {
+    return res.status(503).json({
+      ready: false,
+      reason: "graceful_shutdown_in_progress",
+      inFlightRequests,
+    });
+  }
+
+  const startedAt = Date.now();
   try {
     const db = getFirestoreInstance();
-    await db.collection("planos").limit(1).get();
-    return res.json({ ready: true, database: "connected" });
+    await Promise.race([
+      db.collection("planos").limit(1).get(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Firestore readiness timeout (3s)")), 3000)),
+    ]);
+
+    const firestoreLatencyMs = Date.now() - startedAt;
+    if (firestoreLatencyMs >= SLO_TARGETS.SLOW_QUERY_THRESHOLD_MS) {
+      recordSlowQuery({
+        tenantId: "global",
+        source: "firestore",
+        operation: "readiness_probe:planos",
+        durationMs: firestoreLatencyMs,
+        requestId: req.requestId,
+      });
+    }
+
+    return res.json({
+      ready: true,
+      database: "connected",
+      firestoreLatencyMs,
+      workerMode: EMBEDDED_WORKER_ENABLED ? "embedded" : "external",
+      worker: EMBEDDED_WORKER_ENABLED ? getAsyncWorkerStats() : { mode: "external_dedicated_service" },
+      circuitBreakers: getCircuitBreakersSnapshot(),
+      sloTargets: SLO_TARGETS,
+    });
   } catch (e: any) {
-    return res.status(503).json({ ready: false, error: e.message || "Database unreachable" });
+    return res.status(503).json({
+      ready: false,
+      firestoreLatencyMs: Date.now() - startedAt,
+      error: e.message || "Database unreachable",
+    });
+  }
+});
+
+// Prometheus Exposition Endpoint (/metrics) - protegido por token de scraper ou sessão Super Admin
+app.get("/metrics", async (req: Request, res: Response): Promise<any> => {
+  const configuredToken = (process.env.OBSERVABILITY_METRICS_TOKEN || "").trim();
+  const authHeader = String(req.headers.authorization || "");
+  const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+
+  const tokenAuthorized = Boolean(configuredToken && bearer && timingSafeCompare(bearer, configuredToken));
+  if (!tokenAuthorized) {
+    await new Promise<void>((resolve) => {
+      requireAuth(req, res, () => resolve());
+    });
+    if (res.headersSent) return;
+    const role = req.user?.role || "";
+    if (role !== "super_admin" && role !== "superadmin") {
+      return res.status(403).json({ error: "Acesso restrito ao Super Administrador ou coletor autorizado." });
+    }
+  }
+
+  const queue = await getQueueMetricsSnapshot();
+  const snapshot = getObservabilitySnapshot({
+    callerRole: "super_admin",
+    callerTenantId: "global",
+    queue,
+    circuitBreakers: getCircuitBreakersSnapshot(),
+    emitAlertLogs: true,
+  });
+
+  res.set({
+    "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  return res.send(renderPrometheusMetrics(snapshot));
+});
+
+// Endpoint JSON de Observabilidade e Alertas (isolamento automático por tenant)
+app.get(
+  "/api/observability/metrics",
+  requireAuth,
+  requireRole(["super_admin", "admin", "tenant_admin", "director"]),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const caller = req.user!;
+      const queue = await getQueueMetricsSnapshot();
+      const snapshot = getObservabilitySnapshot({
+        callerRole: caller.role,
+        callerTenantId: caller.tenant_id,
+        queue,
+        circuitBreakers: getCircuitBreakersSnapshot(),
+        emitAlertLogs: false,
+      });
+
+      res.set({ "Cache-Control": "no-store" });
+      return res.json(snapshot);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Erro ao compilar métricas de observabilidade." });
+    }
+  }
+);
+
+// Telemetria verificada de queries lentas do cliente Firestore (sempre isolada por caller.tenant_id)
+app.post("/api/observability/slow-query", requireAuth, async (req: Request, res: Response): Promise<any> => {
+  try {
+    const caller = req.user!;
+    const rawOperation = typeof req.body?.operation === "string" ? req.body.operation.trim() : "";
+    const rawDuration = Number(req.body?.durationMs);
+    if (!rawOperation || !Number.isFinite(rawDuration) || rawDuration < 200 || rawDuration > 120_000) {
+      return res.status(400).json({ error: "Parâmetros inválidos para registo de query lenta." });
+    }
+
+    recordSlowQuery({
+      tenantId: caller.tenant_id,
+      source: "firestore",
+      operation: rawOperation.slice(0, 120),
+      durationMs: rawDuration,
+      thresholdMs: SLO_TARGETS.SLOW_QUERY_THRESHOLD_MS,
+      requestId: req.requestId,
+    });
+
+    return res.status(202).json({ recorded: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Erro ao registar query lenta." });
+  }
+});
+
+app.get("/api/tenant/quota-status", requireAuth, async (req: Request, res: Response): Promise<any> => {
+  try {
+    const caller = req.user!;
+    const policy = await getTenantEffectiveQuota(caller.tenant_id);
+    return res.json({
+      tenantId: caller.tenant_id,
+      policy,
+      circuitBreakers: getCircuitBreakersSnapshot(),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Erro ao consultar cota do plano." });
   }
 });
 
 // ============================================================================
-// 6. AUTH & SESSION API (SERVER-LEVEL CREDENTIALS & ID TOKEN VERIFICATION)
+// 6. AUTH & SESSION API (STATELESS HMAC + DISTRIBUTED FIRESTORE STORE)
 // ============================================================================
-
-// Brute-force protection tracker
-interface FailedLoginTracker {
-  attempts: number;
-  lockoutUntil: number;
-}
-const failedLoginAttempts = new Map<string, FailedLoginTracker>();
-const MAX_FAILED_ATTEMPTS = 5;
-const LOCKOUT_DURATION_MS = 15 * 60 * 1000;
 
 // 6.0.1 Verificar status do Bootstrap Inicial
 app.get("/api/auth/bootstrap/status", async (req: Request, res: Response): Promise<any> => {
@@ -460,13 +576,12 @@ app.post("/api/auth/bootstrap", authLimiter, async (req: Request, res: Response)
       userAgent,
     });
 
-    // Criar sessão de login para o superadmin recém-criado
-    const sessionId = "sysedu_sess_" + crypto.randomUUID();
+    // Criar sessão stateless distribuída para o superadmin recém-criado
     const csrfToken = "csrf_" + crypto.randomBytes(16).toString("hex");
     const isHttps = req.secure || req.headers["x-forwarded-proto"] === "https";
     const now = Date.now();
 
-    serverSessions.set(sessionId, {
+    const { sessionId } = await createSession({
       userId: result.uid,
       role: "super_admin",
       tenantId: "super-admin",
@@ -535,7 +650,7 @@ app.post("/api/auth/bootstrap/reset", async (req: Request, res: Response): Promi
       if (!isSuperAdmin) {
         const sessionId = req.cookies?.sysedu_session_id || (req.headers["x-session-id"] as string);
         if (sessionId) {
-          const session = getSession(sessionId);
+          const session = await getSession(sessionId);
           if (session && (session.role === "super_admin" || session.role === "superadmin")) {
             isSuperAdmin = true;
           }
@@ -617,44 +732,42 @@ app.post("/api/auth/forgot-password/request-otp", authLimiter, async (req: Reque
       createdAt: new Date().toISOString(),
     });
 
-    let emailSent = false;
+    let emailJobId: string | null = null;
     try {
-      if (process.env.SMTP_HOST && process.env.SMTP_USER) {
-        const transporter = nodemailer.createTransport({
-          host: process.env.SMTP_HOST,
-          port: Number(process.env.SMTP_PORT) || 587,
-          secure: process.env.SMTP_SECURE === 'true',
-          auth: {
-            user: process.env.SMTP_USER,
-            pass: process.env.SMTP_PASS,
-          },
-        });
-
-        await transporter.sendMail({
-          from: `"SGE - Gestão Educacional" <${process.env.SMTP_USER}>`,
-          to: cleanEmail,
-          subject: "Código de Recuperação de Palavra-Passe (OTP) - SGE",
-          text: `O seu código de verificação para redefinição de palavra-passe é: ${otp}. Válido por 15 minutos.`,
-          html: `<div style="font-family: sans-serif; padding: 20px; color: #1e293b;">
+      const otpSubject = "Código de Recuperação de Palavra-Passe (OTP) - SGE";
+      const otpText = `O seu código de verificação para redefinição de palavra-passe é: ${otp}. Válido por 15 minutos.`;
+      const otpHtml = `<div style="font-family: sans-serif; padding: 20px; color: #1e293b;">
             <h2 style="color: #4f46e5;">Recuperação de Palavra-Passe - SGE</h2>
             <p>Recebemos uma solicitação para redefinir a palavra-passe da sua conta.</p>
             <p>Utilize o código de verificação abaixo no formulário de recuperação:</p>
             <div style="font-size: 32px; font-weight: bold; letter-spacing: 6px; padding: 14px 24px; background: #e0e7ff; color: #3730a3; display: inline-block; border-radius: 10px; margin: 12px 0;">${otp}</div>
             <p style="color: #64748b; font-size: 13px;">Este código é válido por 15 minutos. Se não solicitou esta redefinição, desconsidere esta mensagem.</p>
-          </div>`
+          </div>`;
+
+      if (process.env.SMTP_HOST && process.env.SMTP_USER) {
+        const { job } = await enqueueJob({
+          tenantId: "system",
+          type: "email_send",
+          title: `Envio de OTP para ${cleanEmail}`,
+          idempotencyKey: `otp:${cleanEmail}:${otp}`,
+          payload: {
+            to: cleanEmail,
+            subject: otpSubject,
+            body: otpText,
+            html: otpHtml,
+          },
+          createdBy: targetUid || "forgot_password",
         });
-        emailSent = true;
+        emailJobId = job.id;
       } else {
-        // Enfileirar na fila de e-mails para envio pelo serviço SMTP configurado
         await db.collection('pending_emails').add({
           tenantId: 'system',
           to: cleanEmail,
-          subject: "Código de Recuperação de Palavra-Passe (OTP) - SGE",
-          body: `O seu código de verificação para redefinição de palavra-passe é: ${otp}. Válido por 15 minutos.`,
+          subject: otpSubject,
+          body: otpText,
           status: 'pendente',
           created_at: new Date().toISOString()
         });
-        emailSent = true;
       }
     } catch (mailErr: any) {
       console.warn('[Request OTP Email Note]:', mailErr.message);
@@ -662,8 +775,10 @@ app.post("/api/auth/forgot-password/request-otp", authLimiter, async (req: Reque
 
     return res.json({
       success: true,
-      message: "Código de verificação enviado com sucesso para o seu e-mail institucional.",
-      emailSent
+      message: "Código de verificação enfileirado para envio para o seu e-mail institucional.",
+      emailSent: true,
+      queued: Boolean(emailJobId),
+      jobId: emailJobId,
     });
   } catch (err: any) {
     console.error("[Request OTP Error]:", err);
@@ -756,8 +871,12 @@ app.post("/api/auth/forgot-password/verify-and-reset", authLimiter, async (req: 
     }
 
     const usersByEmail = await db.collection('users').where('email', '==', cleanEmail).get();
+    const superusersByEmail = await db.collection('superusers').where('email', '==', cleanEmail).get();
+
+    const resetBatch = db.batch();
+    let hasResetUpdates = false;
     for (const d of usersByEmail.docs) {
-      await d.ref.set({
+      resetBatch.set(d.ref, {
         passwordHash,
         salt,
         mustChangePassword: false,
@@ -766,15 +885,18 @@ app.post("/api/auth/forgot-password/verify-and-reset", authLimiter, async (req: 
         passwordLastChangedAt: nowIso,
         updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
+      hasResetUpdates = true;
     }
-
-    const superusersByEmail = await db.collection('superusers').where('email', '==', cleanEmail).get();
     for (const d of superusersByEmail.docs) {
-      await d.ref.set({
+      resetBatch.set(d.ref, {
         passwordHash,
         salt,
         updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
+      hasResetUpdates = true;
+    }
+    if (hasResetUpdates) {
+      await resetBatch.commit();
     }
 
     // Invalidar OTP consumido
@@ -805,29 +927,25 @@ app.post("/api/auth/login", authLimiter, async (req: Request, res: Response): Pr
     const lockKey = `${clientIp}::${email.toLowerCase()}`;
     const now = Date.now();
 
-    // Check brute-force lockout
-    const tracker = failedLoginAttempts.get(lockKey);
-    if (tracker && tracker.lockoutUntil > now) {
-      const remainingMinutes = Math.ceil((tracker.lockoutUntil - now) / 60000);
-      logSecurityEvent("SECURITY", "login_locked_out", { email, ip: clientIp, remainingMinutes });
+    // Verificação distribuída de bloqueio contra brute-force
+    const lockoutStatus = await checkLoginLockout(lockKey);
+    if (lockoutStatus.locked) {
+      logSecurityEvent("SECURITY", "login_locked_out", { email, ip: clientIp, remainingMinutes: lockoutStatus.remainingMinutes });
       return res.status(429).json({
         code: "account_locked_temporarily",
-        error: `Muitas tentativas falhadas. Conta temporariamente bloqueada por segurança. Tente novamente em ${remainingMinutes} minutos.`,
+        error: `Muitas tentativas falhadas. Conta temporariamente bloqueada por segurança. Tente novamente em ${lockoutStatus.remainingMinutes} minutos.`,
       });
     }
 
     const authenticatedUser = await authenticateServerUser(email, password);
 
     if (!authenticatedUser) {
-      const cur = failedLoginAttempts.get(lockKey) || { attempts: 0, lockoutUntil: 0 };
-      cur.attempts += 1;
-      if (cur.attempts >= MAX_FAILED_ATTEMPTS) {
-        cur.lockoutUntil = Date.now() + LOCKOUT_DURATION_MS;
-        logSecurityEvent("SECURITY", "login_brute_force_lockout_triggered", { email, ip: clientIp, attempts: cur.attempts });
+      const attemptRes = await recordFailedLoginAttempt(lockKey);
+      if (attemptRes.lockedNow) {
+        logSecurityEvent("SECURITY", "login_brute_force_lockout_triggered", { email, ip: clientIp, attempts: attemptRes.attempts });
       } else {
-        logSecurityEvent("WARN", "login_attempt_failed", { email, ip: clientIp, attempts: cur.attempts });
+        logSecurityEvent("WARN", "login_attempt_failed", { email, ip: clientIp, attempts: attemptRes.attempts });
       }
-      failedLoginAttempts.set(lockKey, cur);
 
       return res.status(401).json({
         success: false,
@@ -835,15 +953,13 @@ app.post("/api/auth/login", authLimiter, async (req: Request, res: Response): Pr
       });
     }
 
-    // Login succeeded: clear failed tracker
-    failedLoginAttempts.delete(lockKey);
+    await clearFailedLoginAttempts(lockKey);
     logSecurityEvent("INFO", "login_success", { email, ip: clientIp, role: authenticatedUser.role, tenantId: authenticatedUser.tenant_id });
 
-    const sessionId = "sysedu_sess_" + crypto.randomUUID();
     const csrfToken = "csrf_" + crypto.randomBytes(16).toString("hex");
     const isHttps = req.secure || req.headers["x-forwarded-proto"] === "https";
 
-    serverSessions.set(sessionId, {
+    const { sessionId } = await createSession({
       userId: authenticatedUser.id,
       role: authenticatedUser.role,
       tenantId: authenticatedUser.tenant_id,
@@ -882,21 +998,19 @@ app.post("/api/auth/login", authLimiter, async (req: Request, res: Response): Pr
   }
 });
 
-// 6.1 Create or rotate Session Cookie with verified Firebase ID Token
+// 6.1 Create or rotate Stateless Distributed Session Cookie with verified Firebase ID Token
 app.post("/api/auth/session/create", async (req: Request, res: Response): Promise<any> => {
   try {
     const parseResult = SessionCreateSchema.safeParse(req.body);
     if (!parseResult.success) {
-      // Fallback compatibility with legacy body during transition
       const { userId, role, tenantId, email } = req.body;
       if (!userId || !role) {
         return res.status(400).json({ error: "Token de autenticação ou credenciais válidas são obrigatórios." });
       }
-      const sessionId = "sysedu_sess_" + crypto.randomUUID();
       const isHttps = req.secure || req.headers["x-forwarded-proto"] === "https";
       const now = Date.now();
 
-      serverSessions.set(sessionId, {
+      const { sessionId } = await createSession({
         userId,
         role,
         tenantId: tenantId || "default",
@@ -915,6 +1029,7 @@ app.post("/api/auth/session/create", async (req: Request, res: Response): Promis
 
       return res.json({
         success: true,
+        sessionId,
         session: { userId, role, tenantId: tenantId || "default", email: email || "", inactivityTimeoutMinutes: 30 },
       });
     }
@@ -928,12 +1043,11 @@ app.post("/api/auth/session/create", async (req: Request, res: Response): Promis
     const role = (decoded.role as string) || (decoded.super_admin ? "super_admin" : "estudante");
     const tenantId = (decoded.tenant_id as string) || "default";
 
-    const sessionId = "sysedu_sess_" + crypto.randomUUID();
     const csrfToken = "csrf_" + crypto.randomBytes(16).toString("hex");
     const isHttps = req.secure || req.headers["x-forwarded-proto"] === "https";
     const now = Date.now();
 
-    serverSessions.set(sessionId, {
+    const { sessionId } = await createSession({
       userId,
       role,
       tenantId,
@@ -960,6 +1074,7 @@ app.post("/api/auth/session/create", async (req: Request, res: Response): Promis
 
     return res.json({
       success: true,
+      sessionId,
       csrfToken,
       session: {
         userId,
@@ -976,28 +1091,24 @@ app.post("/api/auth/session/create", async (req: Request, res: Response): Promis
   }
 });
 
-// 6.2 Verify Session Validity & Inactivity Timeout
-app.get("/api/auth/session/verify", (req: Request, res: Response): any => {
+// 6.2 Verify Session Validity & Inactivity Timeout (Stateless / Distributed)
+app.get("/api/auth/session/verify", async (req: Request, res: Response): Promise<any> => {
   try {
-    const sessionId = req.cookies?.sysedu_session_id;
-    if (!sessionId || !serverSessions.has(sessionId)) {
+    const sessionId = req.cookies?.sysedu_session_id || (req.headers["x-session-id"] as string);
+    if (!sessionId) {
       return res.status(401).json({ authenticated: false, reason: "session_not_found" });
     }
 
-    const session = serverSessions.get(sessionId)!;
-    const now = Date.now();
-    const elapsedMinutes = (now - session.lastActivity) / (1000 * 60);
-
-    if (elapsedMinutes > 30) {
-      serverSessions.delete(sessionId);
+    const session = await getSession(sessionId);
+    if (!session) {
       res.clearCookie("sysedu_session_id", { path: "/" });
       res.clearCookie("sysedu_csrf_token", { path: "/" });
-      return res.status(401).json({ authenticated: false, reason: "inactivity_timeout", timeoutMinutes: 30 });
+      return res.status(401).json({ authenticated: false, reason: "inactivity_timeout_or_revoked", timeoutMinutes: 30 });
     }
 
-    session.lastActivity = now;
     return res.json({
       authenticated: true,
+      stateless: true,
       user: {
         userId: session.userId,
         role: session.role,
@@ -1011,11 +1122,11 @@ app.get("/api/auth/session/verify", (req: Request, res: Response): any => {
   }
 });
 
-// 6.3 Logout & Revoke Session Token
+// 6.3 Logout & Revoke Session Token Globally
 app.post("/api/auth/session/logout", optionalAuth, async (req: Request, res: Response): Promise<any> => {
-  const sessionId = req.cookies?.sysedu_session_id;
+  const sessionId = req.cookies?.sysedu_session_id || (req.headers["x-session-id"] as string);
   if (sessionId) {
-    serverSessions.delete(sessionId);
+    await deleteSession(sessionId);
   }
   res.clearCookie("sysedu_session_id", { path: "/" });
   res.clearCookie("sysedu_csrf_token", { path: "/" });
@@ -1024,7 +1135,7 @@ app.post("/api/auth/session/logout", optionalAuth, async (req: Request, res: Res
     try {
       const admin = getFirebaseAdminInstance();
       await getAuth(admin).revokeRefreshTokens(req.user.uid);
-    } catch (e) {
+    } catch {
       // non-fatal
     }
   }
@@ -1049,7 +1160,7 @@ app.post("/api/auth/password/change", authLimiter, async (req: Request, res: Res
     const db = getFirestoreInstance();
     const auth = getAuth(admin);
 
-    // 1. Resolve Caller identity (via Bearer token or HttpOnly Session)
+    // 1. Resolve Caller identity (via Bearer token or Stateless Distributed Session)
     let caller: { uid: string; email: string; role: string; tenant_id: string; must_reset_password?: boolean } | null = null;
 
     const authHeader = req.headers.authorization;
@@ -1072,7 +1183,7 @@ app.post("/api/auth/password/change", authLimiter, async (req: Request, res: Res
     if (!caller) {
       const sessionId = req.cookies?.sysedu_session_id || (req.headers['x-session-id'] as string);
       if (sessionId) {
-        const session = getSession(sessionId);
+        const session = await getSession(sessionId);
         if (session) {
           caller = {
             uid: session.userId,
@@ -1348,12 +1459,11 @@ app.post("/api/auth/password/change", authLimiter, async (req: Request, res: Res
     let csrfToken: string | undefined;
 
     if (isSelfService) {
-      sessionId = "sysedu_sess_" + crypto.randomUUID();
       csrfToken = "csrf_" + crypto.randomBytes(16).toString("hex");
       const isHttps = req.secure || req.headers["x-forwarded-proto"] === "https";
       const nowMs = Date.now();
 
-      serverSessions.set(sessionId, {
+      const created = await createSession({
         userId: targetUid,
         role: targetRole,
         tenantId: targetTenant,
@@ -1362,6 +1472,7 @@ app.post("/api/auth/password/change", authLimiter, async (req: Request, res: Res
         lastActivity: nowMs,
         must_reset_password: false,
       });
+      sessionId = created.sessionId;
 
       res.cookie("sysedu_session_id", sessionId, {
         httpOnly: true,
@@ -1506,14 +1617,10 @@ app.post("/api/auth/sessions/revoke", requireAuth, async (req: Request, res: Res
     }
 
     const admin = getFirebaseAdminInstance();
-    await getAuth(admin).revokeRefreshTokens(target);
+    await getAuth(admin).revokeRefreshTokens(target).catch(() => {});
 
-    // Invalidate local in-memory session if present
-    for (const [sId, sess] of serverSessions.entries()) {
-      if (sess.userId === target) {
-        serverSessions.delete(sId);
-      }
-    }
+    // Revogação global distribuída entre todas as réplicas
+    await revokeUserSessions(target);
 
     await recordAuditLog({
       actor_id: caller.uid,
@@ -1526,7 +1633,7 @@ app.post("/api/auth/sessions/revoke", requireAuth, async (req: Request, res: Res
       metadata: { revokedAllDevices: true },
     });
 
-    return res.json({ success: true, message: "Todas as sessões ativas foram encerradas com sucesso." });
+    return res.json({ success: true, message: "Todas as sessões ativas foram encerradas globalmente com sucesso." });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
   }
@@ -1547,12 +1654,10 @@ app.post("/api/security/claims/migrate", requireAuth, requireRole(["super_admin"
 // 7.4.1 Transferência de Administração Principal ("Seder Administracao")
 app.post("/api/superadmin/transfer-ownership", authLimiter, async (req: Request, res: Response): Promise<any> => {
   try {
-    // 1. Validar CSRF
     if (!verifyCsrfToken(req)) {
       return res.status(403).json({ error: "Falha de validação CSRF. Pedido rejeitado." });
     }
 
-    // 2. Identificar e autorizar o superadministrador requisitante
     let caller: { uid: string; email: string; role: string } | null = null;
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith("Bearer ")) {
@@ -1572,7 +1677,7 @@ app.post("/api/superadmin/transfer-ownership", authLimiter, async (req: Request,
     if (!caller) {
       const sessionId = req.cookies?.sysedu_session_id || (req.headers["x-session-id"] as string);
       if (sessionId) {
-        const session = getSession(sessionId);
+        const session = await getSession(sessionId);
         if (session && (session.role === "super_admin" || session.role === "superadmin")) {
           caller = {
             uid: session.userId,
@@ -1614,9 +1719,9 @@ app.post("/api/superadmin/transfer-ownership", authLimiter, async (req: Request,
     });
 
     // 4. Invalidar a sessão e limpar cookies do superadmin antigo
-    const sessionId = req.cookies?.sysedu_session_id;
+    const sessionId = req.cookies?.sysedu_session_id || (req.headers["x-session-id"] as string);
     if (sessionId) {
-      serverSessions.delete(sessionId);
+      await deleteSession(sessionId);
     }
     const isHttps = req.secure || req.headers["x-forwarded-proto"] === "https";
     res.clearCookie("sysedu_session_id", { path: "/", secure: isHttps, sameSite: "lax" });
@@ -1655,7 +1760,7 @@ app.post("/api/superadmin/create-admin", authLimiter, async (req: Request, res: 
     if (!caller) {
       const sessionId = req.cookies?.sysedu_session_id || (req.headers["x-session-id"] as string);
       if (sessionId) {
-        const session = getSession(sessionId);
+        const session = await getSession(sessionId);
         if (session && (session.role === "super_admin" || session.role === "superadmin")) {
           caller = {
             uid: session.userId,
@@ -1815,13 +1920,12 @@ app.post("/api/superadmin/create-admin", authLimiter, async (req: Request, res: 
       }
     }
 
-    // Criar/renovar sessão para o superadmin
-    const sessionId = "sysedu_sess_" + crypto.randomUUID();
+    // Criar/renovar sessão stateless distribuída para o superadmin
     const csrfToken = "csrf_" + crypto.randomBytes(16).toString("hex");
     const isHttps = req.secure || req.headers["x-forwarded-proto"] === "https";
     const now = Date.now();
 
-    serverSessions.set(sessionId, {
+    const { sessionId } = await createSession({
       userId: newUid,
       role: "super_admin",
       tenantId: "super-admin",
@@ -1896,7 +2000,7 @@ app.get("/api/superadmin/list-admins", async (req: Request, res: Response): Prom
     if (!caller) {
       const sessionId = req.cookies?.sysedu_session_id || (req.headers["x-session-id"] as string);
       if (sessionId) {
-        const session = getSession(sessionId);
+        const session = await getSession(sessionId);
         if (session && (session.role === "super_admin" || session.role === "superadmin")) {
           caller = {
             uid: session.userId,
@@ -1915,7 +2019,7 @@ app.get("/api/superadmin/list-admins", async (req: Request, res: Response): Prom
     }
 
     const db = getFirestoreInstance();
-    const snap = await db.collection("superusers").get();
+    const snap = await db.collection("superusers").limit(100).get();
     const admins = snap.docs.map((d) => {
       const data = d.data();
       return {
@@ -2029,24 +2133,47 @@ app.post("/api/send-email", emailLimiter, optionalAuth, async (req: Request, res
       return res.status(400).json({ code: "invalid_input", error: parseResult.error.issues[0]?.message });
     }
 
-    const { to, subject, body, smtpConfig } = parseResult.data;
+    const { to, subject, body, smtpConfig, async: isAsyncRequested, idempotencyKey } = parseResult.data;
+    const asyncMode = isAsyncRequested === true || req.query.async === "true";
     const db = getFirestoreInstance();
+    const tenantId = req.user?.tenant_id || "global";
 
-    // 1. Audit in email_queue collection
     const queueId = `email_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const emailRecord = {
       id: queueId,
       to,
       subject,
       sender_uid: req.user?.uid || "system_onboarding",
-      tenant_id: req.user?.tenant_id || "global",
+      tenant_id: tenantId,
       status: "queued",
       attempts: 1,
       created_at: new Date().toISOString(),
     };
     await db.collection("email_queue").doc(queueId).set(emailRecord).catch(() => {});
 
-    // 2. Resolve SMTP Credentials
+    // Modo assíncrono: responde HTTP 202 imediatamente e delega envio SMTP ao worker
+    if (asyncMode) {
+      const { job, idempotent } = await enqueueJob({
+        tenantId,
+        type: "email_send",
+        title: `Envio de e-mail para ${to}`,
+        idempotencyKey,
+        payload: { to, subject, body, smtpConfig, queueId },
+        createdBy: req.user?.uid || "system_onboarding",
+      });
+
+      return res.status(202).json({
+        success: true,
+        queued: true,
+        idempotent,
+        queueId,
+        jobId: job.id,
+        status: job.status,
+        message: "E-mail enfileirado para processamento em segundo plano.",
+      });
+    }
+
+    // Modo síncrono legado (com timeout estrito de transporte SMTP)
     const envHost = process.env.SMTP_HOST;
     const hostToUse = smtpConfig?.host || envHost;
     const hasSmtp = hostToUse || smtpConfig?.smtp_type === "gmail";
@@ -2063,41 +2190,68 @@ app.post("/api/send-email", emailLimiter, optionalAuth, async (req: Request, res
     }
 
     const isGmail = smtpConfig?.smtp_type === "gmail" || (hostToUse && hostToUse.toLowerCase().includes("gmail"));
-    let transporter: nodemailer.Transporter;
-
-    if (isGmail) {
-      transporter = nodemailer.createTransport({
-        service: "gmail",
-        auth: {
-          user: smtpConfig?.user || process.env.SMTP_USER,
-          pass: smtpConfig?.pass || process.env.SMTP_PASS,
-        },
-        connectionTimeout: 6000,
-      });
-    } else {
-      transporter = nodemailer.createTransport({
-        host: hostToUse,
-        port: smtpConfig?.port || Number(process.env.SMTP_PORT) || 587,
-        secure: smtpConfig?.secure === true || Number(smtpConfig?.port) === 465,
-        auth: {
-          user: smtpConfig?.user || process.env.SMTP_USER,
-          pass: smtpConfig?.pass || process.env.SMTP_PASS,
-        },
-        tls: { rejectUnauthorized: false },
-        connectionTimeout: 6000,
-      });
-    }
+    const transporter = isGmail
+      ? nodemailer.createTransport({
+          service: "gmail",
+          auth: {
+            user: smtpConfig?.user || process.env.SMTP_USER,
+            pass: smtpConfig?.pass || process.env.SMTP_PASS,
+          },
+          connectionTimeout: 6000,
+          socketTimeout: 9000,
+        })
+      : nodemailer.createTransport({
+          host: hostToUse,
+          port: smtpConfig?.port || Number(process.env.SMTP_PORT) || 587,
+          secure: smtpConfig?.secure === true || Number(smtpConfig?.port) === 465,
+          auth: {
+            user: smtpConfig?.user || process.env.SMTP_USER,
+            pass: smtpConfig?.pass || process.env.SMTP_PASS,
+          },
+          tls: { rejectUnauthorized: false },
+          connectionTimeout: 6000,
+          socketTimeout: 9000,
+        });
 
     const fromEmail = smtpConfig?.sender_email || process.env.SMTP_FROM || "nao-responder@sysedu.edu.mz";
     const fromName = smtpConfig?.sender_name || "SysEdu";
 
-    await transporter.sendMail({
-      from: `"${fromName}" <${fromEmail}>`,
-      to,
-      subject,
-      text: body,
-      encoding: "utf-8",
-    });
+    const mailDelivery = await smtpBreaker.execute(
+      async () => {
+        await transporter.sendMail({
+          from: `"${fromName}" <${fromEmail}>`,
+          to,
+          subject,
+          text: body,
+          encoding: "utf-8",
+        });
+        return { delivered: true };
+      },
+      async (err) => {
+        // Fallback resiliente: persiste em fila pendente para envio posterior quando SMTP recuperar
+        await enqueueJob({
+          tenantId,
+          type: "email_send",
+          title: `Reenvio SMTP (fallback): ${to}`,
+          idempotencyKey: `smtp_fallback:${queueId}`,
+          payload: { to, subject, body, smtpConfig, queueId },
+          createdBy: req.user?.uid || "smtp_fallback",
+        }).catch(() => {});
+        return { delivered: false, warning: err.message };
+      }
+    );
+
+    if (!mailDelivery.delivered) {
+      await db.collection("email_queue").doc(queueId).update({ status: "queued_fallback" }).catch(() => {});
+      return res.status(202).json({
+        success: true,
+        queued: true,
+        fallback: true,
+        queueId,
+        warning: (mailDelivery as any).warning,
+        message: "Gateway SMTP temporariamente protegido por circuit breaker. E-mail encaminhado para fila resiliente.",
+      });
+    }
 
     await db.collection("email_queue").doc(queueId).update({ status: "sent", delivered_at: new Date().toISOString() }).catch(() => {});
     return res.json({ success: true, message: "E-mail enviado com sucesso!", queueId });
@@ -2107,13 +2261,13 @@ app.post("/api/send-email", emailLimiter, optionalAuth, async (req: Request, res
       success: true,
       simulated: true,
       warning: error.message || "Erro no gateway SMTP",
-      message: "E-mail simulado com sucesso devido a falha transitória de SMTP.",
+      message: "E-mail enfileirado/simulado com sucesso devido a falha transitória de SMTP.",
     });
   }
 });
 
 // ============================================================================
-// 9. GEMINI AI: TRANSLATION & BOOK SYNOPSIS (WITH CACHE, QUOTA & PROMPT INJECTION GUARD)
+// 9. GEMINI AI: TRANSLATION & BOOK SYNOPSIS (CIRCUIT BREAKER + PLAN QUOTAS)
 // ============================================================================
 
 const apiKey = process.env.GEMINI_API_KEY;
@@ -2125,27 +2279,12 @@ if (apiKey) {
   });
 }
 
-// AI Usage Quota Tracking (Max 120 calls per tenant per hour to control costs)
-const tenantAiUsage = new Map<string, { count: number; windowStart: number }>();
-function checkTenantAiQuota(tenantId: string, limit = 120): boolean {
-  const now = Date.now();
-  const ONE_HOUR = 60 * 60 * 1000;
-  const tracker = tenantAiUsage.get(tenantId) || { count: 0, windowStart: now };
-  if (now - tracker.windowStart > ONE_HOUR) {
-    tracker.count = 1;
-    tracker.windowStart = now;
-    tenantAiUsage.set(tenantId, tracker);
-    return true;
-  }
-  if (tracker.count >= limit) {
-    return false;
-  }
-  tracker.count++;
-  tenantAiUsage.set(tenantId, tracker);
-  return true;
+async function checkTenantAiQuota(tenantId: string): Promise<{ allowed: boolean; limit: number; used: number }> {
+  const policy = await getTenantEffectiveQuota(tenantId);
+  const res = await consumeDistributedTenantAiQuota(tenantId, policy.aiPerHourTenant);
+  return { allowed: res.allowed, limit: res.limit, used: res.used };
 }
 
-// Sanitize AI outputs to ensure no malicious executable code or raw script tags
 function sanitizeAiOutput(text: string): string {
   if (!text) return "";
   return text
@@ -2154,7 +2293,7 @@ function sanitizeAiOutput(text: string): string {
     .replace(/on\w+\s*=/gi, "");
 }
 
-// 9.1 Translation with Firestore cache & Prompt Injection Defense
+// 9.1 Translation with Firestore cache, Circuit Breaker & Distributed Quota
 app.post("/api/translate", aiLimiter, optionalAuth, async (req: Request, res: Response): Promise<any> => {
   try {
     const parseResult = TranslateSchema.safeParse(req.body);
@@ -2162,29 +2301,45 @@ app.post("/api/translate", aiLimiter, optionalAuth, async (req: Request, res: Re
       return res.status(400).json({ error: parseResult.error.issues[0]?.message });
     }
 
-    const { text, targetLanguage } = parseResult.data;
+    const { text, targetLanguage, async: isAsyncRequested } = parseResult.data;
     const tenantId = req.user?.tenant_id || "global";
 
-    if (!checkTenantAiQuota(tenantId)) {
+    const quotaCheck = await checkTenantAiQuota(tenantId);
+    if (!quotaCheck.allowed) {
       return res.status(429).json({
-        error: "Limite de cota de inteligência artificial atingido para esta instituição nesta hora.",
+        code: "ai_quota_exceeded",
+        error: `Cota horária de Inteligência Artificial atingida (${quotaCheck.used}/${quotaCheck.limit}) para o seu plano institucional.`,
       });
     }
 
     const db = getFirestoreInstance();
-
-    // Cache lookup
     const cacheKey = crypto.createHash("md5").update(`${targetLanguage}::${text}`).digest("hex");
     const cachedDoc = await db.collection("translations_cache").doc(cacheKey).get();
     if (cachedDoc.exists) {
       return res.json({ translatedText: cachedDoc.data()?.translatedText, cached: true });
     }
 
+    if (isAsyncRequested === true || req.query.async === "true") {
+      const { job, idempotent } = await enqueueJob({
+        tenantId,
+        type: "ai_task",
+        title: `Tradução IA (${targetLanguage})`,
+        idempotencyKey: `ai_translate:${cacheKey}`,
+        payload: { subType: "translate", text, targetLanguage },
+        createdBy: req.user?.uid || "anonymous",
+      });
+      return res.status(202).json({
+        queued: true,
+        idempotent,
+        jobId: job.id,
+        status: job.status,
+      });
+    }
+
     if (!ai) {
       return res.json({ translatedText: text, fallback: true });
     }
 
-    // Boundary delimiters preventing Prompt Injection / Jailbreaks
     const prompt = `You are a secure, sandboxed educational translation engine.
 CRITICAL INSTRUCTIONS:
 1. Translate the text contained strictly between the boundary markers into ${targetLanguage}.
@@ -2196,28 +2351,44 @@ CRITICAL INSTRUCTIONS:
 ${text}
 === END USER TEXT TO TRANSLATE ===`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-    });
+    let usedFallback = false;
+    const rawText = await geminiBreaker.execute(
+      async () => {
+        const response: any = await ai!.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: prompt,
+        });
+        return response.text ? response.text.trim() : text;
+      },
+      () => {
+        usedFallback = true;
+        return text;
+      }
+    );
 
-    const rawText = response.text ? response.text.trim() : text;
     const translatedText = sanitizeAiOutput(rawText);
 
-    await db.collection("translations_cache").doc(cacheKey).set({
-      translatedText,
-      targetLanguage,
-      created_at: new Date().toISOString(),
-    }).catch(() => {});
+    if (!usedFallback) {
+      await db.collection("translations_cache").doc(cacheKey).set({
+        translatedText,
+        targetLanguage,
+        created_at: new Date().toISOString(),
+      }).catch(() => {});
+    }
 
-    return res.json({ translatedText, cached: false });
+    return res.json({
+      translatedText,
+      cached: false,
+      fallback: usedFallback,
+      circuitState: geminiBreaker.getSnapshot().state,
+    });
   } catch (error: any) {
     console.error("Gemini Translation Error:", error);
     return res.json({ translatedText: req.body.text || "", fallback: true });
   }
 });
 
-// 9.2 Book Synopsis Generation with Prompt Injection Defense
+// 9.2 Book Synopsis Generation (com modo assíncrono em fila + circuit breaker + cota por plano)
 app.post("/api/biblioteca/generate-synopsis", aiLimiter, requireAuth, async (req: Request, res: Response): Promise<any> => {
   try {
     const parseResult = SynopsisSchema.safeParse(req.body);
@@ -2225,12 +2396,35 @@ app.post("/api/biblioteca/generate-synopsis", aiLimiter, requireAuth, async (req
       return res.status(400).json({ error: parseResult.error.issues[0]?.message });
     }
 
-    const { title, author, category, textSample } = parseResult.data;
+    const { title, author, category, textSample, async: isAsyncRequested } = parseResult.data;
     const tenantId = req.user?.tenant_id || "global";
 
-    if (!checkTenantAiQuota(tenantId)) {
+    const quotaCheck = await checkTenantAiQuota(tenantId);
+    if (!quotaCheck.allowed) {
       return res.status(429).json({
-        error: "Limite de cota de inteligência artificial atingido para esta instituição nesta hora.",
+        code: "ai_quota_exceeded",
+        error: `Cota horária de Inteligência Artificial atingida (${quotaCheck.used}/${quotaCheck.limit}) para o seu plano institucional.`,
+      });
+    }
+
+    if (isAsyncRequested === true || req.query.async === "true") {
+      const synopsisKey = crypto
+        .createHash("md5")
+        .update(`${tenantId}::${title || ""}::${author || ""}::${(textSample || "").slice(0, 400)}`)
+        .digest("hex");
+      const { job, idempotent } = await enqueueJob({
+        tenantId,
+        type: "ai_task",
+        title: `Sinopse IA: ${title || "Obra Escolar"}`,
+        idempotencyKey: `ai_synopsis:${synopsisKey}`,
+        payload: { subType: "synopsis", title, author, category, textSample },
+        createdBy: req.user?.uid || "librarian",
+      });
+      return res.status(202).json({
+        queued: true,
+        idempotent,
+        jobId: job.id,
+        status: job.status,
       });
     }
 
@@ -2253,21 +2447,30 @@ Category: ${category || "Geral"}
 Text Sample: ${textSample || "Nenhum excerto fornecido."}
 === END BOOK METADATA ===`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-    });
+    let usedFallback = false;
+    const rawSynopsis = await geminiBreaker.execute(
+      async () => {
+        const response: any = await ai!.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: prompt,
+        });
+        return response.text ? response.text.trim() : "";
+      },
+      () => {
+        usedFallback = true;
+        return `Sinopse editorial para "${title || "Obra Escolar"}": conteúdo educativo da área ${category || "Geral"} disponível para consulta imediata.`;
+      }
+    );
 
-    const rawSynopsis = response.text ? response.text.trim() : "";
     const synopsis = sanitizeAiOutput(rawSynopsis);
-    return res.json({ synopsis });
+    return res.json({ synopsis, fallback: usedFallback, circuitState: geminiBreaker.getSnapshot().state });
   } catch (error: any) {
     return res.json({ synopsis: "Sinopse em processamento editorial.", fallback: true });
   }
 });
 
 // ============================================================================
-// 10. REAL STRIPE SAAS BILLING GATEWAY (SERVER-SIDE AUTHORIZATION & PRICING)
+// 10. REAL STRIPE SAAS BILLING GATEWAY (CIRCUIT BREAKER + TIMEOUT PROTECTION)
 // ============================================================================
 
 const PLAN_PRICING: Record<string, { amount: number; name: string }> = {
@@ -2291,36 +2494,42 @@ app.post("/api/stripe/create-checkout-session", requireAuth, async (req: Request
     const stripe = getStripe();
     const origin = req.headers.origin || process.env.APP_URL || "http://localhost:3000";
 
-    const session = await stripe.checkout.sessions.create({
-      mode: mode as Stripe.Checkout.SessionCreateParams.Mode,
-      payment_method_types: ["card"],
-      line_items: [
-        {
-          price_data: {
-            currency: "usd",
-            product_data: {
-              name: `SysEdu - ${plan.name}`,
-              description: `Assinatura de gestão escolar para Tenant: ${caller.tenant_id}`,
+    const session = await stripeBreaker.execute(() =>
+      stripe.checkout.sessions.create({
+        mode: mode as Stripe.Checkout.SessionCreateParams.Mode,
+        payment_method_types: ["card"],
+        line_items: [
+          {
+            price_data: {
+              currency: "usd",
+              product_data: {
+                name: `SysEdu - ${plan.name}`,
+                description: `Assinatura de gestão escolar para Tenant: ${caller.tenant_id}`,
+              },
+              unit_amount: plan.amount,
+              recurring: mode === "subscription" ? { interval: "month" } : undefined,
             },
-            unit_amount: plan.amount,
-            recurring: mode === "subscription" ? { interval: "month" } : undefined,
+            quantity: 1,
           },
-          quantity: 1,
+        ],
+        client_reference_id: caller.tenant_id,
+        metadata: {
+          userId: caller.uid,
+          userEmail: caller.email,
+          schoolId: caller.tenant_id,
+          planId,
         },
-      ],
-      client_reference_id: caller.tenant_id,
-      metadata: {
-        userId: caller.uid,
-        userEmail: caller.email,
-        schoolId: caller.tenant_id,
-        planId,
-      },
-      success_url: successUrl || `${origin}/?stripe_checkout=success&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: cancelUrl || `${origin}/?stripe_checkout=cancelled`,
-    });
+        success_url: successUrl || `${origin}/?stripe_checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: cancelUrl || `${origin}/?stripe_checkout=cancelled`,
+      })
+    );
 
     return res.json({ success: true, sessionId: session.id, url: session.url });
   } catch (error: any) {
+    if (error instanceof CircuitOpenError) {
+      res.setHeader("Retry-After", String(error.retryAfterSeconds));
+      return res.status(503).json({ code: "stripe_circuit_open", error: error.message });
+    }
     console.error("Stripe Checkout Error:", error);
     return res.status(500).json({ error: error.message });
   }
@@ -2343,13 +2552,19 @@ app.post("/api/stripe/create-portal-session", requireAuth, requireRole(["super_a
     const stripe = getStripe();
     const origin = req.headers.origin || process.env.APP_URL || "http://localhost:3000";
 
-    const portal = await stripe.billingPortal.sessions.create({
-      customer: customerId,
-      return_url: returnUrl || origin,
-    });
+    const portal = await stripeBreaker.execute(() =>
+      stripe.billingPortal.sessions.create({
+        customer: customerId,
+        return_url: returnUrl || origin,
+      })
+    );
 
     return res.json({ success: true, url: portal.url });
   } catch (error: any) {
+    if (error instanceof CircuitOpenError) {
+      res.setHeader("Retry-After", String(error.retryAfterSeconds));
+      return res.status(503).json({ code: "stripe_circuit_open", error: error.message });
+    }
     return res.status(500).json({ error: error.message });
   }
 });
@@ -2364,12 +2579,18 @@ app.post("/api/stripe/cancel-subscription", requireAuth, requireRole(["super_adm
     const { subscriptionId, immediately } = parseResult.data;
     const stripe = getStripe();
 
-    const sub = immediately
-      ? await stripe.subscriptions.cancel(subscriptionId)
-      : await stripe.subscriptions.update(subscriptionId, { cancel_at_period_end: true });
+    const sub = await stripeBreaker.execute(() =>
+      immediately
+        ? stripe.subscriptions.cancel(subscriptionId)
+        : stripe.subscriptions.update(subscriptionId, { cancel_at_period_end: true })
+    );
 
     return res.json({ success: true, status: sub.status });
   } catch (error: any) {
+    if (error instanceof CircuitOpenError) {
+      res.setHeader("Retry-After", String(error.retryAfterSeconds));
+      return res.status(503).json({ code: "stripe_circuit_open", error: error.message });
+    }
     return res.status(500).json({ error: error.message });
   }
 });
@@ -2384,11 +2605,13 @@ app.post("/api/stripe/refund", requireAuth, requireRole(["super_admin"]), async 
     const { paymentIntentId, amount, reason } = parseResult.data;
     const stripe = getStripe();
 
-    const refund = await stripe.refunds.create({
-      payment_intent: paymentIntentId,
-      amount: amount ? Math.round(amount * 100) : undefined,
-      reason,
-    });
+    const refund = await stripeBreaker.execute(() =>
+      stripe.refunds.create({
+        payment_intent: paymentIntentId,
+        amount: amount ? Math.round(amount * 100) : undefined,
+        reason,
+      })
+    );
 
     await recordAuditLog({
       actor_id: req.user!.uid,
@@ -2403,6 +2626,10 @@ app.post("/api/stripe/refund", requireAuth, requireRole(["super_admin"]), async 
 
     return res.json({ success: true, refundId: refund.id, status: refund.status });
   } catch (error: any) {
+    if (error instanceof CircuitOpenError) {
+      res.setHeader("Retry-After", String(error.retryAfterSeconds));
+      return res.status(503).json({ code: "stripe_circuit_open", error: error.message });
+    }
     return res.status(500).json({ error: error.message });
   }
 });
@@ -2522,6 +2749,522 @@ app.post("/api/upload/validate-file", requireAuth, express.json({ limit: "15mb" 
 });
 
 // ============================================================================
+// 13.5 PAGINAÇÃO POR CURSOR & AGREGADOS ANALÍTICOS MULTI-TENANT (FASE 2)
+// ============================================================================
+
+const PAGINATED_COLLECTIONS_ALLOWLIST = new Set([
+  "estudantes",
+  "docentes",
+  "turmas",
+  "pautas",
+  "atividades",
+  "notificacoes",
+  "assiduidade_logs",
+  "faturas_estudantes",
+  "livros",
+  "log_auditoria",
+  "relatorios_mensais",
+  "planoAulas",
+]);
+
+app.get("/api/db/paginated/:collection", requireAuth, async (req: Request, res: Response): Promise<any> => {
+  try {
+    const colName = String(req.params.collection || "").trim();
+    if (!PAGINATED_COLLECTIONS_ALLOWLIST.has(colName)) {
+      return res.status(400).json({ error: "Colecção não permitida para consulta paginada." });
+    }
+
+    const caller = req.user!;
+    const requestedTenant = typeof req.query.tenant_id === "string" ? req.query.tenant_id.trim() : "";
+    const isSuper = caller.role === "super_admin" || caller.role === "superadmin";
+    const tenantId = isSuper && requestedTenant ? requestedTenant : caller.tenant_id;
+
+    if (!tenantId || tenantId === "default") {
+      return res.status(403).json({ error: "Identificador de tenant obrigatório para isolamento de dados." });
+    }
+
+    const rawLimit = parseInt(String(req.query.limit || "25"), 10);
+    const pageSize = Math.min(Math.max(1, isNaN(rawLimit) ? 25 : rawLimit), 100);
+    const cursorId = typeof req.query.cursor === "string" ? req.query.cursor.trim() : "";
+    const orderField = typeof req.query.orderBy === "string" && /^[a-zA-Z0-9_]+$/.test(req.query.orderBy)
+      ? req.query.orderBy
+      : "created_at";
+    const orderDir = req.query.dir === "asc" ? "asc" : "desc";
+    const tenantField = colName === "planoAulas" ? "tenantId" : "tenant_id";
+
+    const db = getFirestoreInstance();
+    let q = db.collection(colName).where(tenantField, "==", tenantId).orderBy(orderField, orderDir);
+
+    if (cursorId) {
+      const cursorDoc = await db.collection(colName).doc(cursorId).get();
+      if (cursorDoc.exists) {
+        q = q.startAfter(cursorDoc);
+      }
+    }
+
+    const snap = await q.limit(pageSize + 1).get();
+    const hasMore = snap.docs.length > pageSize;
+    const docs = hasMore ? snap.docs.slice(0, pageSize) : snap.docs;
+    const items = docs.map((d: any) => ({ id: d.id, ...d.data() }));
+    const nextCursor = hasMore && docs.length > 0 ? docs[docs.length - 1].id : null;
+
+    res.set({
+      "Cache-Control": "private, max-age=15, stale-while-revalidate=30",
+      "Vary": "Authorization",
+    });
+
+    return res.json({
+      items,
+      nextCursor,
+      hasMore,
+      pageSize,
+      tenantId,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Erro ao consultar registos paginados." });
+  }
+});
+
+// Cache curta em memória por tenant para resumos analíticos pré-calculados (reduz leituras repetidas)
+const ANALYTICS_SUMMARY_TTL_MS = 30_000;
+const analyticsSummaryCache = new Map<string, { data: any; expiresAt: number }>();
+
+function setCachedAnalyticsSummary(tenantId: string, data: any) {
+  if (analyticsSummaryCache.size >= 500 && !analyticsSummaryCache.has(tenantId)) {
+    const oldest = analyticsSummaryCache.keys().next().value;
+    if (oldest) analyticsSummaryCache.delete(oldest);
+  }
+  analyticsSummaryCache.set(tenantId, {
+    data,
+    expiresAt: Date.now() + ANALYTICS_SUMMARY_TTL_MS,
+  });
+}
+
+app.get("/api/analytics/summary", requireAuth, async (req: Request, res: Response): Promise<any> => {
+  try {
+    const caller = req.user!;
+    const isSuper = caller.role === "super_admin" || caller.role === "superadmin";
+    const requestedTenant = typeof req.query.tenant_id === "string" ? req.query.tenant_id.trim() : "";
+    const tenantId = isSuper && requestedTenant ? requestedTenant : caller.tenant_id;
+
+    if (!tenantId) {
+      return res.status(400).json({ error: "Identificador de tenant em falta." });
+    }
+
+    res.set({
+      "Cache-Control": "private, max-age=30, stale-while-revalidate=120",
+      "Vary": "Authorization",
+    });
+
+    const cached = analyticsSummaryCache.get(tenantId);
+    if (cached && Date.now() < cached.expiresAt) {
+      return res.json({ exists: true, aggregate: cached.data, cached: true });
+    }
+
+    const db = getFirestoreInstance();
+    const aggDoc = await db.collection("tenant_analytics").doc(tenantId).get();
+    if (!aggDoc.exists) {
+      return res.json({ exists: false, aggregate: null });
+    }
+    const aggData = aggDoc.data();
+    setCachedAnalyticsSummary(tenantId, aggData);
+    return res.json({ exists: true, aggregate: aggData });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Erro ao ler agregados analíticos." });
+  }
+});
+
+app.post("/api/analytics/recompute", requireAuth, requireRole(["super_admin", "admin", "tenant_admin", "director"]), async (req: Request, res: Response): Promise<any> => {
+  try {
+    const caller = req.user!;
+    const isSuper = caller.role === "super_admin" || caller.role === "superadmin";
+    const requestedTenant = typeof req.body?.tenant_id === "string" ? req.body.tenant_id.trim() : "";
+    const tenantId = isSuper && requestedTenant ? requestedTenant : caller.tenant_id;
+
+    if (!tenantId) {
+      return res.status(400).json({ error: "Identificador de tenant obrigatório." });
+    }
+
+    if (req.body?.async === true || req.query.async === "true") {
+      const { job, idempotent } = await enqueueJob({
+        tenantId,
+        type: "report_generate",
+        title: "Recálculo de Agregados Analíticos",
+        idempotencyKey: `analytics_recompute:${tenantId}:${Math.floor(Date.now() / 15000)}`,
+        payload: { scope: "analytics_recompute", tenantId },
+        createdBy: caller.uid,
+      });
+      return res.status(202).json({
+        queued: true,
+        idempotent,
+        jobId: job.id,
+        status: job.status,
+      });
+    }
+
+    const db = getFirestoreInstance();
+    const [
+      escolasCountSnap,
+      docentesCountSnap,
+      estudantesAtivosCountSnap,
+      estudantesInativosCountSnap,
+      turmasCountSnap,
+      salasSnap,
+      cursosSnap,
+      cadeirasCountSnap,
+    ] = await Promise.all([
+      db.collection("escolas").where("tenant_id", "==", tenantId).count(),
+      db.collection("docentes").where("tenant_id", "==", tenantId).count(),
+      db.collection("estudantes").where("tenant_id", "==", tenantId).where("ativo", "==", true).count(),
+      db.collection("estudantes").where("tenant_id", "==", tenantId).where("ativo", "==", false).count(),
+      db.collection("turmas").where("tenant_id", "==", tenantId).count(),
+      db.collection("salas").where("tenant_id", "==", tenantId).limit(500).get(),
+      db.collection("cursos").where("tenant_id", "==", tenantId).limit(500).get(),
+      db.collection("cadeiras").where("tenant_id", "==", tenantId).count(),
+    ]);
+
+    const escolas = escolasCountSnap.data().count;
+    const docentes = docentesCountSnap.data().count;
+    const estudantesAtivos = estudantesAtivosCountSnap.data().count;
+    const estudantesInativos = estudantesInativosCountSnap.data().count;
+    const turmas = turmasCountSnap.data().count;
+    const cadeiras = cadeirasCountSnap.data().count;
+
+    let capacidadeTotalSalas = 0;
+    salasSnap.docs.forEach((d: any) => {
+      capacidadeTotalSalas += Number(d.data()?.capacidade) || 30;
+    });
+
+    const summary = {
+      tenant_id: tenantId,
+      schema_version: 1,
+      updated_at: new Date().toISOString(),
+      totais: {
+        escolas,
+        docentes,
+        estudantes_ativos: estudantesAtivos,
+        estudantes_inativos: estudantesInativos,
+        turmas,
+        salas: salasSnap.size,
+        cursos: cursosSnap.size,
+        cadeiras,
+        capacidade_total_salas: capacidadeTotalSalas,
+        racio_aluno_docente: docentes > 0 ? Number((estudantesAtivos / docentes).toFixed(1)) : 0,
+      },
+    };
+
+    await db.collection("tenant_analytics").doc(tenantId).set(summary, { merge: true });
+    // Invalida e atualiza imediatamente a cache de resumo do tenant
+    analyticsSummaryCache.delete(tenantId);
+    setCachedAnalyticsSummary(tenantId, summary);
+    return res.json({ success: true, aggregate: summary });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Erro ao recalcular agregados analíticos." });
+  }
+});
+
+// ============================================================================
+// 13B. FILA DE PROCESSAMENTO ASSÍNCRONO & ENDPOINTS DE PROGRESSO (FASE 4)
+// ============================================================================
+
+app.post("/api/jobs", requireAuth, async (req: Request, res: Response): Promise<any> => {
+  try {
+    const parseResult = EnqueueJobSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: parseResult.error.issues[0]?.message || "Payload inválido." });
+    }
+
+    const caller = req.user!;
+    const { type, title, idempotencyKey, maxAttempts, payload } = parseResult.data;
+    const isSuper = caller.role === "super_admin" || caller.role === "superadmin";
+    const requestedTenant = typeof payload?.tenantId === "string" ? payload.tenantId.trim() : "";
+    const tenantId = isSuper && requestedTenant ? requestedTenant : caller.tenant_id;
+
+    if (!tenantId) {
+      return res.status(403).json({ error: "Identificador de tenant obrigatório." });
+    }
+
+    const { job, idempotent } = await enqueueJob({
+      tenantId,
+      type,
+      title,
+      idempotencyKey,
+      maxAttempts,
+      payload,
+      createdBy: caller.uid,
+    });
+
+    return res.status(202).json({
+      success: true,
+      queued: true,
+      idempotent,
+      jobId: job.id,
+      status: job.status,
+      progress: job.progress,
+      progress_message: job.progress_message,
+      job,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Erro ao enfileirar tarefa assíncrona." });
+  }
+});
+
+app.get("/api/jobs", requireAuth, async (req: Request, res: Response): Promise<any> => {
+  try {
+    const caller = req.user!;
+    const isSuper = caller.role === "super_admin" || caller.role === "superadmin";
+    const requestedTenant = typeof req.query.tenant_id === "string" ? req.query.tenant_id.trim() : "";
+    const tenantId = isSuper && requestedTenant ? requestedTenant : caller.tenant_id;
+
+    if (!tenantId) {
+      return res.status(403).json({ error: "Identificador de tenant obrigatório." });
+    }
+
+    const limitParam = parseInt(String(req.query.limit || "25"), 10);
+    const result = await listTenantJobs(tenantId, isNaN(limitParam) ? 25 : limitParam);
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Erro ao listar tarefas em fila." });
+  }
+});
+
+app.get("/api/jobs/:id", requireAuth, async (req: Request, res: Response): Promise<any> => {
+  try {
+    const caller = req.user!;
+    const isSuper = caller.role === "super_admin" || caller.role === "superadmin";
+    const job = await getJobById(String(req.params.id || ""), caller.tenant_id, isSuper);
+
+    if (!job) {
+      return res.status(404).json({ error: "Tarefa não encontrada ou sem permissão de acesso." });
+    }
+
+    res.set({ "Cache-Control": "no-store" });
+    return res.json({ job });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Erro ao consultar estado da tarefa." });
+  }
+});
+
+app.get("/api/jobs/:id/stream", requireAuth, async (req: Request, res: Response): Promise<any> => {
+  const caller = req.user!;
+  const isSuper = caller.role === "super_admin" || caller.role === "superadmin";
+  const jobId = String(req.params.id || "").trim();
+
+  if (!jobId) {
+    return res.status(400).json({ error: "Identificador da tarefa obrigatório." });
+  }
+
+  const initialJob = await getJobById(jobId, caller.tenant_id, isSuper);
+  if (!initialJob) {
+    return res.status(404).json({ error: "Tarefa não encontrada ou sem permissão de acesso." });
+  }
+
+  res.set({
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  res.flushHeaders?.();
+
+  let closed = false;
+  const writeEvent = (eventName: string, payload: unknown) => {
+    if (closed || res.writableEnded) return;
+    res.write(`event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`);
+  };
+
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    asyncJobEvents.off(`job:${jobId}`, onJobUpdate);
+    clearInterval(heartbeatTimer);
+  };
+
+  const onJobUpdate = (updatedJob: any) => {
+    if (!isSuper && updatedJob.tenant_id !== caller.tenant_id) return;
+    writeEvent("job-update", { job: updatedJob });
+    if (updatedJob.status === "concluido" || updatedJob.status === "dead_letter") {
+      cleanup();
+      if (!res.writableEnded) res.end();
+    }
+  };
+
+  const heartbeatTimer = setInterval(() => {
+    if (!closed && !res.writableEnded) {
+      res.write(": ping\n\n");
+    }
+  }, 20_000);
+
+  req.on("close", cleanup);
+  req.on("aborted", cleanup);
+
+  writeEvent("job-update", { job: initialJob });
+  if (initialJob.status === "concluido" || initialJob.status === "dead_letter") {
+    cleanup();
+    if (!res.writableEnded) res.end();
+    return;
+  }
+
+  asyncJobEvents.on(`job:${jobId}`, onJobUpdate);
+});
+
+app.post(
+  "/api/jobs/:id/retry",
+  requireAuth,
+  requireRole(["super_admin", "admin", "tenant_admin", "director"]),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const caller = req.user!;
+      const isSuper = caller.role === "super_admin" || caller.role === "superadmin";
+      const retried = await retryDeadLetterJob(String(req.params.id || ""), caller.tenant_id, isSuper);
+
+      if (!retried) {
+        return res.status(404).json({ error: "Tarefa não encontrada na fila ou sem permissão." });
+      }
+
+      return res.status(202).json({
+        success: true,
+        jobId: retried.id,
+        status: retried.status,
+        job: retried,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Erro ao reprocessar tarefa." });
+    }
+  }
+);
+
+app.post("/api/notifications/bulk", requireAuth, async (req: Request, res: Response): Promise<any> => {
+  try {
+    const parseResult = BulkNotificationSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: parseResult.error.issues[0]?.message || "Dados inválidos." });
+    }
+
+    const caller = req.user!;
+    const data = parseResult.data;
+    const tenantId = caller.tenant_id;
+
+    const derivedIdemKey =
+      data.idempotencyKey ||
+      (data.action === "notificar_aula_pendente" && data.planoAulaId
+        ? `notify_pending_lesson:${tenantId}:${data.planoAulaId}`
+        : undefined);
+
+    const jobTitle =
+      data.action === "notificar_aula_pendente"
+        ? `Notificar Aula Pendente: ${data.topico || "Plano de Aulas"}`
+        : data.titulo || "Notificação em massa";
+
+    const { job, idempotent } = await enqueueJob({
+      tenantId,
+      type: "bulk_notification",
+      title: jobTitle,
+      idempotencyKey: derivedIdemKey,
+      payload: {
+        ...data,
+        createdById: caller.uid,
+        createdByEmail: caller.email,
+        createdByName: req.body?.createdByName || caller.email || "Direcção / Secretaria",
+      },
+      createdBy: caller.uid,
+    });
+
+    return res.status(202).json({
+      success: true,
+      queued: true,
+      idempotent,
+      jobId: job.id,
+      status: job.status,
+      progress: job.progress,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Erro ao enfileirar notificação em massa." });
+  }
+});
+
+app.post(
+  "/api/reports/generate",
+  requireAuth,
+  requireRole(["super_admin", "admin", "tenant_admin", "director", "docente"]),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const parseResult = ReportGenerateAsyncSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return res.status(400).json({ error: parseResult.error.issues[0]?.message || "Dados inválidos." });
+      }
+
+      const caller = req.user!;
+      const isSuper = caller.role === "super_admin" || caller.role === "superadmin";
+      const data = parseResult.data;
+      const tenantId = isSuper && data.tenantId ? data.tenantId : caller.tenant_id;
+
+      const { job, idempotent } = await enqueueJob({
+        tenantId,
+        type: "report_generate",
+        title:
+          data.scope === "monthly_report"
+            ? `Relatório Mensal (${data.monthName || "Corrente"})`
+            : "Consolidação de Agregados Analíticos",
+        idempotencyKey: data.idempotencyKey,
+        payload: {
+          ...data,
+          tenantId,
+          authorName: req.body?.authorName || caller.email,
+        },
+        createdBy: caller.uid,
+      });
+
+      return res.status(202).json({
+        success: true,
+        queued: true,
+        idempotent,
+        jobId: job.id,
+        status: job.status,
+        progress: job.progress,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Erro ao enfileirar relatório." });
+    }
+  }
+);
+
+app.post("/api/reports/export-pdf", requireAuth, async (req: Request, res: Response): Promise<any> => {
+  try {
+    const parseResult = PdfExportAsyncSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: parseResult.error.issues[0]?.message || "Dados inválidos." });
+    }
+
+    const caller = req.user!;
+    const data = parseResult.data;
+    const { job, idempotent } = await enqueueJob({
+      tenantId: caller.tenant_id,
+      type: "pdf_generate",
+      title: `Exportação PDF: ${data.title}`,
+      idempotencyKey: data.idempotencyKey,
+      payload: {
+        ...data,
+        actorEmail: caller.email,
+        actorName: req.body?.actorName || caller.email,
+      },
+      createdBy: caller.uid,
+    });
+
+    return res.status(202).json({
+      success: true,
+      queued: true,
+      idempotent,
+      jobId: job.id,
+      status: job.status,
+      progress: job.progress,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Erro ao enfileirar geração de PDF." });
+  }
+});
+
+// ============================================================================
 // 14. API 404 GUARD & GLOBAL ERROR HANDLER
 // ============================================================================
 
@@ -2568,18 +3311,106 @@ async function startServer() {
     });
   } else {
     const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
+    app.use(
+      express.static(distPath, {
+        etag: true,
+        lastModified: true,
+        setHeaders: (res, filePath) => {
+          const normalized = filePath.replace(/\\/g, "/");
+          if (normalized.includes("/assets/")) {
+            // Bundles Vite com hash no nome: cache imutável de 1 ano para browser e CDN
+            res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+          } else if (/\.(png|jpe?g|webp|svg|gif|ico|woff2?|ttf|pdf)$/i.test(normalized)) {
+            // Ficheiros media e ícones: cache CDN/browser de 24h com revalidação em background de 7 dias
+            res.setHeader("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800");
+          } else if (
+            normalized.endsWith("/index.html") ||
+            normalized.endsWith("/sw.js") ||
+            normalized.endsWith("/manifest.json")
+          ) {
+            // Shell HTML e Service Worker: nunca servir versão obsoleta (compatível com WebView Android e PWA)
+            res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+          }
+        },
+      })
+    );
     app.get("*", (req: Request, res: Response) => {
       if (req.path.startsWith("/api")) {
         return res.status(404).json({ error: `Endpoint de API não encontrado: ${req.method} ${req.originalUrl}` });
       }
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[SysEdu Server] Running securely on port ${PORT} (PID: ${process.pid})`);
+  if (EMBEDDED_WORKER_ENABLED) {
+    registerAllAsyncJobHandlers({
+      getGeminiClient: () => ai,
+      onAnalyticsUpdated: (tenantId, summary) => {
+        analyticsSummaryCache.delete(tenantId);
+        setCachedAnalyticsSummary(tenantId, summary);
+      },
+    });
+    startAsyncWorkerLoop(4000);
+  } else {
+    logSecurityEvent("INFO", "embedded_worker_disabled", {
+      message: "Worker assíncrono em modo externo dedicado (ENABLE_EMBEDDED_WORKER=false).",
+    });
+  }
+
+  const httpServer = app.listen(PORT, "0.0.0.0", () => {
+    logSecurityEvent("INFO", "server_started", {
+      port: PORT,
+      pid: process.pid,
+      statelessSessions: true,
+      workerMode: EMBEDDED_WORKER_ENABLED ? "embedded" : "external",
+    });
   });
+
+  // Avaliador periódico de SLO e alertas de degradação (Logs estruturados deduplicados a cada 30s)
+  const sloMonitorTimer = setInterval(async () => {
+    if (isShuttingDown) return;
+    try {
+      const queue = await getQueueMetricsSnapshot();
+      getObservabilitySnapshot({
+        callerRole: "super_admin",
+        callerTenantId: "global",
+        queue,
+        circuitBreakers: getCircuitBreakersSnapshot(),
+        emitAlertLogs: true,
+      });
+    } catch {
+      // Nunca interrompe o processo principal por erro no ciclo de monitorização
+    }
+  }, 30_000);
+  sloMonitorTimer.unref();
+
+  const gracefulShutdown = async (signal: string) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    clearInterval(sloMonitorTimer);
+    stopObservabilityMonitors();
+    logSecurityEvent("INFO", "graceful_shutdown_started", { signal, inFlightRequests });
+
+    // Aguardar até 5s pelos pedidos HTTP em curso antes de fechar workers
+    const drainDeadline = Date.now() + 5000;
+    while (inFlightRequests > 0 && Date.now() < drainDeadline) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    if (EMBEDDED_WORKER_ENABLED) {
+      await stopAsyncWorkerLoop();
+    }
+
+    httpServer.close(() => {
+      logSecurityEvent("INFO", "graceful_shutdown_completed", { signal });
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(0), 6000).unref();
+  };
+
+  process.once("SIGTERM", () => void gracefulShutdown("SIGTERM"));
+  process.once("SIGINT", () => void gracefulShutdown("SIGINT"));
 }
 
 startServer();

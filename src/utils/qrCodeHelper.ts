@@ -1,5 +1,3 @@
-import QRCode from 'qrcode';
-
 export interface StudentQrData {
   type: 'SGE_STUDENT_BADGE';
   tenant_id: string;
@@ -31,6 +29,7 @@ export const generateStudentQrPayload = (
 
 export const generateQrDataUrl = async (text: string): Promise<string> => {
   try {
+    const { default: QRCode } = await import('qrcode');
     return await QRCode.toDataURL(text, {
       margin: 1,
       width: 200,

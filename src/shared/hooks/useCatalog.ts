@@ -4,6 +4,7 @@
  */
 
 import { useMemo } from 'react';
+import { getCachedDropdownCatalog } from '../../lib/referenceCache';
 import {
   CatalogItem,
   LESSON_STATUS_CATALOG,
@@ -54,16 +55,24 @@ export function useCatalog(name: CatalogName) {
   }, [name]);
 
   const activeItems = useMemo(() => {
-    return items.filter(i => i.active).sort((a, b) => a.order - b.order);
+    return getCachedDropdownCatalog(name, items);
+  }, [name, items]);
+
+  const itemByValue = useMemo(() => {
+    const map = new Map<string, CatalogItem>();
+    for (const item of items) {
+      map.set(String(item.value).toLowerCase(), item);
+    }
+    return map;
   }, [items]);
 
   const getLabel = (value: string, fallback?: string): string => {
-    const found = items.find(i => String(i.value).toLowerCase() === String(value).toLowerCase());
+    const found = itemByValue.get(String(value).toLowerCase());
     return found?.labelDefault || fallback || value;
   };
 
   const getItem = (value: string): CatalogItem | undefined => {
-    return items.find(i => String(i.value).toLowerCase() === String(value).toLowerCase());
+    return itemByValue.get(String(value).toLowerCase());
   };
 
   return {

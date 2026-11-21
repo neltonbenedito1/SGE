@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, Suspense } from 'react';
 import {
   Settings,
   Building,
@@ -33,7 +33,17 @@ import {
 } from 'lucide-react';
 import { TenantConfig, IntervaloHorario } from '../types';
 import { LANGUAGES } from '../lib/translation';
-import { FormulariosCustomizadosModule } from './FormulariosCustomizadosModule';
+import { lazyWithRetry } from '../lib/lazyWithRetry';
+import { ModuleSkeleton } from './Skeletons';
+import { ModuleErrorBoundary } from './ErrorBoundary';
+import { DEFAULT_INTERVALOS } from '../config/permissionsDefaults';
+
+export { DEFAULT_INTERVALOS };
+
+const FormulariosCustomizadosModule = lazyWithRetry(
+  () => import('./FormulariosCustomizadosModule').then((m) => ({ default: m.FormulariosCustomizadosModule })),
+  'FormulariosCustomizadosModule'
+);
 
 interface ModuloConfiguracoesProps {
   tenantId?: string;
@@ -53,12 +63,6 @@ interface ModuloConfiguracoesProps {
   existingClasses?: any[];
   onFormulariosUpdated?: () => void;
 }
-
-export const DEFAULT_INTERVALOS: IntervaloHorario[] = [
-  { id: 'int-m1', nome: 'Recreio da Manhã', turno: 'manha', hora_inicio: '09:15', hora_fim: '09:30', ativo: true },
-  { id: 'int-t1', nome: 'Recreio da Tarde', turno: 'tarde', hora_inicio: '14:15', hora_fim: '14:30', ativo: true },
-  { id: 'int-n1', nome: 'Intervalo da Noite', turno: 'noite', hora_inicio: '20:15', hora_fim: '20:30', ativo: true },
-];
 
 export const ModuloConfiguracoes: React.FC<ModuloConfiguracoesProps> = ({
   tenantId,
@@ -1709,12 +1713,16 @@ export const ModuloConfiguracoes: React.FC<ModuloConfiguracoesProps> = ({
 
           {/* TAB: FORMULÁRIOS CUSTOMIZADOS */}
           {activeSection === 'formularios_customizados' && (
-            <FormulariosCustomizadosModule
-              tenantId={tenantId || config.tenant_id || ''}
-              showNotification={(msg, type) => showNotification(msg, type === 'alerta' ? 'erro' : type as any)}
-              canEdit={canEdit}
-              onFormulariosUpdated={onFormulariosUpdated}
-            />
+            <ModuleErrorBoundary title="Formulários Customizados">
+              <Suspense fallback={<ModuleSkeleton title="A carregar editor de formulários..." />}>
+                <FormulariosCustomizadosModule
+                  tenantId={tenantId || config.tenant_id || ''}
+                  showNotification={(msg, type) => showNotification(msg, type === 'alerta' ? 'erro' : type as any)}
+                  canEdit={canEdit}
+                  onFormulariosUpdated={onFormulariosUpdated}
+                />
+              </Suspense>
+            </ModuleErrorBoundary>
           )}
         </div>
       </div>

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, lazy, Suspense } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { seedDatabaseIfEmpty, db, auth, registerUserInFirebaseAuth } from './lib/firebase';
 import { 
   signInWithEmailAndPassword, 
@@ -26,16 +26,34 @@ import {
 import { Tenant, Plano, TipoInstituicao } from './types';
 import { INSTITUTION_TYPES, getInstitutionConfig } from './config/institutionTypes';
 import { INSTITUTION_FORM_SCHEMAS } from './config/institutionFormSchemas';
+import { lazyWithRetry } from './lib/lazyWithRetry';
+import {
+  getOrFetchCached,
+  buildGlobalCacheKey,
+  clearTenantCaches,
+  CACHE_TTLS,
+} from './lib/referenceCache';
 
-const SuperAdminPortal = lazy(() => import('./components/SuperAdminPortal'));
-const TenantPortal = lazy(() => import('./components/TenantPortal'));
+const SuperAdminPortal = lazyWithRetry(() => import('./components/SuperAdminPortal'), 'SuperAdminPortal');
+const TenantPortal = lazyWithRetry(() => import('./components/TenantPortal'), 'TenantPortal');
+const BrandbookView = lazyWithRetry(() => import('./components/BrandbookView'), 'BrandbookView');
+const StripeCheckoutStatus = lazyWithRetry(
+  () => import('./components/StripeCheckoutStatus').then((m) => ({ default: m.StripeCheckoutStatus })),
+  'StripeCheckoutStatus'
+);
+const CookiePolicyModal = lazyWithRetry(
+  () => import('./components/CookiePolicyModal').then((m) => ({ default: m.CookiePolicyModal })),
+  'CookiePolicyModal'
+);
+const MandatoryPasswordResetModal = lazyWithRetry(
+  () => import('./components/MandatoryPasswordResetModal').then((m) => ({ default: m.MandatoryPasswordResetModal })),
+  'MandatoryPasswordResetModal'
+);
 
-import { ErrorBoundary } from './components/ErrorBoundary';
+import { ErrorBoundary, ModuleErrorBoundary } from './components/ErrorBoundary';
+import { ModuleSkeleton } from './components/Skeletons';
 import { SysEduLogo } from './components/SysEduLogo';
-import BrandbookView from './components/BrandbookView';
 import { SamsungLoadingScreen } from './components/SamsungLoadingScreen';
-import { StripeCheckoutStatus } from './components/StripeCheckoutStatus';
-import { StripePricingCards } from './components/StripePricingCards';
 import { 
   LANGUAGES, 
   getSystemLanguage, 
@@ -98,8 +116,6 @@ import {
   CookiePreferences
 } from './lib/cookies';
 import { CookieBanner } from './components/CookieBanner';
-import { CookiePolicyModal } from './components/CookiePolicyModal';
-import { MandatoryPasswordResetModal } from './components/MandatoryPasswordResetModal';
 import { PasswordPolicyIndicator } from './components/PasswordPolicyIndicator';
 import { validatePasswordPolicy } from './shared/passwordPolicy';
 import { SessionStateService } from './lib/userState';
@@ -187,6 +203,9 @@ export default function App() {
       await fetch('/api/auth/session/logout', { method: 'POST' });
     } catch (e) {
       console.warn('[Logout] Server session logout failed or offline:', e);
+    }
+    if (selectedTenantId) {
+      clearTenantCaches(selectedTenantId).catch(() => {});
     }
     deleteCookie('user_session');
     saveCurrentView('landing');
@@ -925,20 +944,16 @@ export default function App() {
 
       // 4. AUTENTICAÇÃO INSTITUCIONAL (TENANT)
       const usersRef = collection(db, 'users');
-      const q = query(usersRef, where('email', '==', emailClean));
-      const querySnap = await getDocs(q);
+      const emailCandidates = Array.from(new Set([emailClean, loginEmail.trim()].filter(Boolean)));
       let userDocData: any = null;
 
-      if (!querySnap.empty) {
-        userDocData = { id: querySnap.docs[0].id, ...querySnap.docs[0].data() };
-      } else {
-        const allUsersSnap = await getDocs(usersRef);
-        allUsersSnap.forEach((doc) => {
-          const data = doc.data();
-          if (data.email && data.email.trim().toLowerCase() === emailClean) {
-            userDocData = { id: doc.id, ...data };
-          }
-        });
+      for (const candidateEmail of emailCandidates) {
+        const q = query(usersRef, where('email', '==', candidateEmail), limit(1));
+        const querySnap = await getDocs(q);
+        if (!querySnap.empty) {
+          userDocData = { id: querySnap.docs[0].id, ...querySnap.docs[0].data() };
+          break;
+        }
       }
 
       if (!userDocData) {
@@ -954,14 +969,18 @@ export default function App() {
       }
 
       const tenantId = userDocData.tenant_id;
-      const tenantsSnap = await getDocs(collection(db, 'tenants'));
       let matchedTenant: Tenant | null = null;
-      tenantsSnap.forEach((doc) => {
-        const t = doc.data() as Tenant;
-        if (t.id === tenantId) {
-          matchedTenant = { ...t, id: doc.id };
+      if (tenantId) {
+        const directTenantSnap = await getDoc(doc(db, 'tenants', tenantId));
+        if (directTenantSnap.exists()) {
+          matchedTenant = { ...(directTenantSnap.data() as Tenant), id: directTenantSnap.id };
+        } else {
+          const tenantQuerySnap = await getDocs(query(collection(db, 'tenants'), where('id', '==', tenantId), limit(1)));
+          if (!tenantQuerySnap.empty) {
+            matchedTenant = { ...(tenantQuerySnap.docs[0].data() as Tenant), id: tenantQuerySnap.docs[0].id };
+          }
         }
-      });
+      }
 
       if (!matchedTenant || (matchedTenant as Tenant).status === 'cancelado' || (matchedTenant as any).deleted_at) {
         setLoginError(' Acesso Revogado: Esta conta de instituição foi eliminada do sistema.');
@@ -1100,46 +1119,48 @@ export default function App() {
     }
   }
 
-// Simple global memory cache for rarely changing configuration data
-const clientSideCache: Record<string, any> = {
-  planos: null,
-};
-
   // Initialize and Seed Database in background
   async function initApp() {
     try {
       await seedDatabaseIfEmpty();
       
-      // Load current Tenants and Plans in parallel (Waterfall Bottleneck Fix)
-      const fetchPlansPromise = clientSideCache.planos 
-        ? Promise.resolve(clientSideCache.planos) 
-        : getDocs(collection(db, 'planos'));
-
-      const [tenantsSnap, plansSnapOrCached] = await Promise.all([
-        getDocs(collection(db, 'tenants')),
-        fetchPlansPromise
+      // Load current Tenants and Plans in parallel using L1/L2 reference cache (SWR)
+      const [tenantsList, plansList] = await Promise.all([
+        getOrFetchCached<Tenant[]>({
+          key: buildGlobalCacheKey('tenants_public'),
+          ttlMs: CACHE_TTLS.TENANTS_PUBLIC,
+          staleWhileRevalidate: true,
+          onBackgroundUpdate: (fresh) => setTenants(fresh),
+          fetcher: async () => {
+            const snap = await getDocs(query(collection(db, 'tenants'), limit(200)));
+            const list: Tenant[] = [];
+            snap.forEach((d) => {
+              const t = d.data() as Tenant;
+              if (!t.deleted_at && t.status !== 'cancelado') {
+                list.push({ ...t, id: d.id });
+              }
+            });
+            return list;
+          },
+        }),
+        getOrFetchCached<Plano[]>({
+          key: buildGlobalCacheKey('planos'),
+          ttlMs: CACHE_TTLS.PLANOS,
+          staleWhileRevalidate: true,
+          onBackgroundUpdate: (fresh) => setPlans(fresh),
+          fetcher: async () => {
+            const snap = await getDocs(query(collection(db, 'planos'), limit(50)));
+            const list: Plano[] = [];
+            snap.forEach((d) => {
+              list.push({ ...(d.data() as Plano), id: d.id });
+            });
+            return list;
+          },
+        }),
       ]);
 
-      const tenantsList: Tenant[] = [];
-      tenantsSnap.forEach((d) => {
-        const t = d.data() as Tenant;
-        if (!t.deleted_at && t.status !== 'cancelado') {
-          tenantsList.push({ ...t, id: d.id });
-        }
-      });
       setTenants(tenantsList);
-
-      const plansList: Plano[] = [];
-      if (clientSideCache.planos) {
-        setPlans(clientSideCache.planos);
-      } else {
-        const plansSnap = plansSnapOrCached as any;
-        plansSnap.forEach((d: any) => {
-          plansList.push({ ...d.data() as Plano, id: d.id });
-        });
-        clientSideCache.planos = plansList;
-        setPlans(plansList);
-      }
+      setPlans(plansList);
 
       // Restore session from cookie/localStorage if available
       const session = getUserSessionCookie();
@@ -1448,25 +1469,31 @@ const clientSideCache: Record<string, any> = {
 
   return (
     <main className="min-h-screen bg-[var(--bg-base)] text-[var(--text-primary)] font-sans transition-colors duration-300 relative">
-      <StripeCheckoutStatus />
-      
+      <Suspense fallback={null}>
+        <StripeCheckoutStatus />
+      </Suspense>
+
       {/* VIEW: BRANDBOOK & HOMEPAGE PRESENTATION */}
       {(currentView === 'landing' || currentView === 'brandbook') && (
-        <BrandbookView 
-          onOpenLogin={() => setIsLoginModalOpen(true)}
-          onOpenCookiePolicy={() => setIsCookiePolicyOpen(true)}
-          systemLang={systemLang}
-          onChangeLanguage={(lang) => {
-            setSystemLanguage(lang);
-            setSystemLang(lang);
-            saveLastAction(`Alterou o idioma do sistema para ${lang}`);
-          }}
-          activeTheme={activeTheme}
-          onToggleTheme={() => {
-            handleThemeChange(activeTheme === 'theme-dark' ? 'theme-slate' : 'theme-dark');
-          }}
-          isBootstrapMode={Boolean(bootstrapStatus?.allowsBootstrap && !bootstrapStatus?.initialized && isBootstrapMode)}
-        />
+        <ModuleErrorBoundary title="Página Inicial">
+          <Suspense fallback={<ModuleSkeleton title="A carregar portal institucional..." rows={5} />}>
+            <BrandbookView
+              onOpenLogin={() => setIsLoginModalOpen(true)}
+              onOpenCookiePolicy={() => setIsCookiePolicyOpen(true)}
+              systemLang={systemLang}
+              onChangeLanguage={(lang) => {
+                setSystemLanguage(lang);
+                setSystemLang(lang);
+                saveLastAction(`Alterou o idioma do sistema para ${lang}`);
+              }}
+              activeTheme={activeTheme}
+              onToggleTheme={() => {
+                handleThemeChange(activeTheme === 'theme-dark' ? 'theme-slate' : 'theme-dark');
+              }}
+              isBootstrapMode={Boolean(bootstrapStatus?.allowsBootstrap && !bootstrapStatus?.initialized && isBootstrapMode)}
+            />
+          </Suspense>
+        </ModuleErrorBoundary>
       )}
 
       {/* LOGIN & SIGN-UP POPUP MODAL (OPENED VIA  LOGIN / SIGN-UP) */}
@@ -1882,9 +1909,10 @@ const clientSideCache: Record<string, any> = {
 
       {/* FIRST LOGIN MANDATORY PASSWORD RESET MODAL */}
       {firstLoginResetUser && (
-        <MandatoryPasswordResetModal
-          user={firstLoginResetUser}
-          onSuccess={() => {
+        <Suspense fallback={null}>
+          <MandatoryPasswordResetModal
+            user={firstLoginResetUser}
+            onSuccess={() => {
             showNotification("Nova senha definida com sucesso! Acesso liberado.", "sucesso");
             saveUserSessionCookie({
               id: firstLoginResetUser.id,
@@ -1904,6 +1932,7 @@ const clientSideCache: Record<string, any> = {
             setCurrentView('tenant');
           }}
         />
+        </Suspense>
       )}
 
       {/* ONBOARDING MODAL (POPUP) — FORMULÁRIO DE REGISTO DE INSTITUIÇÃO */}
@@ -2499,7 +2528,9 @@ const clientSideCache: Record<string, any> = {
       {/* COMPLIANT COOKIE CONSENT BANNER & POLICY MODAL */}
       <CookieBanner />
       {isCookiePolicyOpen && (
-        <CookiePolicyModal onClose={() => setIsCookiePolicyOpen(false)} />
+        <Suspense fallback={null}>
+          <CookiePolicyModal onClose={() => setIsCookiePolicyOpen(false)} />
+        </Suspense>
       )}
 
       {/* Global JavaScript Interceptor Modal Popup */}

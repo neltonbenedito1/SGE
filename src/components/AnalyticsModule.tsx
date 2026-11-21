@@ -11,10 +11,21 @@ import {
   Activity, BookOpenCheck, ShieldCheck, HelpCircle, FileCheck, DoorOpen, Layers, Building
 } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { collection, getDocs, addDoc, query, orderBy, getDoc, doc } from 'firebase/firestore';
+import { collection, getDocs, addDoc, query, orderBy, limit, where, QueryDocumentSnapshot, DocumentData } from 'firebase/firestore';
 import { ActividadePendente, PlanoAula } from '../types';
 import { PerformanceEvaluationModule } from './PerformanceEvaluationModule';
 import { getAnalyticsCardsForInstitution, AnalyticsCardType, getTerminology } from '../lib/terminology';
+import { fetchTenantPage } from '../lib/firestoreScalable';
+import {
+  fetchTenantAnalyticsAggregate,
+  recomputeAndPersistTenantAnalytics,
+  TenantAnalyticsAggregate
+} from '../lib/tenantAnalyticsAggregates';
+import {
+  enqueueMonthlyReportJob,
+  enqueuePdfExportJob,
+  waitForAsyncJob,
+} from '../lib/asyncJobsClient';
 
 // --- TS INTERFACES ---
 interface School {
@@ -170,6 +181,10 @@ export function AnalyticsModule({
   // --- EXTRA FIREBASE STATES ---
   const [monthlyReports, setMonthlyReports] = useState<MonthlyReport[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [auditCursor, setAuditCursor] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [hasMoreAuditLogs, setHasMoreAuditLogs] = useState(false);
+  const [loadingMoreAudit, setLoadingMoreAudit] = useState(false);
+  const [analyticsAggregate, setAnalyticsAggregate] = useState<TenantAnalyticsAggregate | null>(null);
   const [isLoadingReports, setIsLoadingReports] = useState(false);
   const [selectedReport, setSelectedReport] = useState<MonthlyReport | null>(null);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
@@ -182,16 +197,13 @@ export function AnalyticsModule({
   // --- RBAC CONSTRAINT INITIALIZATION ---
   useEffect(() => {
     if (isDirector) {
-      // Find the director's school
       const dirSchoolId = currentTeacher?.escola_id || schools[0]?.id || '';
       setSelectedSchoolId(dirSchoolId);
     } else if (isDocente) {
-      // Docentes are associated with specific schools via classes
       const docTeacherId = currentTeacher?.id || '';
       const docClasses = classes.filter(c => c.docente_id === docTeacherId);
-      const docTurmaIds = docClasses.map(c => c.turma_id);
-      const docTurmas = turmas.filter(t => docTurmaIds.includes(t.id));
-      const docSchoolIds = docTurmas.map(t => t.escola_id);
+      const docTurmaSet = new Set(docClasses.map(c => c.turma_id));
+      const docSchoolIds = turmas.filter(t => docTurmaSet.has(t.id)).map(t => t.escola_id);
       if (docSchoolIds.length > 0) {
         setSelectedSchoolId(docSchoolIds[0]);
       }
@@ -204,99 +216,99 @@ export function AnalyticsModule({
     try {
       const userEmail = loggedInUser?.email || 'anonimo@portal.edu';
       const userName = loggedInUser?.nome || 'Utilizador Anónimo';
-      
+
       const newLog = {
+        tenant_id: tenantId,
         usuario_nome: userName,
         usuario_email: userEmail,
         acao: action,
         detalhes: details,
         created_at: new Date().toISOString()
       };
-      
-      await addDoc(collection(db, 'log_auditoria'), newLog);
-      // Refresh local logs list
-      setAuditLogs(prev => [newLog as AuditLog, ...prev]);
+
+      const docRef = await addDoc(collection(db, 'log_auditoria'), newLog);
+      setAuditLogs(prev => [{ id: docRef.id, ...newLog } as AuditLog, ...prev]);
     } catch (err) {
       console.error("Error writing audit log:", err);
     }
   };
 
-  // --- LOAD HISTORICAL REPORTS & AUDIT LOGS ---
+  // --- LOAD PRE-CALCULATED ANALYTICS AGGREGATE, REPORTS & PAGINATED AUDIT LOGS ---
   const loadReportsAndLogs = async () => {
+    if (!tenantId) return;
     setIsLoadingReports(true);
     try {
-      // 1. Load Monthly Reports
-      const repSnap = await getDocs(collection(db, 'relatorios_mensais'));
+      // 0. Load Pre-Calculated Tenant Analytics Aggregate (eliminates cold recalculation on every open)
+      const existingAggregate = await fetchTenantAnalyticsAggregate(tenantId);
+      if (existingAggregate) {
+        setAnalyticsAggregate(existingAggregate);
+      } else if (tenantId !== 'default') {
+        recomputeAndPersistTenantAnalytics({
+          tenantId,
+          schools,
+          teachers,
+          students,
+          turmas,
+          classes,
+          salas,
+          cursos,
+          cadeiras,
+          pautas,
+          assiduidadeLogs,
+          atividades,
+          planoAulas,
+        }).then((computed) => {
+          if (computed) setAnalyticsAggregate(computed);
+        });
+      }
+
+      // 1. Load Monthly Reports (strictly partitioned by tenant_id + bounded)
+      let repSnap;
+      try {
+        repSnap = await getDocs(
+          query(
+            collection(db, 'relatorios_mensais'),
+            where('tenant_id', '==', tenantId),
+            orderBy('data_geracao', 'desc'),
+            limit(24)
+          )
+        );
+      } catch {
+        repSnap = await getDocs(
+          query(collection(db, 'relatorios_mensais'), where('tenant_id', '==', tenantId), limit(24))
+        );
+      }
+
       const repList: MonthlyReport[] = [];
       repSnap.forEach(d => {
         repList.push({ ...d.data() as MonthlyReport, id: d.id });
       });
-      
-      // Seed if completely empty
-      if (repList.length === 0) {
-        const seedReports: Omit<MonthlyReport, 'id'>[] = [
-          {
-            titulo: "Relatório de Desempenho Consolidado - Maio 2026",
-            mes: "Maio",
-            ano: 2026,
-            data_geracao: "2026-05-31",
-            autor: "Sistema Automático de BI",
-            resumo_texto: "No mês de Maio de 2026, o sistema registou um excelente progresso pedagógico consolidado. O rendimento médio global manteve-se estável em 14.2 valores, com destaque positivo para as turmas de Ciências Tecnológicas que registaram taxas de aprovação superiores a 85%. O absenteísmo discente manteve-se sob controlo (rácio médio de 4.2%). Recomenda-se acompanhamento extra para as disciplinas de Física e Matemática no segundo ciclo.",
-            kpis: {
-              total_alunos: 380,
-              media_geral: 14.2,
-              taxa_aprovacao: 81,
-              taxa_assiduidade: 95.8
-            }
-          },
-          {
-            titulo: "Relatório de Desempenho Consolidado - Abril 2026",
-            mes: "Abril",
-            ano: 2026,
-            data_geracao: "2026-04-30",
-            autor: "Sistema Automático de BI",
-            resumo_texto: "Consolidado de Abril focado no fecho de avaliações periódicas intermédias. Registou-se uma participação massiva na biblioteca digital (média de 15 acessos por estudante ativo). Os recursos mais procurados foram manuais de História de Moçambique e Física do 1º Ciclo. O rácio aluno-docente mantém-se otimizado em 25 alunos por docente ativo.",
-            kpis: {
-              total_alunos: 375,
-              media_geral: 13.9,
-              taxa_aprovacao: 78,
-              taxa_assiduidade: 94.2
-            }
-          },
-          {
-            titulo: "Relatório de Desempenho Consolidado - Março 2026",
-            mes: "Março",
-            ano: 2026,
-            data_geracao: "2026-03-31",
-            autor: "Sistema Automático de BI",
-            resumo_texto: "Análise de início de trimestre letivo. Todas as escolas (Maputo, Nampula, Sofala) registaram assiduidade de docentes acima de 98%. O plano de aulas cumprido atingiu 97.4% da carga horária prevista. Taxa de desistência residual inferior a 1.5%.",
-            kpis: {
-              total_alunos: 360,
-              media_geral: 14.0,
-              taxa_aprovacao: 80,
-              taxa_assiduidade: 96.1
-            }
-          }
-        ];
-
-        for (const sr of seedReports) {
-          const docRef = await addDoc(collection(db, 'relatorios_mensais'), sr);
-          repList.push({ ...sr, id: docRef.id } as MonthlyReport);
-        }
-      }
-
-      repList.sort((a, b) => b.data_geracao.localeCompare(a.data_geracao));
+      repList.sort((a, b) => (b.data_geracao || '').localeCompare(a.data_geracao || ''));
       setMonthlyReports(repList);
 
-      // 2. Load Audit Logs (Limit to last 50 for performance)
-      const logsSnap = await getDocs(collection(db, 'log_auditoria'));
-      const logsList: AuditLog[] = [];
-      logsSnap.forEach(d => {
-        logsList.push({ ...d.data() as AuditLog, id: d.id });
-      });
-      logsList.sort((a, b) => b.created_at.localeCompare(a.created_at));
-      setAuditLogs(logsList.slice(0, 50));
-
+      // 2. Load Audit Logs via cursor pagination (strictly partitioned by tenant_id, max 50)
+      try {
+        const page = await fetchTenantPage<AuditLog>({
+          collectionName: 'log_auditoria',
+          tenantId,
+          orderByField: 'created_at',
+          orderDirection: 'desc',
+          pageSize: 50,
+        });
+        setAuditLogs(page.items);
+        setAuditCursor(page.nextCursor);
+        setHasMoreAuditLogs(page.hasMore);
+      } catch {
+        const fallbackLogsSnap = await getDocs(
+          query(collection(db, 'log_auditoria'), where('tenant_id', '==', tenantId), limit(50))
+        );
+        const fallbackLogs: AuditLog[] = [];
+        fallbackLogsSnap.forEach(d => fallbackLogs.push({ ...d.data() as AuditLog, id: d.id }));
+        fallbackLogs.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+        setAuditLogs(fallbackLogs);
+        setAuditCursor(null);
+        setHasMoreAuditLogs(false);
+      }
     } catch (err) {
       console.error("Error loading reports and logs:", err);
     } finally {
@@ -304,14 +316,31 @@ export function AnalyticsModule({
     }
   };
 
+  const handleLoadMoreAuditLogs = async () => {
+    if (!tenantId || !auditCursor || loadingMoreAudit) return;
+    setLoadingMoreAudit(true);
+    try {
+      const page = await fetchTenantPage<AuditLog>({
+        collectionName: 'log_auditoria',
+        tenantId,
+        orderByField: 'created_at',
+        orderDirection: 'desc',
+        pageSize: 50,
+        cursor: auditCursor,
+      });
+      setAuditLogs(prev => [...prev, ...page.items]);
+      setAuditCursor(page.nextCursor);
+      setHasMoreAuditLogs(page.hasMore);
+    } catch (err) {
+      console.error("Error loading more audit logs:", err);
+    } finally {
+      setLoadingMoreAudit(false);
+    }
+  };
+
   useEffect(() => {
     loadReportsAndLogs();
-  }, []);
-
-  // Log initial module consultation
-  useEffect(() => {
-    logAnalyticsAction("Consulta Analytics", `Acedeu ao Painel de Business Intelligence de nível ${currentUserType}`);
-  }, [currentUserType]);
+  }, [tenantId]);
 
   // --- FILTERED DATASETS FOR THE DROPDOWNS ---
   const availableSchools = useMemo(() => {
@@ -378,10 +407,10 @@ export function AnalyticsModule({
 
   const filteredPautasData = useMemo(() => {
     let list = [...pautas];
-    
-    // Filter by student subset
-    const studIds = filteredStudentsList.map(s => s.id);
-    list = list.filter(p => studIds.includes(p.estudante_id));
+
+    // Filter by student subset using O(1) Set lookup
+    const studIdSet = new Set(filteredStudentsList.map(s => s.id));
+    list = list.filter(p => studIdSet.has(p.estudante_id));
 
     // Filter by subject/class if specified
     if (selectedSubjectId !== 'todos') {
@@ -398,6 +427,13 @@ export function AnalyticsModule({
 
     return list;
   }, [pautas, filteredStudentsList, selectedSubjectId, startDate, endDate]);
+
+  const isGlobalScope =
+    selectedSchoolId === 'todos' &&
+    selectedTurmaId === 'todos' &&
+    selectedStudentId === 'todos' &&
+    selectedTeacherId === 'todos' &&
+    selectedSubjectId === 'todos';
 
 
   // --- MAIN METRICS COMPUTATION ---
@@ -467,15 +503,24 @@ export function AnalyticsModule({
     return Math.min(100, Math.round(((completion * 0.6) + (passFactor * 0.4)) * 100));
   }, [plannedClassesCount, conductedClassesCount, approvalRatePercent]);
 
-  // --- CAPACIDADE & METRICAS POR TIPO DE INSTITUIÇÃO ---
+  // --- CAPACIDADE & METRICAS POR TIPO DE INSTITUIÇÃO (usa agregado pré-calculado quando disponível) ---
   const totalSalasCapacidade = useMemo(() => {
+    if (isGlobalScope && analyticsAggregate?.totais?.capacidade_total_salas) {
+      return analyticsAggregate.totais.capacidade_total_salas;
+    }
     if (!salas || salas.length === 0) return 0;
     return salas.reduce((acc, s) => acc + (Number(s.capacidade) || 30), 0);
-  }, [salas]);
+  }, [salas, isGlobalScope, analyticsAggregate]);
 
-  const numSalas = salas ? salas.length : 0;
-  const numCursos = cursos ? cursos.length : 0;
-  const capacityPerCourse = numCursos > 0 ? Math.floor(totalSalasCapacidade / numCursos) : 0;
+  const numSalas = isGlobalScope && analyticsAggregate?.totais?.salas !== undefined
+    ? analyticsAggregate.totais.salas
+    : (salas ? salas.length : 0);
+  const numCursos = isGlobalScope && analyticsAggregate?.totais?.cursos !== undefined
+    ? analyticsAggregate.totais.cursos
+    : (cursos ? cursos.length : 0);
+  const capacityPerCourse = isGlobalScope && analyticsAggregate?.modulos?.capacidade_media_por_curso
+    ? analyticsAggregate.modulos.capacidade_media_por_curso
+    : (numCursos > 0 ? Math.floor(totalSalasCapacidade / numCursos) : 0);
   const minCapacidadeCurso = Number(tenantConfig?.capacidade_minima_por_curso) || 25;
   const isCourseCapacityBelowMin = numCursos > 0 && capacityPerCourse < minCapacidadeCurso;
 
@@ -486,17 +531,17 @@ export function AnalyticsModule({
     return [];
   }, [classes, cadeiras]);
 
-  const capacityPerModule = modulesList.length > 0 
-    ? Math.floor(totalSalasCapacidade / modulesList.length) 
-    : 0;
+  const capacityPerModule = isGlobalScope && analyticsAggregate?.modulos?.capacidade_media_por_modulo
+    ? analyticsAggregate.modulos.capacidade_media_por_modulo
+    : (modulesList.length > 0 ? Math.floor(totalSalasCapacidade / modulesList.length) : 0);
 
   const allowedCards = useMemo(() => {
     return getAnalyticsCardsForInstitution(tipoInstituicao);
   }, [tipoInstituicao]);
 
-  const schoolOccupancyRate = totalSalasCapacidade > 0 
-    ? Math.min(100, Math.round((activeStudentsCount / totalSalasCapacidade) * 100)) 
-    : 0;
+  const schoolOccupancyRate = isGlobalScope && analyticsAggregate?.modulos?.ocupacao_geral_percent !== undefined
+    ? analyticsAggregate.modulos.ocupacao_geral_percent
+    : (totalSalasCapacidade > 0 ? Math.min(100, Math.round((activeStudentsCount / totalSalasCapacidade) * 100)) : 0);
 
 
   // --- CHART A DATA: Rendimento Escolar Donut ---
@@ -510,7 +555,6 @@ export function AnalyticsModule({
 
   // --- CHART B DATA: Evolução Temporal Line Chart ---
   const temporalPerformanceData = useMemo(() => {
-    // Generate simulated timeline of averages for last 4 weeks or months
     return [
       { data: 'Semana 1', Media: Math.max(9, Math.min(20, overallAvgGrade - 1.2)), Aprovacoes: Math.max(50, approvalRatePercent - 8) },
       { data: 'Semana 2', Media: Math.max(9, Math.min(20, overallAvgGrade - 0.5)), Aprovacoes: Math.max(50, approvalRatePercent - 4) },
@@ -521,11 +565,17 @@ export function AnalyticsModule({
 
   // --- CHART C DATA: Média de Notas por Disciplina comparative ---
   const subjectAvgChartData = useMemo(() => {
+    const pautasByClass = new Map<string, Pauta[]>();
+    for (const p of pautas) {
+      const arr = pautasByClass.get(p.classe_id);
+      if (arr) arr.push(p);
+      else pautasByClass.set(p.classe_id, [p]);
+    }
     return availableClasses.map(cls => {
-      const clsPautas = pautas.filter(p => p.classe_id === cls.id);
+      const clsPautas = pautasByClass.get(cls.id) || [];
       const avg = clsPautas.length > 0
-        ? (clsPautas.reduce((sum, g) => sum + g.nota_media, 0) / clsPautas.length)
-        : (10 + Math.random() * 6); // Realistic default
+        ? (clsPautas.reduce((sum, g) => sum + (g.nota_media || 0), 0) / clsPautas.length)
+        : 0;
       return {
         name: cls.nome,
         Media: parseFloat(avg.toFixed(1))
@@ -533,22 +583,38 @@ export function AnalyticsModule({
     }).slice(0, 10);
   }, [availableClasses, pautas]);
 
-  // --- CHART D DATA: Escolas Comparison / Províncias ---
+  // --- CHART D DATA: Escolas Comparison / Províncias (O(N) lookup em Map + pré-agregado) ---
   const schoolComparisonData = useMemo(() => {
+    const studentSchoolMap = new Map<string, string>();
+    const schoolStudentCount = new Map<string, number>();
+    for (const s of students) {
+      studentSchoolMap.set(s.id, s.escola_id);
+      schoolStudentCount.set(s.escola_id, (schoolStudentCount.get(s.escola_id) || 0) + 1);
+    }
+
+    const schoolGradeSum = new Map<string, number>();
+    const schoolGradeCount = new Map<string, number>();
+    for (const p of pautas) {
+      const schId = studentSchoolMap.get(p.estudante_id);
+      if (!schId) continue;
+      schoolGradeSum.set(schId, (schoolGradeSum.get(schId) || 0) + (p.nota_media || 0));
+      schoolGradeCount.set(schId, (schoolGradeCount.get(schId) || 0) + 1);
+    }
+
     return availableSchools.map(sch => {
-      const schStudents = students.filter(s => s.escola_id === sch.id);
-      const schStudIds = schStudents.map(s => s.id);
-      const schPautas = pautas.filter(p => schStudIds.includes(p.estudante_id));
-      const avg = schPautas.length > 0
-        ? (schPautas.reduce((s, g) => s + g.nota_media, 0) / schPautas.length)
-        : (11 + Math.random() * 4);
+      const aggSchool = analyticsAggregate?.por_escola?.[sch.id];
+      const countGrades = schoolGradeCount.get(sch.id) || 0;
+      const computedAvg = countGrades > 0 ? (schoolGradeSum.get(sch.id) || 0) / countGrades : 0;
+      const finalAvg = countGrades > 0 ? computedAvg : (aggSchool?.media_geral ?? 0);
+      const totalAl = schoolStudentCount.get(sch.id) ?? aggSchool?.estudantes ?? 0;
+
       return {
         name: sch.nome.replace("Escola", "").replace("Secundária", "").trim(),
-        Media: parseFloat(avg.toFixed(1)),
-        Alunos: schStudents.length
+        Media: parseFloat(Number(finalAvg).toFixed(1)),
+        Alunos: totalAl
       };
     });
-  }, [availableSchools, students, pautas]);
+  }, [availableSchools, students, pautas, analyticsAggregate]);
 
 
   // --- DIGITAL LIBRARY & RETENTION DEMO DATA (Section 3.3.D) ---
@@ -620,8 +686,18 @@ export function AnalyticsModule({
   };
 
 
-  // --- EXPORT TO PDF VIA JSPDF (Section 3.4) ---
+  // --- EXPORT TO PDF VIA JSPDF (COM FILA ASSÍNCRONA + AUDITORIA) ---
   const exportToPDF = async () => {
+    void enqueuePdfExportJob({
+      tenantId,
+      reportType: 'bi_consolidado',
+      title: `Relatório BI Consolidado (${selectedSchoolId})`,
+      metadata: { selectedSchoolId, selectedTurmaId, startDate, endDate },
+    }).then(async (queued) => {
+      if (queued.queuedViaApi && queued.job) {
+        await waitForAsyncJob(queued.job).catch(() => null);
+      }
+    });
     logAnalyticsAction("Exportou PDF", `Gerou relatório executivo PDF para a instituição.`);
     
     const jspdfModule = await import('jspdf');
@@ -767,27 +843,51 @@ export function AnalyticsModule({
   };
 
 
-  // --- MANUAL MONTHLY REPORT GENERATOR (Section 3.5) ---
+  // --- MANUAL MONTHLY REPORT GENERATOR (ASSÍNCRONO COM WORKER + FALLBACK) ---
   const handleGenerateMonthlyReport = async () => {
     setIsGeneratingReport(true);
     try {
       const today = new Date();
       const currentMonthName = today.toLocaleString('pt-PT', { month: 'long' });
       const capitalizedMonth = currentMonthName.charAt(0).toUpperCase() + currentMonthName.slice(1);
-      
-      const newReport: Omit<MonthlyReport, 'id'> = {
+      const resumoTexto = `Consolidado automático gerado para o ciclo letivo corrente de ${capitalizedMonth}. Os canais de auditoria indicam aproveitamento regular. Média geral do período calculada em ${overallAvgGrade} valores. O rácio discente-docente permaneceu saudável em ${studentTeacherRatio}, enquanto a frequência discente à biblioteca digital registou picos excelentes nas disciplinas científicas.`;
+      const kpis = {
+        total_alunos: activeStudentsCount,
+        media_geral: overallAvgGrade,
+        taxa_aprovacao: approvalRatePercent,
+        taxa_assiduidade: teacherAttendanceRate
+      };
+
+      const queued = await enqueueMonthlyReportJob({
+        tenantId,
+        monthName: capitalizedMonth,
+        year: today.getFullYear(),
+        kpis,
+        resumoTexto,
+        authorName: loggedInUser?.nome || 'Administrador do Sistema',
+      });
+
+      if (queued.queuedViaApi && queued.job) {
+        setIsGeneratingReport(false);
+        const completed = await waitForAsyncJob(queued.job).catch(() => null);
+        const generatedReport = completed?.result?.report as MonthlyReport | undefined;
+        if (generatedReport) {
+          setMonthlyReports(prev => [generatedReport, ...prev.filter(r => r.id !== generatedReport.id)]);
+          setSelectedReport(generatedReport);
+          await logAnalyticsAction("Geração Relatório", `Gerou relatório mensal assíncrono para ${capitalizedMonth}`);
+          return;
+        }
+      }
+
+      const newReport: Omit<MonthlyReport, 'id'> & { tenant_id: string } = {
+        tenant_id: tenantId,
         titulo: `Relatório de Desempenho Consolidado - ${capitalizedMonth} ${today.getFullYear()}`,
         mes: capitalizedMonth,
         ano: today.getFullYear(),
         data_geracao: today.toISOString().split('T')[0],
         autor: loggedInUser?.nome || 'Administrador do Sistema',
-        resumo_texto: `Consolidado automático gerado sob demanda para o ciclo letivo corrente de ${capitalizedMonth}. Os canais de auditoria indicam aproveitamento regular. Média geral do período calculada em ${overallAvgGrade} valores. O rácio discente-docente permaneceu saudável em ${studentTeacherRatio}, enquanto a frequência discente à biblioteca digital registou picos excelentes nas disciplinas científicas.`,
-        kpis: {
-          total_alunos: activeStudentsCount,
-          media_geral: overallAvgGrade,
-          taxa_aprovacao: approvalRatePercent,
-          taxa_assiduidade: teacherAttendanceRate
-        }
+        resumo_texto: resumoTexto,
+        kpis
       };
 
       const docRef = await addDoc(collection(db, 'relatorios_mensais'), newReport);
@@ -805,6 +905,17 @@ export function AnalyticsModule({
   };
 
   const downloadSpecificReportPDF = async (rep: MonthlyReport) => {
+    void enqueuePdfExportJob({
+      tenantId,
+      reportType: 'relatorio_mensal',
+      reportId: rep.id,
+      title: rep.titulo,
+      metadata: { mes: rep.mes, ano: rep.ano },
+    }).then(async (queued) => {
+      if (queued.queuedViaApi && queued.job) {
+        await waitForAsyncJob(queued.job).catch(() => null);
+      }
+    });
     logAnalyticsAction("Exportou PDF Relatório", `Descarregou o relatório de ${rep.mes} ${rep.ano} em formato PDF`);
     
     const jspdfModule = await import('jspdf');
@@ -2203,6 +2314,19 @@ export function AnalyticsModule({
               </tbody>
             </table>
           </div>
+
+          {hasMoreAuditLogs && (
+            <div className="flex justify-center pt-2">
+              <button
+                type="button"
+                onClick={handleLoadMoreAuditLogs}
+                disabled={loadingMoreAudit}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition disabled:opacity-50 cursor-pointer"
+              >
+                {loadingMoreAudit ? 'A carregar registos...' : 'Carregar mais registos'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 

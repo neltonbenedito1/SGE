@@ -515,6 +515,7 @@ export interface Pauta {
   publicado?: boolean;
   nota?: number;
   criado_em?: string;
+  dados_customizados?: Record<string, any>;
 }
 
 export type ProcessoTipo = 'Matrícula' | 'Transferência' | 'Suspensão' | 'Conclusão' | 'Desistência' | 'Justificativa de Ausência' | string;
@@ -884,6 +885,8 @@ export interface LogErro {
 // Custom Forms / Formulários Customizados
 export type CustomFieldTipo = 
   | 'texto_curto'
+  | 'alfabetico'
+  | 'alfanumerico'
   | 'dropdown'
   | 'data'
   | 'checkbox'
@@ -915,12 +918,14 @@ export type CustomFormStatus = 'ativo' | 'suspenso' | 'rascunho';
 export interface CustomForm {
   id: string;
   tenant_id: string;
-  codigo: 'cadastro_escola' | 'cadastro_docente' | 'cadastro_estudante' | string;
+  codigo: 'cadastro_escola' | 'cadastro_docente' | 'cadastro_estudante' | 'lancamento_notas' | string;
   nome: string;
   descricao?: string;
-  entidade: 'escola' | 'docente' | 'estudante' | 'outro';
+  entidade: 'escola' | 'docente' | 'estudante' | 'notas' | 'outro';
   status: CustomFormStatus;
   campos: CustomFormField[];
+  campos_padrao_inicializados?: boolean;
+  campos_padrao_v2_inicializados?: boolean;
   created_at: string;
   updated_at: string;
 }

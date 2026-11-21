@@ -94,6 +94,8 @@ export const SendEmailSchema = z.object({
   to: z.string().email('Destinatário inválido.').max(120).toLowerCase().trim(),
   subject: z.string().min(1, 'Assunto não pode ser vazio.').max(200).trim(),
   body: z.string().min(1, 'Corpo da mensagem não pode ser vazio.').max(50000),
+  async: z.boolean().optional(),
+  idempotencyKey: z.string().max(180).optional(),
   smtpConfig: z.object({
     host: z.string().max(255).optional(),
     port: z.number().int().positive().max(65535).optional(),
@@ -109,6 +111,7 @@ export const SendEmailSchema = z.object({
 export const TranslateSchema = z.object({
   text: z.string().min(1).max(10000),
   targetLanguage: z.string().min(2).max(10),
+  async: z.boolean().optional(),
 }).strict();
 
 export const SynopsisSchema = z.object({
@@ -117,6 +120,7 @@ export const SynopsisSchema = z.object({
   category: z.string().max(80).optional(),
   textSample: z.string().max(5000).optional(),
   fileName: z.string().max(255).optional(),
+  async: z.boolean().optional(),
 }).strict();
 
 export const StripeCheckoutSessionSchema = z.object({
@@ -176,4 +180,73 @@ export const SessionRevokeSchema = z.object({
 
 export const BatchDeleteTenantsSchema = z.object({
   tenantIds: z.array(z.string().min(1).max(128)).min(1, 'Ao menos um ID de instituição é necessário.').max(100),
+}).strict();
+
+export const AsyncJobTypeSchema = z.enum([
+  'bulk_notification',
+  'email_send',
+  'report_generate',
+  'pdf_generate',
+  'ai_task',
+  'stripe_webhook',
+]);
+
+export const EnqueueJobSchema = z.object({
+  type: AsyncJobTypeSchema,
+  title: z.string().min(2).max(180).trim().optional(),
+  idempotencyKey: z.string().max(180).optional(),
+  maxAttempts: z.number().int().min(1).max(10).optional(),
+  payload: z.record(z.string(), z.any()),
+}).strict();
+
+export const BulkNotificationSchema = z.object({
+  action: z.enum(['notificar_aula_pendente', 'broadcast_recipients']).default('broadcast_recipients'),
+  idempotencyKey: z.string().max(180).optional(),
+  planoAulaId: z.string().max(128).optional(),
+  docenteId: z.string().max(128).optional(),
+  targetUserId: z.string().max(128).optional(),
+  teacherName: z.string().max(160).optional(),
+  teacherEmail: z.string().max(160).optional(),
+  disciplinaId: z.string().max(128).optional(),
+  disciplinaNome: z.string().max(160).optional(),
+  topico: z.string().max(300).optional(),
+  periodoLabel: z.string().max(80).optional(),
+  dataPrevista: z.string().max(40).optional(),
+  titulo: z.string().max(200).optional(),
+  mensagem: z.string().max(2000).optional(),
+  tipo: z.enum(['info', 'alerta', 'limite', 'sistema', 'sucesso', 'cadastro']).optional(),
+  modulo: z.string().max(80).optional(),
+  recipients: z.array(z.object({
+    destinatario_id: z.string().min(1).max(160),
+    destinatario_role: z.string().max(40).optional(),
+    destinatario_email: z.string().max(160).optional(),
+    estudante_id: z.string().max(128).optional(),
+    docente_id: z.string().max(128).optional(),
+    turma_id: z.string().max(128).optional(),
+    titulo: z.string().max(200).optional(),
+    mensagem: z.string().max(2000).optional(),
+  })).max(2000).optional(),
+}).strict();
+
+export const ReportGenerateAsyncSchema = z.object({
+  scope: z.enum(['analytics_recompute', 'monthly_report']).default('analytics_recompute'),
+  tenantId: z.string().max(128).optional(),
+  idempotencyKey: z.string().max(180).optional(),
+  monthName: z.string().max(40).optional(),
+  year: z.number().int().min(2000).max(2100).optional(),
+  kpis: z.object({
+    total_alunos: z.number(),
+    media_geral: z.number(),
+    taxa_aprovacao: z.number(),
+    taxa_assiduidade: z.number(),
+  }).optional(),
+  resumoTexto: z.string().max(4000).optional(),
+}).strict();
+
+export const PdfExportAsyncSchema = z.object({
+  reportType: z.enum(['bi_consolidado', 'relatorio_mensal']),
+  reportId: z.string().max(128).optional(),
+  title: z.string().min(2).max(200),
+  idempotencyKey: z.string().max(180).optional(),
+  metadata: z.record(z.string(), z.any()).optional(),
 }).strict();

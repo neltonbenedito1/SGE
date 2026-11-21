@@ -1,15 +1,24 @@
 {
+  "id": "/",
   "short_name": "SysEdu",
   "name": "SysEdu - Sistema de Gerenciamento Escolar",
+  "description": "Plataforma multi-tenant para gestão escolar, académica e administrativa.",
   "icons": [
     {
       "src": "/Logo2.png",
       "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any"
+    },
+    {
+      "src": "/Logo2.png",
+      "type": "image/png",
       "sizes": "512x512",
-      "purpose": "any maskable"
+      "purpose": "any"
     }
   ],
   "start_url": "/",
+  "scope": "/",
   "background_color": "#0f172a",
   "theme_color": "#0f172a",
   "display": "standalone",

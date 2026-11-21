@@ -151,6 +151,117 @@
         "createdBy": { "type": "string" }
       },
       "required": ["tenantId", "docenteId", "disciplinaId", "topico", "periodoTipo", "periodoNumero", "anoLectivo", "status", "extraordinario"]
+    },
+    "TenantAnalyticsAggregate": {
+      "title": "TenantAnalyticsAggregate",
+      "description": "Pre-calculated analytics summary per tenant updated via domain events",
+      "type": "object",
+      "properties": {
+        "tenant_id": { "type": "string" },
+        "schema_version": { "type": "number" },
+        "updated_at": { "type": "string", "format": "date-time" },
+        "totais": { "type": "object" },
+        "aproveitamento": { "type": "object" },
+        "assiduidade": { "type": "object" },
+        "modulos": { "type": "object" },
+        "capacidade_por_curso": { "type": "object" },
+        "ocupacao_por_sala": { "type": "object" },
+        "por_escola": { "type": "object" }
+      },
+      "required": ["tenant_id", "schema_version", "updated_at", "totais"]
+    },
+    "Estudante": {
+      "title": "Estudante",
+      "description": "Tenant-partitioned student record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "escola_id": { "type": "string" },
+        "turma_id": { "type": "string" },
+        "curso_id": { "type": "string" },
+        "nome": { "type": "string" },
+        "ativo": { "type": "boolean" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "tenant_id", "nome"]
+    },
+    "Notificacao": {
+      "title": "Notificacao",
+      "description": "Tenant-isolated system notification",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "destinatario_id": { "type": "string" },
+        "destinatario_role": { "type": "string" },
+        "titulo": { "type": "string" },
+        "mensagem": { "type": "string" },
+        "lido": { "type": "boolean" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tenant_id", "destinatario_id", "titulo", "mensagem", "created_at"]
+    },
+    "AsyncJob": {
+      "title": "AsyncJob",
+      "description": "Idempotent background processing job partitioned by tenant_id",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "type": { "type": "string", "enum": ["bulk_notification", "email_send", "report_generate", "pdf_generate", "ai_task", "stripe_webhook"] },
+        "title": { "type": "string" },
+        "status": { "type": "string", "enum": ["pendente", "em_processamento", "concluido", "falhado_reintento", "dead_letter"] },
+        "progress": { "type": "number" },
+        "progress_message": { "type": "string" },
+        "idempotency_key": { "type": "string" },
+        "attempts": { "type": "number" },
+        "max_attempts": { "type": "number" },
+        "next_run_at": { "type": "number" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "tenant_id", "type", "status", "progress", "idempotency_key", "created_at"]
+    },
+    "AsyncJobDeadLetter": {
+      "title": "AsyncJobDeadLetter",
+      "description": "Dead-letter queue record for permanently failed async jobs",
+      "type": "object",
+      "properties": {
+        "job_id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "type": { "type": "string" },
+        "last_error": { "type": "string" },
+        "failed_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["job_id", "tenant_id", "type", "last_error", "failed_at"]
+    },
+    "ServerSessionRecord": {
+      "title": "ServerSessionRecord",
+      "description": "Distributed session mirror for cross-replica verification and revocation",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "role": { "type": "string" },
+        "tenantId": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "lastActivity": { "type": "number" },
+        "expiresAt": { "type": "number" },
+        "revoked": { "type": "boolean" }
+      },
+      "required": ["userId", "role", "tenantId", "createdAt", "lastActivity"]
+    },
+    "TenantQuotaBucket": {
+      "title": "TenantQuotaBucket",
+      "description": "Distributed per-tenant plan usage quota counter",
+      "type": "object",
+      "properties": {
+        "tenant_id": { "type": "string" },
+        "quota_type": { "type": "string" },
+        "count": { "type": "number" },
+        "limit": { "type": "number" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tenant_id", "quota_type", "count", "limit"]
     }
   },
   "firestore": {
@@ -178,6 +289,14 @@
       "schema": { "$ref": "#/entities/Escola" },
       "description": "Schools within tenants"
     },
+    "/estudantes/{id}": {
+      "schema": { "$ref": "#/entities/Estudante" },
+      "description": "Students partitioned by tenant_id"
+    },
+    "/notificacoes/{id}": {
+      "schema": { "$ref": "#/entities/Notificacao" },
+      "description": "Notifications partitioned by tenant_id"
+    },
     "/audit_logs/{id}": {
       "schema": { "$ref": "#/entities/AuditLog" },
       "description": "Immutable audit entries"
@@ -189,6 +308,26 @@
     "/planoAulas/{id}": {
       "schema": { "$ref": "#/entities/PlanoAula" },
       "description": "Lesson planning topics and execution status"
+    },
+    "/tenant_analytics/{tenantId}": {
+      "schema": { "$ref": "#/entities/TenantAnalyticsAggregate" },
+      "description": "Pre-aggregated tenant administrative analytics"
+    },
+    "/async_jobs/{jobId}": {
+      "schema": { "$ref": "#/entities/AsyncJob" },
+      "description": "Tenant-isolated background job queue"
+    },
+    "/async_jobs_dlq/{jobId}": {
+      "schema": { "$ref": "#/entities/AsyncJobDeadLetter" },
+      "description": "Dead-letter queue for failed async jobs"
+    },
+    "/server_sessions/{sessionHash}": {
+      "schema": { "$ref": "#/entities/ServerSessionRecord" },
+      "description": "Distributed stateless session revocation and sliding expiry mirror"
+    },
+    "/tenant_quotas/{bucketKey}": {
+      "schema": { "$ref": "#/entities/TenantQuotaBucket" },
+      "description": "Distributed plan quota usage buckets partitioned by tenant_id"
     }
   }
 }
