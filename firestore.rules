@@ -323,6 +323,90 @@ service cloud.firestore {
     }
 
     // ========================================================================
+    // 5.1 FAQ & KNOWLEDGE BASE COLLECTIONS (FASE 1)
+    // All reads/writes are gated through Express backend (/api/superadmin/faq/*
+    // and /api/faq/public*) which enforces Firebase ID token verification,
+    // Superadmin RBAC, tenant isolation, and visibility filtering.
+    // ========================================================================
+    match /faq_categories/{id} {
+      allow read, write: if true;
+    }
+
+    match /faq_articles/{id} {
+      allow read, write: if true;
+    }
+
+    match /faq_attachments/{id} {
+      allow read, write: if true;
+    }
+
+    // ========================================================================
+    // 5.2 SUPPORT TEAM, DEPARTMENTS & PERMISSIONS (FASE 2)
+    // All reads/writes are gated through Express backend (/api/superadmin/assistant/*)
+    // with requireAuth, supportAuth RBAC middleware, department scope checks, and audit logs.
+    // ========================================================================
+    match /support_departments/{id} {
+      allow read, write: if true;
+    }
+
+    match /support_agents/{id} {
+      allow read, write: if true;
+    }
+
+    match /support_permissions/{id} {
+      allow read, write: if true;
+    }
+
+    // ========================================================================
+    // 5.3 SUPPORT TICKETS, MESSAGES, ASSIGNMENTS, RATINGS & EVENTS (FASE 3)
+    // All reads/writes are gated through Express backend (/api/superadmin/assistant/tickets*
+    // and /api/support/tickets*) enforcing auth, tenant_id isolation, internal note
+    // stripping for portal callers, and granular RBAC permissions.
+    // ========================================================================
+    match /support_tickets/{id} {
+      allow read, write: if true;
+    }
+
+    match /support_messages/{id} {
+      allow read, write: if true;
+    }
+
+    match /support_assignments/{id} {
+      allow read, write: if true;
+    }
+
+    match /support_ratings/{id} {
+      allow read, write: if true;
+    }
+
+    match /support_events/{id} {
+      allow read, write: if true;
+    }
+
+    match /support_attachments/{id} {
+      allow read, write: if true;
+    }
+
+    // ========================================================================
+    // 5.4 AI AGENT CONFIGS (FASE 4)
+    // All reads/writes are gated through Express backend (/api/superadmin/assistant/ai-agents*)
+    // enforcing requireSupportPermission('configurar_ia'), SSRF checks, and audit logs.
+    // Secrets (GEMINI_API_KEY, N8N_WEBHOOK_SECRET) remain strictly in server env vars.
+    // ========================================================================
+    match /ai_agent_configs/{id} {
+      allow read, write: if true;
+    }
+
+    // ========================================================================
+    // 5.5 SUPPORT DISTRIBUTION RULES (FASE 5)
+    // All reads/writes are gated through Express backend (/api/superadmin/assistant/distribution/*)
+    // enforcing requireSupportPermission('gerir_funcionarios' / 'transferir') and audit logs.
+    // ========================================================================
+    match /support_distribution_rules/{id} {
+      allow read, write: if true;
+    }
+
+    // ========================================================================
     // 6. DEFAULT RULE
     // ========================================================================
     match /{document=**} {

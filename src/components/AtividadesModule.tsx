@@ -1563,8 +1563,8 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
                 <option value="todos">Todas as Categorias</option>
                 <option value="Todos">Escopo Geral (Todos)</option>
                 {globalCategories && globalCategories.length > 0 ? (
-                  globalCategories.map((cat: any) => (
-                    <option key={cat.id || cat.codigo} value={cat.nome || cat.codigo}>
+                  globalCategories.map((cat: any, idx: number) => (
+                    <option key={`filter-cat-${cat.id || cat.codigo || idx}-${idx}`} value={cat.nome || cat.codigo}>
                       {cat.nome} ({cat.codigo || cat.id})
                     </option>
                   ))
@@ -2312,8 +2312,8 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
                   >
                     <option value="Todos">Todos os Perfis (Escopo Geral)</option>
                     {globalCategories && globalCategories.length > 0 ? (
-                      globalCategories.map((cat: any) => (
-                        <option key={cat.id || cat.codigo} value={cat.nome || cat.codigo}>
+                      globalCategories.map((cat: any, idx: number) => (
+                        <option key={`form-cat-${cat.id || cat.codigo || idx}-${idx}`} value={cat.nome || cat.codigo}>
                           {cat.nome} ({cat.codigo || cat.id})
                         </option>
                       ))
@@ -2354,17 +2354,17 @@ export const AtividadesModule: React.FC<AtividadesModuleProps> = ({
                       return userRole.includes(catCode.toLowerCase()) || catCode.toLowerCase().includes(userRole) || (u.cargo || '').toLowerCase().includes(formCategoria.toLowerCase());
                     })
                     .map(u => (
-                      <option key={u.id || u.user_id} value={u.id || u.user_id}>
+                      <option key={`usr-${u.id || u.user_id}`} value={u.id || u.user_id}>
                         {u.nome || u.name || u.email} ({u.tipo || u.role || 'Utilizador'})
                       </option>
                     ))}
                   {(formCategoria === 'Todos' || formCategoria === 'Professores' || formCategoria.toLowerCase().includes('docent') || formCategoria.toLowerCase().includes('prof')) && teachers.map(t => (
-                    <option key={t.id} value={t.user_id || t.id}>
+                    <option key={`doc-${t.id}`} value={t.user_id || t.id}>
                       Docente: {t.nome}
                     </option>
                   ))}
                   {(formCategoria === 'Todos' || formCategoria === 'Estudantes' || formCategoria.toLowerCase().includes('estudant') || formCategoria.toLowerCase().includes('alun')) && students.map(s => (
-                    <option key={s.id} value={s.user_id || s.id}>
+                    <option key={`est-${s.id}`} value={s.user_id || s.id}>
                       Estudante: {s.nome}
                     </option>
                   ))}

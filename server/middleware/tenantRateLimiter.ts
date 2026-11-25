@@ -222,13 +222,16 @@ export async function consumeRateBucket(params: {
   entry.count += 1;
   entry.unsyncedDelta += 1;
 
-  if (params.strictDistributed) {
+  const shouldSyncSynchronously =
+    params.strictDistributed && entry.count > Math.floor(params.limit * 0.7);
+
+  if (shouldSyncSynchronously) {
     const delta = entry.unsyncedDelta;
     entry.unsyncedDelta = 0;
     entry.lastSyncedAt = now;
     const globalCount = await syncBucketDeltaToFirestore(bucketId, delta, resetAtMs, params.limit);
     entry.count = Math.max(entry.count, globalCount);
-  } else if (entry.unsyncedDelta >= 15 || now - entry.lastSyncedAt > 8000) {
+  } else if (entry.unsyncedDelta >= (params.strictDistributed ? 5 : 15) || now - entry.lastSyncedAt > (params.strictDistributed ? 3000 : 8000)) {
     const delta = entry.unsyncedDelta;
     entry.unsyncedDelta = 0;
     entry.lastSyncedAt = now;

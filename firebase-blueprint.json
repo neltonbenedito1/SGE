@@ -262,6 +262,266 @@
         "updated_at": { "type": "string", "format": "date-time" }
       },
       "required": ["tenant_id", "quota_type", "count", "limit"]
+    },
+    "FaqCategory": {
+      "title": "FaqCategory",
+      "description": "Knowledge base FAQ category partitioned by tenant_id or global",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "nome": { "type": "string" },
+        "slug": { "type": "string" },
+        "descricao": { "type": "string" },
+        "ordem": { "type": "number" },
+        "ativo": { "type": "boolean" },
+        "visibilidade_padrao": { "type": "string", "enum": ["todos", "tenant_admin", "docentes", "estudantes", "encarregados", "super_admin"] },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "tenant_id", "nome", "ordem", "ativo", "visibilidade_padrao"]
+    },
+    "FaqArticle": {
+      "title": "FaqArticle",
+      "description": "Knowledge base FAQ question or tutorial article with rich text, keywords, attachments, AI usability flag, and audit history",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "tipo": { "type": "string", "enum": ["faq", "artigo_tutorial"] },
+        "titulo": { "type": "string" },
+        "resposta_html": { "type": "string" },
+        "resposta_texto": { "type": "string" },
+        "categoria_id": { "type": "string" },
+        "palavras_chave": { "type": "array" },
+        "anexos": { "type": "array" },
+        "estado": { "type": "string", "enum": ["rascunho", "publicado", "despublicado", "arquivado"] },
+        "prioridade": { "type": "number" },
+        "visibilidade": { "type": "string", "enum": ["todos", "tenant_admin", "docentes", "estudantes", "encarregados", "super_admin"] },
+        "utilizavel_ia": { "type": "boolean" },
+        "visualizacoes": { "type": "number" },
+        "autor_id": { "type": "string" },
+        "historico_alteracoes": { "type": "array" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "tenant_id", "tipo", "titulo", "resposta_html", "categoria_id", "estado", "prioridade", "visibilidade", "utilizavel_ia"]
+    },
+    "FaqAttachmentBlob": {
+      "title": "FaqAttachmentBlob",
+      "description": "Validated image/PDF attachment payload for FAQ articles",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "nome": { "type": "string" },
+        "tipo": { "type": "string", "enum": ["image", "pdf"] },
+        "mime_type": { "type": "string" },
+        "tamanho_bytes": { "type": "number" },
+        "data_base64": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "tenant_id", "nome", "tipo", "mime_type", "tamanho_bytes", "data_base64"]
+    },
+    "SupportDepartment": {
+      "title": "SupportDepartment",
+      "description": "Support queue or department partitioned by tenant_id or global",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "nome": { "type": "string" },
+        "slug": { "type": "string" },
+        "sla_resposta_minutos": { "type": "number" },
+        "sla_resolucao_horas": { "type": "number" },
+        "ordem": { "type": "number" },
+        "ativo": { "type": "boolean" },
+        "padrao": { "type": "boolean" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "tenant_id", "nome", "ativo"]
+    },
+    "SupportAgent": {
+      "title": "SupportAgent",
+      "description": "Human support team member or AI agent with role, department authorizations, availability, and limits",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "uid": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "tipo": { "type": "string", "enum": ["humano", "ia"] },
+        "nome": { "type": "string" },
+        "email": { "type": "string" },
+        "departamento_id": { "type": "string" },
+        "departamentos_autorizados": { "type": "array" },
+        "funcao": { "type": "string", "enum": ["administrador", "supervisor", "assistente"] },
+        "estado": { "type": "string", "enum": ["activo", "inactivo", "suspenso", "arquivado"] },
+        "disponibilidade": { "type": "string", "enum": ["online", "offline", "ocupado"] },
+        "limite_simultaneo": { "type": "number" },
+        "carga_actual": { "type": "number" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "tenant_id", "tipo", "nome", "email", "departamento_id", "funcao", "estado", "disponibilidade"]
+    },
+    "SupportPermission": {
+      "title": "SupportPermission",
+      "description": "Granular permission matrix configuration per support staff member",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "agent_id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "funcao": { "type": "string", "enum": ["administrador", "supervisor", "assistente"] },
+        "permissoes": { "type": "object" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "agent_id", "tenant_id", "funcao", "permissoes"]
+    },
+    "SupportTicket": {
+      "title": "SupportTicket",
+      "description": "Multi-tenant helpdesk ticket with SLA tracking, assignment, and satisfaction summary",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "codigo": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "solicitante_id": { "type": "string" },
+        "assunto": { "type": "string" },
+        "categoria": { "type": "string" },
+        "departamento_id": { "type": "string" },
+        "responsavel_id": { "type": "string" },
+        "prioridade": { "type": "string", "enum": ["baixa", "normal", "alta", "urgente"] },
+        "estado": { "type": "string", "enum": ["aberto", "em_atendimento", "pendente", "resolvido", "reaberto"] },
+        "data_abertura": { "type": "string", "format": "date-time" },
+        "ultima_interacao": { "type": "string", "format": "date-time" },
+        "sla_resposta_em": { "type": "string", "format": "date-time" },
+        "sla_resolucao_em": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "codigo", "tenant_id", "solicitante_id", "assunto", "departamento_id", "prioridade", "estado", "data_abertura"]
+    },
+    "SupportMessage": {
+      "title": "SupportMessage",
+      "description": "Ticket conversation message or staff-only internal note",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ticket_id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "remetente_id": { "type": "string" },
+        "remetente_tipo": { "type": "string", "enum": ["utilizador", "funcionario", "ia", "sistema"] },
+        "tipo": { "type": "string", "enum": ["mensagem", "nota_interna", "sistema"] },
+        "conteudo": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ticket_id", "tenant_id", "remetente_id", "tipo", "conteudo", "created_at"]
+    },
+    "SupportAssignment": {
+      "title": "SupportAssignment",
+      "description": "Ticket transfer and assignment audit record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ticket_id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "para_departamento_id": { "type": "string" },
+        "para_responsavel_id": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ticket_id", "tenant_id", "created_at"]
+    },
+    "SupportRating": {
+      "title": "SupportRating",
+      "description": "User satisfaction rating (1-5) submitted upon ticket resolution",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ticket_id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "solicitante_id": { "type": "string" },
+        "nota": { "type": "number" },
+        "comentario": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ticket_id", "tenant_id", "solicitante_id", "nota", "created_at"]
+    },
+    "SupportEvent": {
+      "title": "SupportEvent",
+      "description": "Chronological helpdesk ticket event log",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ticket_id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "tipo": { "type": "string" },
+        "descricao": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ticket_id", "tenant_id", "tipo", "created_at"]
+    },
+    "SupportAttachmentBlob": {
+      "title": "SupportAttachmentBlob",
+      "description": "Validated image/PDF attachment payload for helpdesk tickets and replies",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "nome": { "type": "string" },
+        "tipo": { "type": "string", "enum": ["image", "pdf"] },
+        "mime_type": { "type": "string" },
+        "tamanho_bytes": { "type": "number" },
+        "data_base64": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "tenant_id", "nome", "tipo", "mime_type", "tamanho_bytes", "data_base64"]
+    },
+    "SupportAiAgentConfig": {
+      "title": "SupportAiAgentConfig",
+      "description": "Configuration for virtual AI support agents (prompt, Gemini model, KB grounding, confidence threshold, escalation rules, n8n webhook URL)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "agent_id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "modelo": { "type": "string", "enum": ["gemini-4-hydrogen", "gemini-3.1-flash-lite"] },
+        "modo_execucao": { "type": "string", "enum": ["gemini_direct", "n8n_webhook", "hibrido"] },
+        "prompt_sistema": { "type": "string" },
+        "personalidade": { "type": "string" },
+        "limiar_confianca": { "type": "number" },
+        "usar_apenas_faq_autorizada": { "type": "boolean" },
+        "max_turnos_ia": { "type": "number" },
+        "auto_responder_tickets": { "type": "boolean" },
+        "palavras_chave_escalonamento": { "type": "array" },
+        "n8n_webhook_url": { "type": "string" },
+        "fallback_departamento_id": { "type": "string" },
+        "total_interacoes": { "type": "number" },
+        "total_escalonamentos": { "type": "number" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "agent_id", "tenant_id", "modelo", "modo_execucao", "prompt_sistema", "limiar_confianca", "usar_apenas_faq_autorizada", "max_turnos_ia"]
+    },
+    "SupportDistributionRule": {
+      "title": "SupportDistributionRule",
+      "description": "Automated ticket distribution rule mapping ticket conditions to routing strategy, queue, schedule checks, and AI/human fallback",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "nome": { "type": "string" },
+        "ativo": { "type": "boolean" },
+        "ordem": { "type": "number" },
+        "metodo": { "type": "string", "enum": ["ia_primeiro", "round_robin", "menor_carga", "especialidade", "fila_departamento"] },
+        "destino_departamento_id": { "type": "string" },
+        "destino_agent_id": { "type": "string" },
+        "auto_executar_ia": { "type": "boolean" },
+        "escalonar_para_humano_se_ia_falhar": { "type": "boolean" },
+        "respeitar_horario_atendimento": { "type": "boolean" },
+        "exigir_disponibilidade_online": { "type": "boolean" },
+        "total_atribuicoes": { "type": "number" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "tenant_id", "nome", "ativo", "ordem", "metodo", "destino_departamento_id"]
     }
   },
   "firestore": {
@@ -328,6 +588,62 @@
     "/tenant_quotas/{bucketKey}": {
       "schema": { "$ref": "#/entities/TenantQuotaBucket" },
       "description": "Distributed plan quota usage buckets partitioned by tenant_id"
+    },
+    "/faq_categories/{id}": {
+      "schema": { "$ref": "#/entities/FaqCategory" },
+      "description": "FAQ knowledge base categories"
+    },
+    "/faq_articles/{id}": {
+      "schema": { "$ref": "#/entities/FaqArticle" },
+      "description": "FAQ questions, tutorials, and change history"
+    },
+    "/faq_attachments/{id}": {
+      "schema": { "$ref": "#/entities/FaqAttachmentBlob" },
+      "description": "Validated image and PDF blobs attached to FAQ items"
+    },
+    "/support_departments/{id}": {
+      "schema": { "$ref": "#/entities/SupportDepartment" },
+      "description": "Support service departments and ticket queues"
+    },
+    "/support_agents/{id}": {
+      "schema": { "$ref": "#/entities/SupportAgent" },
+      "description": "Support team staff members and agents"
+    },
+    "/support_permissions/{id}": {
+      "schema": { "$ref": "#/entities/SupportPermission" },
+      "description": "Per-agent support permission matrix configurations"
+    },
+    "/support_tickets/{id}": {
+      "schema": { "$ref": "#/entities/SupportTicket" },
+      "description": "Multi-tenant support helpdesk tickets"
+    },
+    "/support_messages/{id}": {
+      "schema": { "$ref": "#/entities/SupportMessage" },
+      "description": "Ticket conversation messages and internal notes"
+    },
+    "/support_assignments/{id}": {
+      "schema": { "$ref": "#/entities/SupportAssignment" },
+      "description": "Ticket assignment and transfer log"
+    },
+    "/support_ratings/{id}": {
+      "schema": { "$ref": "#/entities/SupportRating" },
+      "description": "Ticket satisfaction ratings"
+    },
+    "/support_events/{id}": {
+      "schema": { "$ref": "#/entities/SupportEvent" },
+      "description": "Ticket lifecycle events"
+    },
+    "/support_attachments/{id}": {
+      "schema": { "$ref": "#/entities/SupportAttachmentBlob" },
+      "description": "Validated image and PDF blobs attached to support messages"
+    },
+    "/ai_agent_configs/{id}": {
+      "schema": { "$ref": "#/entities/SupportAiAgentConfig" },
+      "description": "AI support agent configurations (prompts, models, thresholds, escalation rules)"
+    },
+    "/support_distribution_rules/{id}": {
+      "schema": { "$ref": "#/entities/SupportDistributionRule" },
+      "description": "Automated support ticket distribution rules and round-robin cursors"
     }
   }
 }

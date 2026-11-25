@@ -13,9 +13,9 @@ import DOMPurify from 'dompurify';
 export function sanitizeHtml(dirty: string): string {
   if (!dirty || typeof dirty !== 'string') return '';
   return DOMPurify.sanitize(dirty, {
-    ALLOWED_TAGS: ['b', 'i', 'em', 'strong', 'a', 'p', 'span', 'br', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div'],
+    ALLOWED_TAGS: ['b', 'i', 'em', 'strong', 'u', 's', 'a', 'p', 'span', 'br', 'hr', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div', 'blockquote', 'code', 'pre'],
     ALLOWED_ATTR: ['href', 'target', 'rel', 'class', 'style', 'title'],
-    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'textarea', 'button'],
+    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'textarea', 'button', 'svg', 'math'],
     FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onblur'],
   });
 }

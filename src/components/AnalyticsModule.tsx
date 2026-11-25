@@ -16,6 +16,7 @@ import { ActividadePendente, PlanoAula } from '../types';
 import { PerformanceEvaluationModule } from './PerformanceEvaluationModule';
 import { getAnalyticsCardsForInstitution, AnalyticsCardType, getTerminology } from '../lib/terminology';
 import { fetchTenantPage } from '../lib/firestoreScalable';
+import { dedupeById } from '../lib/cadeirasHelper';
 import {
   fetchTenantAnalyticsAggregate,
   recomputeAndPersistTenantAnalytics,
@@ -328,7 +329,7 @@ export function AnalyticsModule({
         pageSize: 50,
         cursor: auditCursor,
       });
-      setAuditLogs(prev => [...prev, ...page.items]);
+      setAuditLogs(prev => dedupeById([...prev, ...page.items]));
       setAuditCursor(page.nextCursor);
       setHasMoreAuditLogs(page.hasMore);
     } catch (err) {

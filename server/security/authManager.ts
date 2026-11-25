@@ -160,11 +160,13 @@ export async function createSession(sessionData: Omit<ServerSession, 'sessionHas
   session: ServerSession;
 }> {
   const now = Date.now();
+  const revokedAfter = await getUserRevokedAfter(sessionData.userId).catch(() => 0);
+  const effectiveCreatedAt = Math.max(sessionData.createdAt || now, revokedAfter > 0 ? revokedAfter + 1 : now);
   const session: ServerSession = {
     ...sessionData,
-    createdAt: sessionData.createdAt || now,
-    lastActivity: sessionData.lastActivity || now,
-    expiresAt: sessionData.expiresAt || now + SESSION_MAX_LIFETIME_MS,
+    createdAt: effectiveCreatedAt,
+    lastActivity: Math.max(sessionData.lastActivity || now, effectiveCreatedAt),
+    expiresAt: sessionData.expiresAt || effectiveCreatedAt + SESSION_MAX_LIFETIME_MS,
     revoked: false,
   };
 
@@ -176,19 +178,25 @@ export async function createSession(sessionData: Omit<ServerSession, 'sessionHas
 
   try {
     const db = getFirestoreInstance();
-    await db.collection(SESSIONS_COLLECTION).doc(docId).set({
-      userId: session.userId,
-      role: session.role,
-      tenantId: session.tenantId,
-      email: session.email,
-      createdAt: session.createdAt,
-      lastActivity: session.lastActivity,
-      expiresAt: session.expiresAt,
-      must_reset_password: Boolean(session.must_reset_password),
-      revoked: false,
-    });
+    void db
+      .collection(SESSIONS_COLLECTION)
+      .doc(docId)
+      .set({
+        userId: session.userId,
+        role: session.role,
+        tenantId: session.tenantId,
+        email: session.email,
+        createdAt: session.createdAt,
+        lastActivity: session.lastActivity,
+        expiresAt: session.expiresAt,
+        must_reset_password: Boolean(session.must_reset_password),
+        revoked: false,
+      })
+      .catch(() => {
+        // Mesmo se a escrita externa falhar momentaneamente, o token HMAC-SHA256 continua válido entre réplicas
+      });
   } catch {
-    // Mesmo se a escrita externa falhar momentaneamente, o token HMAC-SHA256 continua válido entre réplicas
+    // non-fatal
   }
 
   return { sessionId: sessionToken, session };

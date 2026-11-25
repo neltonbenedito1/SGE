@@ -201,18 +201,24 @@ export async function enqueueJob<TPayload = Record<string, any>>(params: {
 
   try {
     const jobRef = db.collection(JOBS_COLLECTION).doc(docId);
-    const txResult = await db.runTransaction(async (tx: any) => {
-      const existing = await tx.get(jobRef);
-      if (existing.exists) {
-        const data = existing.data() as AsyncJobRecord<TPayload>;
-        // Se já estiver pendente, em processamento ou concluído, devolve de forma idempotente
-        if (data.status !== 'dead_letter') {
-          return { job: { ...data, id: existing.id }, idempotent: true };
+    let txResult: { job: AsyncJobRecord<TPayload>; idempotent: boolean };
+    if (params.idempotencyKey && params.idempotencyKey.trim().length > 0) {
+      txResult = await db.runTransaction(async (tx: any) => {
+        const existing = await tx.get(jobRef);
+        if (existing.exists) {
+          const data = existing.data() as AsyncJobRecord<TPayload>;
+          // Se já estiver pendente, em processamento ou concluído, devolve de forma idempotente
+          if (data.status !== 'dead_letter') {
+            return { job: { ...data, id: existing.id }, idempotent: true };
+          }
         }
-      }
-      tx.set(jobRef, candidateJob);
-      return { job: candidateJob, idempotent: false };
-    });
+        tx.set(jobRef, candidateJob);
+        return { job: candidateJob, idempotent: false };
+      });
+    } else {
+      await jobRef.set(candidateJob);
+      txResult = { job: candidateJob, idempotent: false };
+    }
 
     l1JobsCache.set(docId, txResult.job);
     emitJobEvent(txResult.job);
@@ -800,8 +806,14 @@ export async function getQueueMetricsSnapshot(): Promise<QueueMetricsInput> {
   try {
     const db = getFirestoreInstance();
     const activeStatuses: AsyncJobStatus[] = ['pendente', 'em_processamento', 'falhado_reintento', 'dead_letter'];
-    for (const status of activeStatuses) {
-      const snap = await db.collection(JOBS_COLLECTION).where('status', '==', status).limit(300).get();
+    const snaps = await Promise.all(
+      activeStatuses.map((status) =>
+        db.collection(JOBS_COLLECTION).where('status', '==', status).limit(300).get()
+      )
+    );
+    activeStatuses.forEach((status, idx) => {
+      const snap = snaps[idx];
+      if (!snap) return;
       for (const d of snap.docs) {
         const data = d.data() as Partial<AsyncJobRecord>;
         const bucket = ensureTenant(data.tenant_id || 'global');
@@ -819,7 +831,7 @@ export async function getQueueMetricsSnapshot(): Promise<QueueMetricsInput> {
           bucket.deadLetter += 1;
         }
       }
-    }
+    });
   } catch {
     // Fallback para cache L1 local se Firestore não responder
     for (const job of l1JobsCache.values()) {

@@ -418,9 +418,21 @@ export function SederAdministracaoSection({
     setLoading(true);
     setErrorMsg('');
     try {
+      const csrfToken = getCookie('sysedu_csrf_token') || localStorage.getItem('sysedu_csrf_token') || '';
+      const sessId = getCookie('sysedu_session_id') || localStorage.getItem('sysedu_session_id') || '';
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (csrfToken) headers['x-csrf-token'] = csrfToken;
+      if (sessId) headers['x-session-id'] = sessId;
+      if (auth.currentUser) {
+        try {
+          const idToken = await auth.currentUser.getIdToken(true);
+          headers['Authorization'] = `Bearer ${idToken}`;
+        } catch {}
+      }
+
       const res = await fetch('/api/auth/bootstrap/reset', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         credentials: 'include',
       });
       const text = await res.text();
@@ -463,7 +475,7 @@ export function SederAdministracaoSection({
                 <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
                   Gestão de Super Administradores
                 </h1>
-                <span className="text-[10px] uppercase font-bold tracking-wider px-2.5 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-300">
+                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-md bg-indigo-500/10 border border-indigo-500/20 text-indigo-300">
                   Exclusivo Painel Super Admin
                 </span>
               </div>
@@ -716,7 +728,7 @@ export function SederAdministracaoSection({
                 <h2 className="text-base sm:text-lg font-bold text-white">
                   Seder Administracao (Transferência Soberana)
                 </h2>
-                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400">
+                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-md bg-rose-500/10 border border-rose-500/20 text-rose-400">
                   Operação Crítica
                 </span>
               </div>
@@ -933,7 +945,7 @@ export function SederAdministracaoSection({
                         <div className="flex items-center gap-2">
                           <p className="font-bold text-sm text-white">{admin.nome}</p>
                           {isCurrent && (
-                            <span className="text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full font-mono font-bold">
+                            <span className="text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-md font-mono font-bold">
                               Sua Sessão Atual
                             </span>
                           )}

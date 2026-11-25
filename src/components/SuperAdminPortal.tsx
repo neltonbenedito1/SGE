@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback, useMemo, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
 import { lazyWithRetry } from '../lib/lazyWithRetry';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { ModuleSkeleton } from './Skeletons';
@@ -95,12 +95,23 @@ import {
   Upload,
   UserCheck,
   ShieldCheck,
-  Activity
+  Activity,
+  HelpCircle,
+  BookOpen,
+  FolderOpen,
+  Send,
+  Headphones,
+  Bot,
+  Inbox,
+  GitBranch,
+  BarChart3
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 import {
   saveLastModule,
   getCookie,
+  getUserSessionCookie,
   saveSettingIfAllowed
 } from '../lib/cookies';
 const CookiePolicyModal = lazyWithRetry(
@@ -115,6 +126,15 @@ const ObservabilityPanel = lazyWithRetry(
   () => import('./ObservabilityPanel').then((m) => ({ default: m.ObservabilityPanel })),
   'ObservabilityPanel'
 );
+const FaqManagementModule = lazyWithRetry(
+  () => import('./superadmin/FaqManagementModule').then((m) => ({ default: m.FaqManagementModule })),
+  'FaqManagementModule'
+);
+const AssistantManagementModule = lazyWithRetry(
+  () => import('./superadmin/AssistantManagementModule').then((m) => ({ default: m.AssistantManagementModule })),
+  'AssistantManagementModule'
+);
+import type { AssistantSubTab, SupportContextSnapshot } from './superadmin/AssistantManagementModule';
 import { SearchableDropdown } from './SearchableDropdown';
 import { WORLD_COUNTRIES, getAutomaticProvincesForCountries } from '../shared/catalogs';
 
@@ -134,6 +154,7 @@ interface SuperAdminPortalProps {
   onChangeTheme?: (theme: string) => void;
   systemLang?: string;
   onChangeLanguage?: (lang: string) => void;
+  isSupportStaffOnly?: boolean;
 }
 
 interface TenantFormState {
@@ -181,25 +202,74 @@ export default function SuperAdminPortal({
   activeTheme, 
   onChangeTheme,
   systemLang = 'pt',
-  onChangeLanguage
+  onChangeLanguage,
+  isSupportStaffOnly = false
 }: SuperAdminPortalProps) {
+  const { t } = useTranslation('common');
   const [isCookiePolicyOpen, setIsCookiePolicyOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'tenants' | 'plans' | 'payments' | 'logs' | 'smtp' | 'seder_administracao' | 'observabilidade'>(() => {
+  const [supportMe, setSupportMe] = useState<SupportContextSnapshot | null>(null);
+  const isEffectiveSupportOnly = Boolean(
+    isSupportStaffOnly || (supportMe && !supportMe.isSuperAdmin)
+  );
+  const [activeTab, setActiveTab] = useState<
+    | 'dashboard'
+    | 'tenants'
+    | 'plans'
+    | 'payments'
+    | 'logs'
+    | 'smtp'
+    | 'seder_administracao'
+    | 'observabilidade'
+    | 'faq_overview'
+    | 'faq_questions'
+    | 'faq_categories'
+    | 'faq_articles'
+    | 'faq_publishing'
+    | 'assistant_overview'
+    | 'assistant_team'
+    | 'assistant_ai'
+    | 'assistant_tickets'
+    | 'assistant_distribution'
+    | 'assistant_analytics'
+  >(() => {
     const saved = getCookie('last_module');
-    if (saved === 'dashboard' || saved === 'tenants' || saved === 'plans' || saved === 'payments' || saved === 'logs' || saved === 'smtp' || saved === 'seder_administracao' || saved === 'observabilidade') {
+    const isAssistantTab =
+      saved === 'assistant_overview' ||
+      saved === 'assistant_team' ||
+      saved === 'assistant_ai' ||
+      saved === 'assistant_tickets' ||
+      saved === 'assistant_distribution' ||
+      saved === 'assistant_analytics';
+    const isFaqTab =
+      saved === 'faq_overview' ||
+      saved === 'faq_questions' ||
+      saved === 'faq_categories' ||
+      saved === 'faq_articles' ||
+      saved === 'faq_publishing';
+
+    if (isSupportStaffOnly) {
+      if (isAssistantTab || isFaqTab) return saved as any;
+      return 'assistant_overview';
+    }
+
+    if (
+      saved === 'dashboard' ||
+      saved === 'tenants' ||
+      saved === 'plans' ||
+      saved === 'payments' ||
+      saved === 'logs' ||
+      saved === 'smtp' ||
+      saved === 'seder_administracao' ||
+      saved === 'observabilidade' ||
+      isFaqTab ||
+      isAssistantTab
+    ) {
       return saved as any;
     }
     return 'dashboard';
   });
 
-  const currentUserEmail = auth.currentUser?.email || (() => {
-    try {
-      const raw = getCookie('sysedu_user');
-      return raw ? JSON.parse(raw)?.email : 'superadmin@sysedu.mz';
-    } catch {
-      return 'superadmin@sysedu.mz';
-    }
-  })() || 'superadmin@sysedu.mz';
+  const currentUserEmail = auth.currentUser?.email || getUserSessionCookie()?.email || 'superadmin@sysedu.mz';
 
   useEffect(() => {
     saveLastModule(activeTab);
@@ -758,7 +828,7 @@ export default function SuperAdminPortal({
   }
 
   // Universal email dispatcher for SuperAdmin: prioritizes active Gmail API and falls back to backend SMTP/Simulation
-  async function sendSuperAdminEmail(to: string, subject: string, body: string) {
+  async function sendSuperAdminEmail(to: string, subject: string, body: string, idempotencyKey?: string) {
     const currentToken = gmailToken || globalSmtp.gmail_token || localStorage.getItem('superadmin_gmail_oauth_token');
     
     // 1. If Gmail API is configured and authenticated, dispatch directly via Google REST API
@@ -787,6 +857,7 @@ export default function SuperAdminPortal({
         subject,
         body,
         async: true,
+        ...(idempotencyKey ? { idempotencyKey } : {}),
       })
     });
 
@@ -1131,83 +1202,133 @@ export default function SuperAdminPortal({
   }
 
   useEffect(() => {
-    loadData();
-  }, []);
+    let active = true;
+    async function loadSupportContext() {
+      try {
+        const headers: Record<string, string> = {};
+        const csrfToken = getCookie('sysedu_csrf_token') || localStorage.getItem('sysedu_csrf_token') || '';
+        const sessId = getCookie('sysedu_session_id') || localStorage.getItem('sysedu_session_id') || '';
+        if (csrfToken) headers['x-csrf-token'] = csrfToken;
+        if (sessId) headers['x-session-id'] = sessId;
+        if (auth.currentUser) {
+          const idToken = await auth.currentUser.getIdToken().catch(() => '');
+          if (idToken) headers['Authorization'] = `Bearer ${idToken}`;
+        }
+        const res = await fetch('/api/superadmin/assistant/me', { headers, credentials: 'include' });
+        if (res.ok && active) {
+          const data: SupportContextSnapshot = await res.json();
+          setSupportMe(data);
+          if (!data.isSuperAdmin && !String(activeTab).startsWith('assistant_') && !(data.permissions?.gerir_faq && String(activeTab).startsWith('faq_'))) {
+            setActiveTab('assistant_overview');
+          }
+        }
+      } catch {}
+    }
+
+    loadSupportContext();
+    if (isSupportStaffOnly) {
+      setLoading(false);
+      setHasLoadedOnce(true);
+    } else {
+      loadData();
+    }
+    return () => {
+      active = false;
+    };
+  }, [isSupportStaffOnly]);
+
+  const isBackgroundSyncRunningRef = useRef(false);
+  const lastBackgroundSyncAtRef = useRef(0);
+  const inFlightPendingEmailIdsRef = useRef<Set<string>>(new Set());
 
   // Sincronização orientada a eventos (visibilidade/reconexão) em vez de polling contínuo
   useEffect(() => {
-    let lastRunAt = 0;
+    let cancelled = false;
 
     async function runBackgroundSyncAndQueue(force = false) {
+      if (cancelled || isBackgroundSyncRunningRef.current) return;
       if (isFirestoreQuotaExhausted()) return;
       if (typeof document !== 'undefined' && document.hidden) return;
       if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
       const now = Date.now();
-      if (!force && now - lastRunAt < 120_000) return;
-      lastRunAt = now;
+      if (!force && now - lastBackgroundSyncAtRef.current < 120_000) return;
+      if (force && now - lastBackgroundSyncAtRef.current < 10_000) return;
+      isBackgroundSyncRunningRef.current = true;
+      lastBackgroundSyncAtRef.current = now;
 
-      // 1. Sync local temporary database records to Firestore
       try {
-        const syncRes = await syncLocalDataToFirestore();
-        if (
-          syncRes.tenantsSynced > 0 ||
-          syncRes.usersSynced > 0 ||
-          syncRes.configsSynced > 0 ||
-          syncRes.logsSynced > 0 ||
-          syncRes.paymentsSynced > 0 ||
-          syncRes.smtpConfigsSynced > 0 ||
-          syncRes.plansSynced > 0
-        ) {
-          console.log("[Background Sync] Successfully synchronized offline/temporary data to Firestore!");
-          loadData();
-        }
-      } catch (err: any) {
-        if (!err?.message?.includes('Quota limit exceeded')) {
-          console.warn("[Background Sync] Note:", err.message || err);
-        }
-      }
-
-      // 2. Process pending emails
-      if (!globalSmtp) return;
-      if (globalSmtp.smtp_type === 'gmail' && (!globalSmtp.user || globalSmtp.status !== 'ativo')) return;
-      if (globalSmtp.smtp_type !== 'gmail' && (!globalSmtp.host || globalSmtp.host.trim() === '')) return;
-
-      let processedAny = false;
-
-      // A. Process local pending emails
-      try {
-        const localEmails = localDb.getEmails().filter(e => e.status === 'pendente');
-        if (localEmails.length > 0) {
-          for (const email of localEmails) {
-            const success = await processPendingEmail(email.id, email, true);
-            if (success) processedAny = true;
+        // 1. Sync local temporary database records to Firestore
+        try {
+          const syncRes = await syncLocalDataToFirestore();
+          if (
+            !cancelled &&
+            (syncRes.tenantsSynced > 0 ||
+              syncRes.usersSynced > 0 ||
+              syncRes.configsSynced > 0 ||
+              syncRes.logsSynced > 0 ||
+              syncRes.paymentsSynced > 0 ||
+              syncRes.smtpConfigsSynced > 0 ||
+              syncRes.plansSynced > 0)
+          ) {
+            console.log("[Background Sync] Successfully synchronized offline/temporary data to Firestore!");
+            loadData();
+          }
+        } catch (err: any) {
+          if (!err?.message?.includes('Quota limit exceeded')) {
+            console.warn("[Background Sync] Note:", err.message || err);
           }
         }
-      } catch (err) {
-        console.error("Erro no processamento de e-mails pendentes locais:", err);
-      }
 
-      // B. Process Firestore pending emails (skip if quota is exhausted)
-      if (!isFirestoreQuotaExhausted()) {
+        if (cancelled) return;
+
+        // 2. Process pending emails
+        if (!globalSmtp) return;
+        if (globalSmtp.smtp_type === 'gmail' && (!globalSmtp.user || globalSmtp.status !== 'ativo')) return;
+        if (globalSmtp.smtp_type !== 'gmail' && (!globalSmtp.host || globalSmtp.host.trim() === '')) return;
+
+        let processedAny = false;
+
+        // A. Process local pending emails
         try {
-          const q = query(collection(db, 'pending_emails'), where('status', '==', 'pendente'), limit(50));
-          const querySnap = await getDocs(q);
-          if (!querySnap.empty) {
-            for (const docSnap of querySnap.docs) {
-              const emailData = docSnap.data();
-              const success = await processPendingEmail(docSnap.id, emailData, false);
+          const localEmails = localDb.getEmails().filter(e => e.status === 'pendente');
+          if (localEmails.length > 0) {
+            for (const email of localEmails) {
+              if (cancelled) break;
+              const success = await processPendingEmail(email.id, email, true);
               if (success) processedAny = true;
             }
           }
-        } catch (error: any) {
-          if (!error?.message?.includes('Quota limit exceeded')) {
-            console.warn("Relação com Firestore indisponível para e-mails pendentes, processamento em espera:", error);
+        } catch (err) {
+          console.error("Erro no processamento de e-mails pendentes locais:", err);
+        }
+
+        if (cancelled) return;
+
+        // B. Process Firestore pending emails (skip if quota is exhausted)
+        if (!isFirestoreQuotaExhausted()) {
+          try {
+            const q = query(collection(db, 'pending_emails'), where('status', '==', 'pendente'), limit(50));
+            const querySnap = await getDocs(q);
+            if (!querySnap.empty) {
+              for (const docSnap of querySnap.docs) {
+                if (cancelled) break;
+                const emailData = docSnap.data();
+                const success = await processPendingEmail(docSnap.id, emailData, false);
+                if (success) processedAny = true;
+              }
+            }
+          } catch (error: any) {
+            if (!error?.message?.includes('Quota limit exceeded')) {
+              console.warn("Relação com Firestore indisponível para e-mails pendentes, processamento em espera:", error);
+            }
           }
         }
-      }
 
-      if (processedAny) {
-        loadData();
+        if (processedAny && !cancelled) {
+          loadData();
+        }
+      } finally {
+        isBackgroundSyncRunningRef.current = false;
       }
     }
 
@@ -1225,6 +1346,7 @@ export default function SuperAdminPortal({
     document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
+      cancelled = true;
       window.removeEventListener('online', handleOnline);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
@@ -1355,7 +1477,7 @@ export default function SuperAdminPortal({
         detalhes: details
       };
       const docRef = await addDoc(collection(db, "log_admins"), newLog);
-      setLogs(prev => [{ ...(newLog as LogAdmin), id: docRef.id }, ...prev].slice(0, 100));
+      setLogs(prev => [{ ...(newLog as LogAdmin), id: docRef.id }, ...prev.filter(l => l.id !== docRef.id)].slice(0, 100));
     } catch (err) {
       console.error("Error writing audit log:", err);
     }
@@ -1380,14 +1502,20 @@ export default function SuperAdminPortal({
 
   // Process and send a specific pending email
   async function processPendingEmail(emailId: string, emailData: any, isLocal: boolean = false) {
+    if (inFlightPendingEmailIdsRef.current.has(emailId)) {
+      return false;
+    }
+    inFlightPendingEmailIdsRef.current.add(emailId);
     let sent = false;
     let errorMsg = '';
     
     try {
-      await sendSuperAdminEmail(emailData.to, emailData.subject, emailData.body);
+      await sendSuperAdminEmail(emailData.to, emailData.subject, emailData.body, `pending_email_${emailId}`);
       sent = true;
     } catch (err: any) {
       errorMsg = err.message || String(err);
+    } finally {
+      inFlightPendingEmailIdsRef.current.delete(emailId);
     }
 
     try {
@@ -2694,7 +2822,9 @@ export default function SuperAdminPortal({
             {isExpanded && (
               <div className="overflow-hidden animate-in fade-in duration-300">
                 <h2 className="font-sans font-extrabold text-sm text-white tracking-tight">SysEdu SaaS</h2>
-                <span className="text-[9px] text-[#10B981] font-mono tracking-wider font-bold animate-pulse">SUPER ADMIN</span>
+                <span className="text-[9px] text-[#10B981] font-mono tracking-wider font-bold">
+                  {isEffectiveSupportOnly ? t('assistant.staff_mode_badge') : 'SUPER ADMIN'}
+                </span>
               </div>
             )}
           </div>
@@ -2722,25 +2852,58 @@ export default function SuperAdminPortal({
 
         {/* Navigation Links */}
         <nav className="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto overscroll-y-contain no-scrollbar">
-          {renderGroupHeader('Painel de Controle')}
-          {renderMenuItem('dashboard', 'Dashboard Global', <Sparkles className="w-4.5 h-4.5" />)}
+          {!isEffectiveSupportOnly && (
+            <>
+              {renderGroupHeader('Painel de Controle')}
+              {renderMenuItem('dashboard', 'Dashboard Global', <Sparkles className="w-4.5 h-4.5" />)}
 
-          {renderGroupHeader('Clientes')}
-          {renderMenuItem('tenants', `Contas & Clientes (${tenants.length})`, <Building2 className="w-4.5 h-4.5" />)}
+              {renderGroupHeader('Clientes')}
+              {renderMenuItem('tenants', `Contas & Clientes (${tenants.length})`, <Building2 className="w-4.5 h-4.5" />)}
 
-          {renderGroupHeader('Faturamento')}
-          {renderMenuItem('plans', 'Planos & Limites', <CreditCard className="w-4.5 h-4.5" />)}
-          {renderMenuItem('payments', 'Histórico Pagamentos', <DollarSign className="w-4.5 h-4.5" />)}
+              {renderGroupHeader('Faturamento')}
+              {renderMenuItem('plans', 'Planos & Limites', <CreditCard className="w-4.5 h-4.5" />)}
+              {renderMenuItem('payments', 'Histórico Pagamentos', <DollarSign className="w-4.5 h-4.5" />)}
 
-          {renderGroupHeader('Configurações')}
-          {renderMenuItem('smtp', 'Servidores SMTP', <Mail className="w-4.5 h-4.5" />)}
-          {renderMenuItem('notificacoes_config', 'Config. Notificações', <Bell className="w-4.5 h-4.5" />)}
-          {renderMenuItem('seder_administracao', 'Super Administradores', <ShieldCheck className="w-4.5 h-4.5 text-indigo-400" />)}
+              {renderGroupHeader('Configurações')}
+              {renderMenuItem('smtp', 'Servidores SMTP', <Mail className="w-4.5 h-4.5" />)}
+              {renderMenuItem('notificacoes_config', 'Config. Notificações', <Bell className="w-4.5 h-4.5" />)}
+              {renderMenuItem('seder_administracao', 'Super Administradores', <ShieldCheck className="w-4.5 h-4.5 text-indigo-400" />)}
+            </>
+          )}
 
-          {renderGroupHeader('Auditoria')}
-          {renderMenuItem('logs', 'Auditoria Geral', <History className="w-4.5 h-4.5" />)}
-          {renderMenuItem('logs_instituicoes', 'Logs Criptografados', <ShieldAlert className="w-4.5 h-4.5" />)}
-          {renderMenuItem('observabilidade', 'Observabilidade & SLO', <Activity className="w-4.5 h-4.5 text-emerald-400" />)}
+          {(!isEffectiveSupportOnly || supportMe?.permissions?.gerir_faq) && (
+            <>
+              {renderGroupHeader(t('faq.section_label'))}
+              {renderMenuItem('faq_overview', t('faq.nav_overview'), <Sparkles className="w-4.5 h-4.5" />)}
+              {renderMenuItem('faq_questions', t('faq.nav_questions'), <HelpCircle className="w-4.5 h-4.5" />)}
+              {renderMenuItem('faq_categories', t('faq.nav_categories'), <FolderOpen className="w-4.5 h-4.5" />)}
+              {renderMenuItem('faq_articles', t('faq.nav_articles'), <BookOpen className="w-4.5 h-4.5" />)}
+              {renderMenuItem('faq_publishing', t('faq.nav_publishing'), <Send className="w-4.5 h-4.5" />)}
+            </>
+          )}
+
+          {renderGroupHeader(t('assistant.section_label'))}
+          {(!isEffectiveSupportOnly || supportMe?.permissions?.visualizar !== false) &&
+            renderMenuItem('assistant_overview', t('assistant.nav_overview'), <Headphones className="w-4.5 h-4.5" />)}
+          {(!isEffectiveSupportOnly || supportMe?.permissions?.visualizar !== false) &&
+            renderMenuItem('assistant_team', t('assistant.nav_team'), <Users className="w-4.5 h-4.5" />)}
+          {(!isEffectiveSupportOnly || supportMe?.permissions?.configurar_ia) &&
+            renderMenuItem('assistant_ai', t('assistant.nav_ai'), <Bot className="w-4.5 h-4.5" />)}
+          {(!isEffectiveSupportOnly || supportMe?.permissions?.visualizar !== false) &&
+            renderMenuItem('assistant_tickets', t('assistant.nav_tickets'), <Inbox className="w-4.5 h-4.5" />)}
+          {(!isEffectiveSupportOnly || supportMe?.permissions?.gerir_funcionarios || supportMe?.permissions?.configurar_ia) &&
+            renderMenuItem('assistant_distribution', t('assistant.nav_distribution'), <GitBranch className="w-4.5 h-4.5" />)}
+          {(!isEffectiveSupportOnly || supportMe?.permissions?.consultar_analytics) &&
+            renderMenuItem('assistant_analytics', t('assistant.nav_analytics'), <BarChart3 className="w-4.5 h-4.5" />)}
+
+          {!isEffectiveSupportOnly && (
+            <>
+              {renderGroupHeader('Auditoria')}
+              {renderMenuItem('logs', 'Auditoria Geral', <History className="w-4.5 h-4.5" />)}
+              {renderMenuItem('logs_instituicoes', 'Logs Criptografados', <ShieldAlert className="w-4.5 h-4.5" />)}
+              {renderMenuItem('observabilidade', 'Observabilidade & SLO', <Activity className="w-4.5 h-4.5 text-emerald-400" />)}
+            </>
+          )}
         </nav>
 
         {/* Footer / User Profile */}
@@ -2814,6 +2977,17 @@ export default function SuperAdminPortal({
               {(activeTab as string) === 'logs_instituicoes' && 'Logs Criptografados por Unidade'}
               {(activeTab as string) === 'seder_administracao' && 'Seder Administracao'}
               {(activeTab as string) === 'observabilidade' && 'Observabilidade, Métricas & SLO'}
+              {activeTab === 'faq_overview' && t('faq.overview_title')}
+              {activeTab === 'faq_questions' && t('faq.questions_title')}
+              {activeTab === 'faq_categories' && t('faq.categories_title')}
+              {activeTab === 'faq_articles' && t('faq.articles_title')}
+              {activeTab === 'faq_publishing' && t('faq.publishing_title')}
+              {activeTab === 'assistant_overview' && t('assistant.overview_title')}
+              {activeTab === 'assistant_team' && t('assistant.team_title')}
+              {activeTab === 'assistant_ai' && t('assistant.ai_title')}
+              {activeTab === 'assistant_tickets' && t('assistant.tickets_title')}
+              {activeTab === 'assistant_distribution' && t('assistant.distribution_title')}
+              {activeTab === 'assistant_analytics' && t('assistant.analytics_title')}
             </h1>
           </div>
           
@@ -4502,6 +4676,47 @@ export default function SuperAdminPortal({
                 <ModuleErrorBoundary title="Observabilidade & SLO">
                   <Suspense fallback={<ModuleSkeleton title="A carregar métricas e alertas SLO..." rows={6} />}>
                     <ObservabilityPanel />
+                  </Suspense>
+                </ModuleErrorBoundary>
+              </div>
+            )}
+
+            {/* TABS: MÓDULO FAQ & BASE DE CONHECIMENTO (FASE 1) */}
+            {(activeTab === 'faq_overview' ||
+              activeTab === 'faq_questions' ||
+              activeTab === 'faq_categories' ||
+              activeTab === 'faq_articles' ||
+              activeTab === 'faq_publishing') && (
+              <div className="animate-fadeIn">
+                <ModuleErrorBoundary title={t('faq.section_label')}>
+                  <Suspense fallback={<ModuleSkeleton title="A carregar base de conhecimento FAQ..." rows={6} />}>
+                    <FaqManagementModule
+                      activeSubTab={activeTab}
+                      onNavigateSubTab={(tab) => setActiveTab(tab)}
+                      showNotification={(msg, type) => showSystemNotification(msg, type || 'info')}
+                    />
+                  </Suspense>
+                </ModuleErrorBoundary>
+              </div>
+            )}
+
+            {/* TABS: MÓDULO ASSISTENTE & EQUIPA DE SUPORTE (FASE 2) */}
+            {(activeTab === 'assistant_overview' ||
+              activeTab === 'assistant_team' ||
+              activeTab === 'assistant_ai' ||
+              activeTab === 'assistant_tickets' ||
+              activeTab === 'assistant_distribution' ||
+              activeTab === 'assistant_analytics') && (
+              <div className="animate-fadeIn">
+                <ModuleErrorBoundary title={t('assistant.section_label')}>
+                  <Suspense fallback={<ModuleSkeleton title="A carregar módulo Assistente..." rows={6} />}>
+                    <AssistantManagementModule
+                      activeSubTab={activeTab as AssistantSubTab}
+                      onNavigateSubTab={(tab) => setActiveTab(tab)}
+                      showNotification={(msg, type) => showSystemNotification(msg, type || 'info')}
+                      supportContext={supportMe}
+                      tenantsList={tenants.map((tn) => ({ id: tn.id, nome: tn.nome }))}
+                    />
                   </Suspense>
                 </ModuleErrorBoundary>
               </div>

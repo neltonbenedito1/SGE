@@ -929,3 +929,687 @@ export interface CustomForm {
   created_at: string;
   updated_at: string;
 }
+
+// ============================================================================
+// MÓDULO FAQ & BASE DE CONHECIMENTO (FASE 1)
+// ============================================================================
+
+export type FaqEstado = 'rascunho' | 'publicado' | 'despublicado' | 'arquivado';
+export type FaqTipo = 'faq' | 'artigo_tutorial';
+export type FaqVisibilidade = 'todos' | 'tenant_admin' | 'docentes' | 'estudantes' | 'encarregados' | 'super_admin';
+
+export interface FaqAttachment {
+  id: string;
+  nome: string;
+  tipo: 'image' | 'pdf';
+  mime_type: 'image/png' | 'image/jpeg' | 'image/webp' | 'application/pdf';
+  tamanho_bytes: number;
+  url: string;
+  criado_em?: string;
+}
+
+export interface FaqChangeHistoryDiff {
+  campo: string;
+  antes?: string | boolean | number | string[] | null;
+  depois?: string | boolean | number | string[] | null;
+}
+
+export interface FaqChangeHistoryEntry {
+  id: string;
+  autor_id: string;
+  autor_nome: string;
+  autor_email: string;
+  data: string;
+  acao: 'criacao' | 'edicao' | 'estado' | 'anexo';
+  resumo: string;
+  alteracoes?: FaqChangeHistoryDiff[];
+}
+
+export interface FaqCategory {
+  id: string;
+  tenant_id: string;
+  nome: string;
+  slug: string;
+  descricao?: string;
+  ordem: number;
+  ativo: boolean;
+  visibilidade_padrao: FaqVisibilidade;
+  artigos_count?: number;
+  created_at: string;
+  updated_at: string;
+  created_by: string;
+  updated_by: string;
+}
+
+export interface FaqArticle {
+  id: string;
+  tenant_id: string;
+  tipo: FaqTipo;
+  titulo: string;
+  pergunta?: string;
+  resposta_html: string;
+  resposta_texto: string;
+  categoria_id: string;
+  categoria_nome?: string;
+  palavras_chave: string[];
+  anexos: FaqAttachment[];
+  estado: FaqEstado;
+  prioridade: number;
+  visibilidade: FaqVisibilidade;
+  utilizavel_ia: boolean;
+  visualizacoes: number;
+  autor_id: string;
+  autor_nome: string;
+  autor_email: string;
+  publicado_em?: string | null;
+  historico_alteracoes: FaqChangeHistoryEntry[];
+  created_at: string;
+  updated_at: string;
+  updated_by: string;
+}
+
+export interface FaqOverviewStats {
+  totalPerguntas: number;
+  totalFaqs: number;
+  totalArtigosTutoriais: number;
+  totalCategorias: number;
+  categoriasAtivas: number;
+  publicadas: number;
+  rascunhos: number;
+  despublicadas: number;
+  arquivadas: number;
+  utilizavelIa: number;
+  totalVisualizacoes: number;
+  topArtigos: Array<{
+    id: string;
+    titulo: string;
+    categoria_nome: string;
+    visualizacoes: number;
+    tipo: FaqTipo;
+    utilizavel_ia: boolean;
+  }>;
+  porCategoria: Array<{
+    categoria_id: string;
+    nome: string;
+    total: number;
+    publicadas: number;
+    visualizacoes: number;
+  }>;
+}
+
+// ============================================================================
+// MÓDULO ASSISTENTE — FASE 2: EQUIPA, DEPARTAMENTOS E PERMISSÕES
+// ============================================================================
+
+export type SupportAgentRole = 'administrador' | 'supervisor' | 'assistente';
+export type SupportAgentStatus = 'activo' | 'inactivo' | 'suspenso' | 'arquivado';
+export type SupportAvailability = 'online' | 'offline' | 'ocupado';
+export type SupportWeekday = 'seg' | 'ter' | 'qua' | 'qui' | 'sex' | 'sab' | 'dom';
+export type SupportHistoryScope = 'proprio' | 'todos';
+
+export interface SupportScheduleDay {
+  dia: SupportWeekday;
+  ativo: boolean;
+  inicio: string; // HH:MM
+  fim: string;    // HH:MM
+}
+
+export interface SupportWorkingHours {
+  ativo: boolean;
+  timezone: string;
+  dias: SupportScheduleDay[];
+}
+
+export interface SupportAssignmentRules {
+  auto_atribuir: boolean;
+  apenas_horario: boolean;
+  prioridade_atribuicao: number; // 1-100
+  categorias_especialidade: string[];
+}
+
+export interface SupportDepartment {
+  id: string;
+  tenant_id: string;
+  nome: string;
+  slug: string;
+  descricao?: string;
+  email_fila?: string;
+  sla_resposta_minutos: number;
+  sla_resolucao_horas: number;
+  ordem: number;
+  ativo: boolean;
+  padrao: boolean;
+  membros_count?: number;
+  created_at: string;
+  updated_at: string;
+  created_by: string;
+  updated_by: string;
+}
+
+export interface SupportPermissionSet {
+  visualizar: boolean;
+  responder: boolean;
+  transferir: boolean;
+  encerrar: boolean;
+  consultar_historico: boolean;
+  historico_escopo: SupportHistoryScope;
+  consultar_analytics: boolean;
+  gerir_funcionarios: boolean;
+  configurar_ia: boolean;
+  gerir_faq: boolean;
+}
+
+export type SupportPermissionBooleanKey = Exclude<keyof SupportPermissionSet, 'historico_escopo'>;
+
+export interface SupportPermissionsRecord {
+  id: string;
+  agent_id: string;
+  tenant_id: string;
+  funcao: SupportAgentRole;
+  permissoes: SupportPermissionSet;
+  updated_at: string;
+  updated_by: string;
+}
+
+export interface SupportAgent {
+  id: string;
+  uid?: string;
+  tenant_id: string;
+  tipo: 'humano' | 'ia';
+  nome: string;
+  email: string;
+  departamento_id: string;
+  departamento_nome?: string;
+  departamentos_autorizados: string[];
+  funcao: SupportAgentRole;
+  estado: SupportAgentStatus;
+  disponibilidade: SupportAvailability;
+  limite_simultaneo: number;
+  carga_actual: number;
+  horario_atendimento: SupportWorkingHours;
+  regras_atribuicao: SupportAssignmentRules;
+  permissoes?: SupportPermissionSet;
+  must_reset_password?: boolean;
+  credenciais_redefinidas_em?: string | null;
+  ultimo_acesso?: string | null;
+  created_at: string;
+  updated_at: string;
+  created_by: string;
+  updated_by: string;
+}
+
+export interface SupportAgentHistoryEntry {
+  id: string;
+  origem: 'ticket' | 'atribuicao' | 'auditoria';
+  titulo: string;
+  detalhe: string;
+  estado?: string;
+  tenant_id: string;
+  data: string;
+  actor_email?: string;
+}
+
+export interface SupportTeamOverviewStats {
+  totalFuncionarios: number;
+  totalAgentesIa?: number;
+  activos: number;
+  inactivos: number;
+  suspensos: number;
+  arquivados: number;
+  online: number;
+  ocupado: number;
+  offline: number;
+  totalDepartamentos: number;
+  departamentosActivos: number;
+  capacidadeTotalSimultanea: number;
+  cargaActualTotal: number;
+  porFuncao: {
+    administrador: number;
+    supervisor: number;
+    assistente: number;
+  };
+  porDepartamento: Array<{
+    departamento_id: string;
+    nome: string;
+    total_membros: number;
+    online: number;
+    capacidade: number;
+  }>;
+}
+
+// ============================================================================
+// MÓDULO HELP DESK / TICKETS & CONVERSAS (FASE 3)
+// ============================================================================
+
+export type SupportTicketPriority = 'baixa' | 'normal' | 'alta' | 'urgente';
+export type SupportTicketStatus = 'aberto' | 'em_atendimento' | 'pendente' | 'resolvido' | 'reaberto';
+export type SupportMessageType = 'mensagem' | 'nota_interna' | 'sistema';
+export type SupportSenderType = 'utilizador' | 'funcionario' | 'ia' | 'sistema';
+export type SupportSlaStatus = 'ok' | 'em_risco' | 'violado';
+
+export interface SupportAttachment {
+  id: string;
+  nome: string;
+  tipo: 'image' | 'pdf';
+  mime_type: string;
+  tamanho_bytes: number;
+  url: string;
+}
+
+export interface SupportTicket {
+  id: string;
+  codigo: string;
+  tenant_id: string;
+  tenant_nome?: string;
+  solicitante_id: string;
+  solicitante_nome: string;
+  solicitante_email: string;
+  solicitante_role: string;
+  assunto: string;
+  categoria: string;
+  departamento_id: string;
+  departamento_nome?: string;
+  responsavel_id?: string | null;
+  responsavel_nome?: string | null;
+  responsavel_tipo?: 'humano' | 'ia' | null;
+  prioridade: SupportTicketPriority;
+  estado: SupportTicketStatus;
+  canal: 'portal' | 'superadmin' | 'ia';
+  total_mensagens: number;
+  ultima_mensagem_por?: SupportSenderType;
+  ultima_mensagem_preview?: string;
+  data_abertura: string;
+  ultima_interacao: string;
+  primeira_resposta_em?: string | null;
+  resolvido_em?: string | null;
+  reaberto_em?: string | null;
+  sla_resposta_em: string;
+  sla_resolucao_em: string;
+  sla_status: SupportSlaStatus;
+  sem_resposta_alerta: boolean;
+  sem_resposta_ha_minutos: number;
+  avaliacao_nota?: number | null;
+  avaliacao_comentario?: string | null;
+  avaliado_em?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SupportMessage {
+  id: string;
+  ticket_id: string;
+  tenant_id: string;
+  remetente_id: string;
+  remetente_nome: string;
+  remetente_email?: string;
+  remetente_tipo: SupportSenderType;
+  tipo: SupportMessageType;
+  conteudo: string;
+  anexos: SupportAttachment[];
+  created_at: string;
+}
+
+export interface SupportAssignmentRecord {
+  id: string;
+  ticket_id: string;
+  tenant_id: string;
+  de_responsavel_id?: string | null;
+  de_responsavel_nome?: string | null;
+  para_responsavel_id?: string | null;
+  para_responsavel_nome?: string | null;
+  de_departamento_id?: string | null;
+  de_departamento_nome?: string | null;
+  para_departamento_id?: string | null;
+  para_departamento_nome?: string | null;
+  motivo?: string;
+  actor_id: string;
+  actor_email: string;
+  created_at: string;
+}
+
+export interface SupportRating {
+  id: string;
+  ticket_id: string;
+  tenant_id: string;
+  solicitante_id: string;
+  responsavel_id?: string | null;
+  nota: number;
+  comentario?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SupportEvent {
+  id: string;
+  ticket_id: string;
+  tenant_id: string;
+  tipo:
+    | 'ticket_criado'
+    | 'mensagem_enviada'
+    | 'nota_interna'
+    | 'transferido'
+    | 'estado_alterado'
+    | 'avaliado'
+    | 'ia_resposta'
+    | 'escalado_humano'
+    | 'distribuido_automaticamente'
+    | 'reencaminhado_sla';
+  descricao: string;
+  actor_id: string;
+  actor_nome: string;
+  metadata?: Record<string, any>;
+  created_at: string;
+}
+
+export interface SupportTicketInboxSummary {
+  total: number;
+  abertos: number;
+  emAtendimento: number;
+  pendentes: number;
+  resolvidos: number;
+  reabertos: number;
+  alertasSla: number;
+  semResposta: number;
+}
+
+// ============================================================================
+// MÓDULO ASSISTENTE — FASE 4: AGENTES DE IA & MOTOR AUTOMATIZADO
+// ============================================================================
+
+export type SupportAiExecutionMode = 'gemini_direct' | 'n8n_webhook' | 'hibrido';
+export type SupportAiModel = 'gemini-4-hydrogen' | 'gemini-3.1-flash-lite';
+
+export interface SupportAiAgentConfig {
+  id: string;
+  agent_id: string;
+  tenant_id: string;
+  modelo: SupportAiModel;
+  modo_execucao: SupportAiExecutionMode;
+  prompt_sistema: string;
+  personalidade: string;
+  idioma_padrao: string;
+  limiar_confianca: number; // 0.10 - 0.99
+  usar_apenas_faq_autorizada: boolean;
+  max_turnos_ia: number; // 1 - 20
+  auto_responder_tickets: boolean;
+  palavras_chave_escalonamento: string[];
+  n8n_webhook_url?: string;
+  fallback_departamento_id?: string;
+  fallback_departamento_nome?: string;
+  total_interacoes: number;
+  total_escalonamentos: number;
+  ultima_execucao_em?: string | null;
+  created_at: string;
+  updated_at: string;
+  updated_by: string;
+}
+
+export interface SupportAiAgentWithConfig {
+  agent: SupportAgent;
+  config: SupportAiAgentConfig;
+}
+
+export interface SupportAiProviderStatus {
+  geminiConfigured: boolean;
+  n8nSecretConfigured: boolean;
+  defaultModel: SupportAiModel;
+}
+
+export interface SupportAiFaqReference {
+  id: string;
+  titulo: string;
+  categoria_nome?: string;
+  score: number;
+}
+
+export interface SupportAiSandboxResult {
+  agent_id: string;
+  agent_nome: string;
+  modo_usado: SupportAiExecutionMode;
+  modelo: string;
+  resposta: string;
+  confianca: number;
+  escalonar_humano: boolean;
+  motivo_escalonamento?: string;
+  artigos_faq_usados: SupportAiFaqReference[];
+  latencia_ms: number;
+}
+
+export interface SupportAiTicketExecutionResult {
+  ticket: SupportTicket;
+  message: SupportMessage;
+  escalonado: boolean;
+  motivo_escalonamento?: string;
+  confianca?: number;
+  artigos_faq_usados: SupportAiFaqReference[];
+  modo_usado: SupportAiExecutionMode;
+}
+
+// ============================================================================
+// MÓDULO ASSISTENTE — FASE 5: DISTRIBUIÇÃO AUTOMÁTICA E REENCAMINHAMENTO
+// ============================================================================
+
+export type SupportDistributionStrategy =
+  | 'ia_primeiro'
+  | 'round_robin'
+  | 'menor_carga'
+  | 'especialidade'
+  | 'fila_departamento';
+
+export interface SupportDistributionConditions {
+  categorias: string[];
+  prioridades: SupportTicketPriority[];
+  canais: Array<'portal' | 'superadmin' | 'ia'>;
+  departamentos_origem: string[];
+  palavras_chave: string[];
+}
+
+export interface SupportDistributionRule {
+  id: string;
+  tenant_id: string;
+  nome: string;
+  descricao?: string;
+  ativo: boolean;
+  ordem: number;
+  condicoes: SupportDistributionConditions;
+  metodo: SupportDistributionStrategy;
+  destino_departamento_id: string;
+  destino_departamento_nome?: string;
+  destino_agent_id?: string | null;
+  destino_agent_nome?: string | null;
+  auto_executar_ia: boolean;
+  escalonar_para_humano_se_ia_falhar: boolean;
+  respeitar_horario_atendimento: boolean;
+  exigir_disponibilidade_online: boolean;
+  permitir_ocupado_se_sem_online: boolean;
+  ultimo_agent_id?: string | null;
+  total_atribuicoes: number;
+  ultima_execucao_em?: string | null;
+  created_at: string;
+  updated_at: string;
+  created_by: string;
+  updated_by: string;
+}
+
+export interface SupportDistributionCandidateCheck {
+  agent_id: string;
+  nome: string;
+  tipo: 'humano' | 'ia';
+  elegivel: boolean;
+  motivo_exclusao?: string;
+  carga_actual: number;
+  limite_simultaneo: number;
+  disponibilidade: SupportAvailability;
+}
+
+export interface SupportDistributionExecutionResult {
+  ticket: SupportTicket;
+  atribuido: boolean;
+  motivo: string;
+  regra_id?: string | null;
+  regra_nome?: string | null;
+  metodo_usado?: SupportDistributionStrategy | null;
+  departamento_id: string;
+  departamento_nome: string;
+  responsavel_id?: string | null;
+  responsavel_nome?: string | null;
+  responsavel_tipo?: 'humano' | 'ia' | null;
+  ia_executada?: boolean;
+}
+
+export interface SupportDistributionSimulationResult {
+  matched_rule: {
+    id: string;
+    nome: string;
+    ordem: number;
+    metodo: SupportDistributionStrategy;
+  } | null;
+  destino_departamento_id: string;
+  destino_departamento_nome: string;
+  responsavel_selecionado: {
+    id: string;
+    nome: string;
+    tipo: 'humano' | 'ia';
+  } | null;
+  motivo: string;
+  candidatos_avaliados: SupportDistributionCandidateCheck[];
+}
+
+export interface SupportDistributionRebalanceResult {
+  processados: number;
+  atribuidos: number;
+  escalonados_sla: number;
+  sem_elegivel: number;
+  dry_run: boolean;
+  detalhes: Array<{
+    ticket_id: string;
+    codigo: string;
+    acao: 'atribuido' | 'reencaminhado_sla' | 'fila_atualizada' | 'sem_elegivel';
+    responsavel_nome?: string | null;
+    departamento_nome: string;
+    motivo: string;
+  }>;
+}
+
+export interface SupportDistributionOverview {
+  totalRegras: number;
+  regrasActivas: number;
+  ticketsSemResponsavel: number;
+  ticketsAlertasSla: number;
+  equipaOnlineDisponivel: number;
+  capacidadeLivreHumanos: number;
+  agentesIaActivos: number;
+}
+
+// ============================================================================
+// MÓDULO ASSISTENTE — FASE 6: ANALYTICS E MÉTRICAS DO SUPORTE
+// ============================================================================
+
+export interface SupportAnalyticsSummary {
+  totalSolicitacoes: number;
+  solicitacoesAbertasAgora: number;
+  solicitacoesResolvidas: number;
+  taxaResolucaoPct: number;
+  tempoMedioPrimeiraRespostaMin: number;
+  tempoMedioResolucaoHoras: number;
+  taxaCumprimentoSlaPct: number;
+  alertasSlaEmAberto: number;
+  avaliacaoMedia: number;
+  totalAvaliacoes: number;
+  totalInteracoesIa: number;
+  totalEscalonamentosIa: number;
+  taxaResolucaoIaPct: number;
+}
+
+export interface SupportAnalyticsDailyPoint {
+  data: string;
+  label: string;
+  abertos: number;
+  resolvidos: number;
+  iaRespostas: number;
+  escalonamentos: number;
+}
+
+export interface SupportAnalyticsCategoryStat {
+  categoria: string;
+  total: number;
+  abertos: number;
+  resolvidos: number;
+  taxaResolucaoPct: number;
+}
+
+export interface SupportAnalyticsDepartmentStat {
+  departamento_id: string;
+  nome: string;
+  total: number;
+  abertos: number;
+  resolvidos: number;
+  tempoMedioRespostaMin: number;
+  slaCumpridoPct: number;
+}
+
+export interface SupportAnalyticsAgentStat {
+  agent_id: string;
+  nome: string;
+  tipo: 'humano' | 'ia';
+  departamento_nome: string;
+  totalAtribuidos: number;
+  resolvidos: number;
+  cargaActual: number;
+  limiteSimultaneo: number;
+  avaliacaoMedia: number;
+  totalAvaliacoes: number;
+  tempoMedioRespostaMin: number;
+}
+
+export interface SupportAnalyticsRatingDist {
+  nota: number;
+  count: number;
+  pct: number;
+}
+
+export interface SupportAnalyticsFeedbackItem {
+  id: string;
+  ticket_id: string;
+  codigo: string;
+  assunto: string;
+  tenant_id: string;
+  nota: number;
+  comentario: string;
+  responsavel_nome?: string | null;
+  created_at: string;
+}
+
+export interface SupportAnalyticsFaqInsight {
+  totalPublicados: number;
+  totalUtilizavelIa: number;
+  totalVisualizacoes: number;
+  topArtigos: Array<{
+    id: string;
+    titulo: string;
+    categoria_nome: string;
+    visualizacoes: number;
+    utilizavel_ia: boolean;
+  }>;
+}
+
+export interface SupportAnalyticsReport {
+  periodo: {
+    days: number;
+    start_date: string;
+    end_date: string;
+    tenant_id: string;
+    departamento_id: string;
+    canal: 'todos' | 'portal' | 'superadmin' | 'ia';
+  };
+  resumo: SupportAnalyticsSummary;
+  serieDiaria: SupportAnalyticsDailyPoint[];
+  porCategoria: SupportAnalyticsCategoryStat[];
+  porDepartamento: SupportAnalyticsDepartmentStat[];
+  porAgente: SupportAnalyticsAgentStat[];
+  distribuicaoAvaliacoes: SupportAnalyticsRatingDist[];
+  recentesComentarios: SupportAnalyticsFeedbackItem[];
+  faqInsights: SupportAnalyticsFaqInsight;
+}
+
+

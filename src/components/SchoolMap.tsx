@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Search, MapPin, Maximize2, Minimize2, Lock, Unlock } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { escapeHtml } from '../lib/sanitize';
 
 interface School {
   id: string;
@@ -70,6 +71,10 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
   const markersRef = useRef<Record<string, any>>({});
   const tileLayerRef = useRef<any>(null);
 
+  const isMountedRef = useRef(true);
+  const popupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fullscreenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [leafletLoaded] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeLayer, setActiveLayer] = useState<keyof typeof MAP_LAYERS>('streets');
@@ -78,6 +83,27 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
   const [isCtrlPressed, setIsCtrlPressed] = useState(false);
   const [showCtrlHint, setShowCtrlHint] = useState(false);
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const isMapAlive = (map: any): map is L.Map => {
+    if (!isMountedRef.current || !map) return false;
+    if (leafletMapInstance.current !== map) return false;
+    const container = map._container as HTMLElement | undefined;
+    const mapPane = map._mapPane as (HTMLElement & { _leaflet_pos?: L.Point }) | undefined;
+    if (!container || !container.isConnected) return false;
+    if (!mapPane || !mapPane.isConnected || !mapPane._leaflet_pos) return false;
+    return true;
+  };
+
+  const safeInvalidateSize = (map: any) => {
+    if (!isMapAlive(map)) return;
+    const rect = map.getContainer()?.getBoundingClientRect?.();
+    if (!rect || (rect.width === 0 && rect.height === 0)) return;
+    try {
+      map.invalidateSize({ animate: false });
+    } catch {
+      // Ignora erros transitórios do Leaflet durante desmontagem ou redimensionamento oculto
+    }
+  };
 
   const triggerCtrlHint = () => {
     setShowCtrlHint(true);
@@ -127,18 +153,28 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
 
   // 1. Initialize Map Instance (Standard interactions enabled on non-desktop; desktop gated by CTRL)
   useEffect(() => {
-    if (!mapRef.current) return;
+    isMountedRef.current = true;
+    const container = mapRef.current;
+    if (!container) return;
+
+    let cancelled = false;
 
     if (leafletMapInstance.current) {
-      leafletMapInstance.current.remove();
+      try {
+        leafletMapInstance.current.stop?.();
+        leafletMapInstance.current.remove();
+      } catch {
+        // noop
+      }
       leafletMapInstance.current = null;
     }
 
     const initialDesktop = detectDesktopPointer();
-    const map = L.map(mapRef.current, {
+    const map = L.map(container, {
       center: [-18.6657, 35.5296],
       zoom: 5.5,
       zoomControl: false,
+      trackResize: false,
       dragging: !initialDesktop,
       scrollWheelZoom: !initialDesktop,
       doubleClickZoom: !initialDesktop,
@@ -160,28 +196,55 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
       maxZoom: 19
     }).addTo(map);
 
-    const resizeTimer1 = setTimeout(() => {
-      map.invalidateSize();
-    }, 100);
-    const resizeTimer2 = setTimeout(() => {
-      map.invalidateSize();
-    }, 450);
+    const handleSafeResize = () => {
+      if (cancelled) return;
+      safeInvalidateSize(map);
+    };
+
+    const resizeTimer1 = setTimeout(handleSafeResize, 100);
+    const resizeTimer2 = setTimeout(handleSafeResize, 450);
+
+    window.addEventListener('resize', handleSafeResize);
 
     let ro: ResizeObserver | null = null;
-    if (typeof ResizeObserver !== 'undefined' && mapRef.current) {
-      ro = new ResizeObserver(() => {
-        map.invalidateSize();
-      });
-      ro.observe(mapRef.current);
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(handleSafeResize);
+      ro.observe(container);
     }
 
     return () => {
+      cancelled = true;
+      isMountedRef.current = false;
       clearTimeout(resizeTimer1);
       clearTimeout(resizeTimer2);
       if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+      if (popupTimerRef.current) clearTimeout(popupTimerRef.current);
+      if (fullscreenTimerRef.current) clearTimeout(fullscreenTimerRef.current);
+      window.removeEventListener('resize', handleSafeResize);
       if (ro) ro.disconnect();
+      Object.values(markersRef.current).forEach((m: any) => {
+        try {
+          m?.remove?.();
+        } catch {
+          // noop
+        }
+      });
+      markersRef.current = {};
+      if (tileLayerRef.current) {
+        try {
+          tileLayerRef.current.remove?.();
+        } catch {
+          // noop
+        }
+        tileLayerRef.current = null;
+      }
       if (leafletMapInstance.current) {
-        leafletMapInstance.current.remove();
+        try {
+          leafletMapInstance.current.stop?.();
+          leafletMapInstance.current.remove();
+        } catch {
+          // noop
+        }
         leafletMapInstance.current = null;
       }
     };
@@ -257,11 +320,15 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
 
   // 2. Tile Layer Switcher
   useEffect(() => {
-    if (!leafletMapInstance.current) return;
     const map = leafletMapInstance.current;
+    if (!isMapAlive(map)) return;
 
     if (tileLayerRef.current) {
-      tileLayerRef.current.remove();
+      try {
+        tileLayerRef.current.remove();
+      } catch {
+        // noop
+      }
     }
 
     const layerInfo = MAP_LAYERS[activeLayer];
@@ -274,14 +341,22 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
 
   // 3. Render Markers & Zoom to Fit Bounds / Selected School
   useEffect(() => {
-    if (!leafletMapInstance.current) return;
     const map = leafletMapInstance.current;
+    if (!isMapAlive(map)) return;
 
-    Object.values(markersRef.current).forEach((m: any) => m.remove());
+    let cancelled = false;
+
+    Object.values(markersRef.current).forEach((m: any) => {
+      try {
+        m?.remove?.();
+      } catch {
+        // noop
+      }
+    });
     markersRef.current = {};
 
     if (schools.length === 0) {
-      map.invalidateSize();
+      safeInvalidateSize(map);
       return;
     }
 
@@ -312,15 +387,15 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
       popupContent.className = 'p-3 font-sans max-w-xs space-y-2';
       popupContent.innerHTML = `
         <div class="border-b border-slate-100 pb-2">
-          <h4 class="font-bold text-slate-900 text-sm leading-tight">${school.nome}</h4>
+          <h4 class="font-bold text-slate-900 text-sm leading-tight">${escapeHtml(school.nome || '')}</h4>
           <p class="text-[10px] text-indigo-600 font-bold mt-1 uppercase tracking-wider flex items-center gap-1">
-            ${prov?.nome || 'Província'}
+            ${escapeHtml(prov?.nome || 'Província')}
           </p>
         </div>
         <div class="space-y-1 text-xs text-slate-600">
-          <p>Tel: <span class="font-medium text-slate-800">${school.telefone || '-'}</span></p>
-          <p>Email: <span class="font-medium text-slate-800">${school.email || '-'}</span></p>
-          <p class="text-[11px] leading-relaxed text-slate-500">${school.endereco || ''}</p>
+          <p>Tel: <span class="font-medium text-slate-800">${escapeHtml(school.telefone || '-')}</span></p>
+          <p>Email: <span class="font-medium text-slate-800">${escapeHtml(school.email || '-')}</span></p>
+          <p class="text-[11px] leading-relaxed text-slate-500">${escapeHtml(school.endereco || '')}</p>
         </div>
         <div class="flex justify-between items-center pt-2 text-[10px] text-slate-400 font-mono">
           <span>Lat: ${coords[0].toFixed(4)}</span>
@@ -338,30 +413,54 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
       markersRef.current[school.id] = marker;
     });
 
-    if (schools.length > 1) {
-      const bounds = L.latLngBounds(coordsList);
-      map.fitBounds(bounds, { padding: [50, 50] });
-    } else if (schools.length === 1) {
-      map.setView(coordsList[0], 14);
+    if (isMapAlive(map)) {
+      try {
+        if (schools.length > 1) {
+          const bounds = L.latLngBounds(coordsList);
+          map.fitBounds(bounds, { padding: [50, 50], animate: false });
+        } else if (schools.length === 1) {
+          map.setView(coordsList[0], 14, { animate: false });
+        }
+      } catch {
+        // Ignora falhas de viewport caso o contêiner ainda não esteja pronto
+      }
     }
 
-    setTimeout(() => {
-      map.invalidateSize();
+    const markerResizeTimer = setTimeout(() => {
+      if (!cancelled) {
+        safeInvalidateSize(map);
+      }
     }, 150);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(markerResizeTimer);
+    };
   }, [leafletLoaded, schools, provinces]);
 
   const handleSelectSchool = (school: School) => {
-    if (!leafletMapInstance.current) return;
+    const map = leafletMapInstance.current;
+    if (!isMapAlive(map)) return;
     const coords = getSchoolCoordinates(school);
 
-    leafletMapInstance.current.flyTo(coords, 14, {
-      duration: 1.5
-    });
+    try {
+      map.flyTo(coords, 14, {
+        duration: 1.5
+      });
+    } catch {
+      return;
+    }
 
-    setTimeout(() => {
+    if (popupTimerRef.current) clearTimeout(popupTimerRef.current);
+    popupTimerRef.current = setTimeout(() => {
+      if (!isMapAlive(map)) return;
       const marker = markersRef.current[school.id];
       if (marker) {
-        marker.openPopup();
+        try {
+          marker.openPopup();
+        } catch {
+          // noop
+        }
       }
     }, 1500);
 
@@ -389,16 +488,16 @@ export function SchoolMap({ schools, provinces }: SchoolMapProps) {
   useEffect(() => {
     const handleFullscreenChange = () => {
       setIsFullscreen(!!document.fullscreenElement);
-      setTimeout(() => {
-        if (leafletMapInstance.current) {
-          leafletMapInstance.current.invalidateSize();
-        }
+      if (fullscreenTimerRef.current) clearTimeout(fullscreenTimerRef.current);
+      fullscreenTimerRef.current = setTimeout(() => {
+        safeInvalidateSize(leafletMapInstance.current);
       }, 200);
     };
 
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     return () => {
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      if (fullscreenTimerRef.current) clearTimeout(fullscreenTimerRef.current);
     };
   }, []);
 

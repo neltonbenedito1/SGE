@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import "dotenv/config";
 import express, { Request, Response, NextFunction } from "express";
 import path from "path";
 import fs from "fs";
@@ -25,6 +26,8 @@ import {
   requireSameTenant,
   getFirebaseAdminInstance,
   getFirestoreInstance,
+  verifyFirebaseTokenAndResolveUser,
+  invalidateAuthResolutionCache,
 } from "./server/middleware/auth";
 import { setUserCustomClaims, migrateExistingUsersClaims } from "./server/security/claims";
 import { generateSignedStudentQrToken, validateAndConsumeQrToken } from "./server/security/qrCrypto";
@@ -55,6 +58,12 @@ import {
   resetSuperAdminAndEnableBootstrap,
 } from "./server/security/bootstrapManager";
 import { executeOwnershipTransfer } from "./server/services/ownershipTransferService";
+import { registerFaqRoutes } from "./server/routes/faqRoutes";
+import { registerSupportTeamRoutes } from "./server/routes/supportTeamRoutes";
+import { registerSupportTicketRoutes } from "./server/routes/supportTicketRoutes";
+import { registerSupportAiRoutes } from "./server/routes/supportAiRoutes";
+import { registerSupportDistributionRoutes } from "./server/routes/supportDistributionRoutes";
+import { registerSupportAnalyticsRoutes } from "./server/routes/supportAnalyticsRoutes";
 import {
   BootstrapInitializeSchema,
   TransferOwnershipSchema,
@@ -210,7 +219,16 @@ app.use(
       }
     },
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Request-ID", "X-CSRF-Token", "X-Session-ID", "Accept"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Request-ID",
+      "X-CSRF-Token",
+      "X-Session-ID",
+      "X-Idempotency-Key",
+      "X-SGE-Signature",
+      "Accept",
+    ],
     credentials: true,
     maxAge: 86400,
   })
@@ -367,7 +385,14 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
 // ============================================================================
 // 4. JSON BODY PARSER FOR ALL SUBSEQUENT API ENDPOINTS
 // ============================================================================
-app.use(express.json({ limit: "2mb" }));
+app.use(
+  express.json({
+    limit: "4mb",
+    verify: (req: any, _res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 
 // ============================================================================
 // 5. HEALTH, READINESS & QUOTA OBSERVABILITY ENDPOINTS
@@ -639,9 +664,8 @@ app.post("/api/auth/bootstrap/reset", async (req: Request, res: Response): Promi
       const authHeader = req.headers.authorization;
       if (authHeader && authHeader.startsWith("Bearer ")) {
         try {
-          const admin = getFirebaseAdminInstance();
-          const decoded = await getAuth(admin).verifyIdToken(authHeader.substring(7), true);
-          if (decoded.role === "super_admin" || decoded.super_admin) {
+          const resolvedUser = await verifyFirebaseTokenAndResolveUser(authHeader.substring(7).trim());
+          if (resolvedUser.role === "super_admin" || resolvedUser.role === "superadmin") {
             isSuperAdmin = true;
           }
         } catch {}
@@ -665,6 +689,7 @@ app.post("/api/auth/bootstrap/reset", async (req: Request, res: Response): Promi
     }
 
     const result = await resetSuperAdminAndEnableBootstrap();
+    invalidateAuthResolutionCache();
     return res.json(result);
   } catch (err: any) {
     console.error("[Bootstrap Reset Error]:", err);
@@ -1035,13 +1060,12 @@ app.post("/api/auth/session/create", async (req: Request, res: Response): Promis
     }
 
     const { idToken } = parseResult.data;
-    const admin = getFirebaseAdminInstance();
-    const decoded = await getAuth(admin).verifyIdToken(idToken, true);
+    const resolvedUser = await verifyFirebaseTokenAndResolveUser(idToken);
 
-    const userId = decoded.uid;
-    const email = decoded.email || "";
-    const role = (decoded.role as string) || (decoded.super_admin ? "super_admin" : "estudante");
-    const tenantId = (decoded.tenant_id as string) || "default";
+    const userId = resolvedUser.uid;
+    const email = resolvedUser.email;
+    const role = resolvedUser.role;
+    const tenantId = resolvedUser.tenant_id;
 
     const csrfToken = "csrf_" + crypto.randomBytes(16).toString("hex");
     const isHttps = req.secure || req.headers["x-forwarded-proto"] === "https";
@@ -1054,6 +1078,7 @@ app.post("/api/auth/session/create", async (req: Request, res: Response): Promis
       email,
       createdAt: now,
       lastActivity: now,
+      must_reset_password: Boolean(resolvedUser.must_reset_password),
     });
 
     res.cookie("sysedu_session_id", sessionId, {
@@ -1065,7 +1090,7 @@ app.post("/api/auth/session/create", async (req: Request, res: Response): Promis
     });
 
     res.cookie("sysedu_csrf_token", csrfToken, {
-      httpOnly: true,
+      httpOnly: false,
       secure: isHttps,
       sameSite: isHttps ? "none" : "lax",
       path: "/",
@@ -1081,7 +1106,7 @@ app.post("/api/auth/session/create", async (req: Request, res: Response): Promis
         role,
         tenantId,
         email,
-        must_reset_password: Boolean(decoded.must_reset_password),
+        must_reset_password: Boolean(resolvedUser.must_reset_password),
         inactivityTimeoutMinutes: 30,
       },
     });
@@ -1167,14 +1192,7 @@ app.post("/api/auth/password/change", authLimiter, async (req: Request, res: Res
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const idToken = authHeader.split('Bearer ')[1].trim();
       try {
-        const decoded = await auth.verifyIdToken(idToken, true);
-        caller = {
-          uid: decoded.uid,
-          email: decoded.email || '',
-          role: (decoded.role as string) || (decoded.tipo as string) || (decoded.super_admin ? 'super_admin' : 'estudante'),
-          tenant_id: (decoded.tenant_id as string) || (decoded.tenantId as string) || 'default',
-          must_reset_password: Boolean(decoded.must_reset_password),
-        };
+        caller = await verifyFirebaseTokenAndResolveUser(idToken);
       } catch (tokenErr) {
         // Fallback to session check below
       }
@@ -1662,12 +1680,11 @@ app.post("/api/superadmin/transfer-ownership", authLimiter, async (req: Request,
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith("Bearer ")) {
       try {
-        const admin = getFirebaseAdminInstance();
-        const decoded = await getAuth(admin).verifyIdToken(authHeader.substring(7), true);
+        const resolved = await verifyFirebaseTokenAndResolveUser(authHeader.substring(7).trim());
         caller = {
-          uid: decoded.uid,
-          email: decoded.email || "",
-          role: (decoded.role as string) || (decoded.super_admin ? "super_admin" : ""),
+          uid: resolved.uid,
+          email: resolved.email,
+          role: resolved.role,
         };
       } catch (tokenErr) {
         // Fallback to session
@@ -1719,6 +1736,7 @@ app.post("/api/superadmin/transfer-ownership", authLimiter, async (req: Request,
     });
 
     // 4. Invalidar a sessão e limpar cookies do superadmin antigo
+    invalidateAuthResolutionCache();
     const sessionId = req.cookies?.sysedu_session_id || (req.headers["x-session-id"] as string);
     if (sessionId) {
       await deleteSession(sessionId);
@@ -1747,12 +1765,11 @@ app.post("/api/superadmin/create-admin", authLimiter, async (req: Request, res: 
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith("Bearer ")) {
       try {
-        const admin = getFirebaseAdminInstance();
-        const decoded = await getAuth(admin).verifyIdToken(authHeader.substring(7), true);
+        const resolved = await verifyFirebaseTokenAndResolveUser(authHeader.substring(7).trim());
         caller = {
-          uid: decoded.uid,
-          email: decoded.email || "",
-          role: (decoded.role as string) || (decoded.super_admin ? "super_admin" : ""),
+          uid: resolved.uid,
+          email: resolved.email,
+          role: resolved.role,
         };
       } catch (tokenErr) {}
     }
@@ -1800,7 +1817,7 @@ app.post("/api/superadmin/create-admin", authLimiter, async (req: Request, res: 
     const auth = getAuth(admin);
     const db = getFirestoreInstance();
 
-    let newUid = clientProvidedUid;
+    let newUid = clientProvidedUid && !String(clientProvidedUid).startsWith("superadmin_") ? clientProvidedUid : "";
 
     if (!newUid) {
       let userRecord: any = null;
@@ -1849,7 +1866,7 @@ app.post("/api/superadmin/create-admin", authLimiter, async (req: Request, res: 
     }
 
     if (!newUid) {
-      newUid = `superadmin_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
+      newUid = clientProvidedUid || `superadmin_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
     }
 
     // Definir custom claims
@@ -1951,6 +1968,7 @@ app.post("/api/superadmin/create-admin", authLimiter, async (req: Request, res: 
       maxAge: 24 * 60 * 60 * 1000,
     });
 
+    invalidateAuthResolutionCache(cleanEmail);
     await recordAuditLog({
       action: "create",
       actor_id: creatorUid,
@@ -1987,12 +2005,11 @@ app.get("/api/superadmin/list-admins", async (req: Request, res: Response): Prom
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith("Bearer ")) {
       try {
-        const admin = getFirebaseAdminInstance();
-        const decoded = await getAuth(admin).verifyIdToken(authHeader.substring(7), true);
+        const resolved = await verifyFirebaseTokenAndResolveUser(authHeader.substring(7).trim());
         caller = {
-          uid: decoded.uid,
-          email: decoded.email || "",
-          role: (decoded.role as string) || (decoded.super_admin ? "super_admin" : ""),
+          uid: resolved.uid,
+          email: resolved.email,
+          role: resolved.role,
         };
       } catch {}
     }
@@ -2149,7 +2166,7 @@ app.post("/api/send-email", emailLimiter, optionalAuth, async (req: Request, res
       attempts: 1,
       created_at: new Date().toISOString(),
     };
-    await db.collection("email_queue").doc(queueId).set(emailRecord).catch(() => {});
+    void db.collection("email_queue").doc(queueId).set(emailRecord).catch(() => {});
 
     // Modo assíncrono: responde HTTP 202 imediatamente e delega envio SMTP ao worker
     if (asyncMode) {
@@ -2275,7 +2292,7 @@ let ai: GoogleGenAI | null = null;
 if (apiKey) {
   ai = new GoogleGenAI({
     apiKey,
-    httpOptions: { headers: { "User-Agent": "sysedu-saas" } },
+    httpOptions: { headers: { "User-Agent": "aistudio-build" } },
   });
 }
 
@@ -2355,7 +2372,7 @@ ${text}
     const rawText = await geminiBreaker.execute(
       async () => {
         const response: any = await ai!.models.generateContent({
-          model: "gemini-2.5-flash",
+          model: "gemini-4-hydrogen",
           contents: prompt,
         });
         return response.text ? response.text.trim() : text;
@@ -2451,7 +2468,7 @@ Text Sample: ${textSample || "Nenhum excerto fornecido."}
     const rawSynopsis = await geminiBreaker.execute(
       async () => {
         const response: any = await ai!.models.generateContent({
-          model: "gemini-2.5-flash",
+          model: "gemini-4-hydrogen",
           contents: prompt,
         });
         return response.text ? response.text.trim() : "";
@@ -3263,6 +3280,16 @@ app.post("/api/reports/export-pdf", requireAuth, async (req: Request, res: Respo
     return res.status(500).json({ error: err.message || "Erro ao enfileirar geração de PDF." });
   }
 });
+
+// ============================================================================
+// 13.5 BASE DE CONHECIMENTO & FAQ ROUTES (FASE 1)
+// ============================================================================
+registerFaqRoutes(app);
+registerSupportTeamRoutes(app);
+registerSupportTicketRoutes(app);
+registerSupportAiRoutes(app);
+registerSupportDistributionRoutes(app);
+registerSupportAnalyticsRoutes(app);
 
 // ============================================================================
 // 14. API 404 GUARD & GLOBAL ERROR HANDLER

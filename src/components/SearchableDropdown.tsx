@@ -48,7 +48,19 @@ export function SearchableDropdown({
     };
   }, []);
 
-  const safeOptions = Array.isArray(options) ? options.filter(Boolean) : [];
+  const safeOptions = React.useMemo(() => {
+    if (!Array.isArray(options)) return [];
+    const seenValues = new Set<string>();
+    const deduped: DropdownOption[] = [];
+    for (const opt of options) {
+      if (!opt) continue;
+      const key = String(opt.value ?? '');
+      if (seenValues.has(key)) continue;
+      seenValues.add(key);
+      deduped.push(opt);
+    }
+    return deduped;
+  }, [options]);
 
   const selectedOption = safeOptions.find(opt => opt && String(opt.value) === String(value));
 

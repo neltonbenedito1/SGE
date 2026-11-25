@@ -51,6 +51,7 @@ import {
 import { sendAppNotification } from '../services/notificationDispatcher';
 import { useLanguage } from '../hooks/useLanguage';
 import { enqueuePendingLessonNotification, upsertTrackedJob } from '../lib/asyncJobsClient';
+import { buildDistinctDisciplines, dedupeById } from '../lib/cadeirasHelper';
 
 export interface PlanoAulasModuleProps {
   tenantId: string;
@@ -186,7 +187,7 @@ export const PlanoAulasModule: React.FC<PlanoAulasModuleProps> = ({
           });
           // Sort default by ordem ascending, then createdAt
           list.sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
-          setPlanoAulas(list);
+          setPlanoAulas(dedupeById(list));
           setIsLoading(false);
         },
         (err) => {
@@ -215,34 +216,14 @@ export const PlanoAulasModule: React.FC<PlanoAulasModuleProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Distinct disciplines list
-  const baseDisciplines = useMemo(() => {
-    const seen = new Set<string>();
-    const list: { id: string; nome: string }[] = [];
-    classes.forEach(c => {
-      const key = c.disciplina_id || c.nome;
-      if (key && !seen.has(key)) {
-        seen.add(key);
-        list.push({ id: c.disciplina_id || c.id, nome: c.nome });
-      }
-    });
-    return list;
-  }, [classes]);
+  // Distinct disciplines list (deduplicated strictly by resolved id so base docs and scheduled items never collide)
+  const baseDisciplines = useMemo(() => buildDistinctDisciplines(classes), [classes]);
 
   // Assigned disciplines for the current logged-in teacher
   const teacherDisciplines = useMemo(() => {
     if (!currentDocenteRecord) return baseDisciplines;
-    // Find classes / scheduled items assigned to this teacher
     const teacherClasses = classes.filter(c => c.docente_id === currentDocenteRecord.id);
-    const seen = new Set<string>();
-    const list: { id: string; nome: string }[] = [];
-    teacherClasses.forEach(c => {
-      const key = c.disciplina_id || c.nome;
-      if (key && !seen.has(key)) {
-        seen.add(key);
-        list.push({ id: c.disciplina_id || c.id, nome: c.nome });
-      }
-    });
+    const list = buildDistinctDisciplines(teacherClasses);
     return list.length > 0 ? list : baseDisciplines;
   }, [currentDocenteRecord, classes, baseDisciplines]);
 

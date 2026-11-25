@@ -632,7 +632,7 @@ Text Sample: ${textSample || 'Nenhum excerto fornecido.'}
         async () => {
           const response = await withTimeout(
             ai.models.generateContent({
-              model: 'gemini-2.5-flash',
+              model: 'gemini-4-hydrogen',
               contents: prompt,
             }),
             15_000,
@@ -684,7 +684,7 @@ ${text}
         async () => {
           const response = await withTimeout(
             ai.models.generateContent({
-              model: 'gemini-2.5-flash',
+              model: 'gemini-4-hydrogen',
               contents: prompt,
             }),
             14_000,

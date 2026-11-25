@@ -28,7 +28,7 @@ let aiClient: GoogleGenAI | null = null;
 if (apiKey) {
   aiClient = new GoogleGenAI({
     apiKey,
-    httpOptions: { headers: { 'User-Agent': 'sysedu-worker' } },
+    httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
   });
 }
 

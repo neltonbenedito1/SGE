@@ -73,6 +73,7 @@ import { CustomFieldsRenderer } from './CustomFieldsRenderer';
 const CursosModule = lazyWithRetry(() => import('./tenant/CursosModule').then(m => ({ default: m.CursosModule })), 'cursos-module');
 const ProcessoAlunoFicha = lazyWithRetry(() => import('./tenant/ProcessoAlunoFicha').then(m => ({ default: m.ProcessoAlunoFicha })), 'processo-aluno-ficha');
 import { useInstitutionFeatures, getInstitutionConfig } from '../config/institutionTypes';
+import { buildAllCadeirasOptions, dedupeById, isBaseDisciplineItem, isHigherOrTechInstitution } from '../lib/cadeirasHelper';
 import { 
   sendAppNotification, 
   notifyScheduleCreatedOrUpdated, 
@@ -178,7 +179,8 @@ import {
   EyeOff,
   CheckSquare,
   PauseCircle,
-  BookOpenCheck
+  BookOpenCheck,
+  HelpCircle
 } from 'lucide-react';
 const SchoolMap = lazyWithRetry(() => import('./SchoolMap').then(m => ({ default: m.SchoolMap })), 'school-map');
 const AnalyticsModule = lazyWithRetry(() => import('./AnalyticsModule').then(m => ({ default: m.AnalyticsModule })), 'analytics-module');
@@ -189,6 +191,8 @@ const GlobalPermissionsModule = lazyWithRetry(() => import('./GlobalPermissionsM
 const UserPermissionsChecklist = lazyWithRetry(() => import('./UserPermissionsChecklist').then(m => ({ default: m.UserPermissionsChecklist })), 'user-permissions-checklist');
 const ProvinciasModule = lazyWithRetry(() => import('./tenant/ProvinciasModule').then(m => ({ default: m.ProvinciasModule })), 'provincias-module');
 const StudentRegistrationForm = lazyWithRetry(() => import('./StudentRegistrationForm').then(m => ({ default: m.StudentRegistrationForm })), 'student-registration-form');
+const PublicFaqView = lazyWithRetry(() => import('./portal/PublicFaqView').then(m => ({ default: m.PublicFaqView })), 'public-faq-view');
+const UserSupportPortal = lazyWithRetry(() => import('./portal/UserSupportPortal').then(m => ({ default: m.UserSupportPortal })), 'user-support-portal');
 import { getAutomaticProvincesForCountries } from '../shared/catalogs';
 import { LANGUAGES, translate } from '../lib/translation';
 import LanguageSwitcher from './LanguageSwitcher';
@@ -574,6 +578,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
   const tipoInst = (tenant?.tipoInstituicao || 'escola').toLowerCase();
   const isUniversidade = tipoInst === 'universidade';
   const isInstituto = tipoInst === 'instituto';
+  const isHigherOrTech = isHigherOrTechInstitution(tipoInst);
+
+  const allCadeirasOptions = useMemo(
+    () => buildAllCadeirasOptions({ rawClasses, rawCadeiras, rawCursos }),
+    [rawClasses, rawCadeiras, rawCursos]
+  );
 
   const VIEW_KEY_TITLES: Record<string, string> = {
     dashboard: 'Painel Geral',
@@ -598,6 +608,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     configuracoes: 'Configurações da Instituição',
     auditoria: 'Auditoria e Logs do Sistema',
     backup: 'Segurança e Cópia de Segurança',
+    faq_public: 'Centro de Ajuda (FAQ)',
+    support_portal: 'Solicitações de Suporte',
   };
 
   const getHumanizedModalTitle = (type: string, isEditing: boolean): string => {
@@ -1218,7 +1230,13 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
     if (currentUserSchoolId) {
       const schoolTurmaIds = new Set(filteredTurmas.map(t => t.id));
-      return rawClasses.filter(c => schoolTurmaIds.has(c.turma_id));
+      return rawClasses.filter(c => {
+        if (isBaseDisciplineItem(c)) {
+          const escList = (c as any).escolas_ids as string[] | undefined;
+          return !c.escola_id || c.escola_id === currentUserSchoolId || (escList && escList.includes(currentUserSchoolId));
+        }
+        return schoolTurmaIds.has(c.turma_id);
+      });
     }
 
     return rawClasses;
@@ -1446,13 +1464,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
     );
   }, [students, debouncedStudentSearchText]);
 
-  const isBaseDiscipline = (c: any) => {
-    if (!c) return false;
-    if (c.is_agendamento === true || c.tipo === 'agendamento') return false;
-    if (c.disciplina_id && String(c.disciplina_id).trim() !== '') return false;
-    if (c.turma_id && c.data && c.horario) return false;
-    return true;
-  };
+  const isBaseDiscipline = isBaseDisciplineItem;
 
   const searchedClasses = useMemo(() => {
     // Only base registered disciplines should be displayed in the Disciplinas tab
@@ -4943,8 +4955,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         safeCachedList<CustomForm>('custom_forms', CACHE_TTLS.CUSTOM_FORMS, 'custom_forms', 50),
       ]);
 
-      setProvinces(provList);
-      setSchools(escList);
+      setProvinces(dedupeById(provList));
+      setSchools(dedupeById(escList));
 
       const usersList: User[] = [];
       const seenUserEmails = new Set<string>();
@@ -4957,69 +4969,69 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         if (cleanEmail) seenUserEmails.add(cleanEmail);
         usersList.push(u);
       });
-      setTenantUsers(usersList);
+      setTenantUsers(dedupeById(usersList));
 
       const docList: Docente[] = [];
       docSnap.forEach(d => docList.push({ ...d.data() as Docente, id: d.id }));
-      setTeachers(docList);
+      setTeachers(dedupeById(docList));
 
       const turList: Turma[] = [];
       turSnap.forEach(d => turList.push({ ...d.data() as Turma, id: d.id }));
-      setTurmas(turList);
+      setTurmas(dedupeById(turList));
 
       const estList: Estudante[] = [];
       estSnap.forEach(d => estList.push({ ...d.data() as Estudante, id: d.id }));
-      setStudents(estList);
+      setStudents(dedupeById(estList));
 
-      setClasses(clsList);
-      setVacations(ferList);
-      setFeriados(feriadosList);
-      setSalas(salasList);
+      setClasses(dedupeById(clsList));
+      setVacations(dedupeById(ferList));
+      setFeriados(dedupeById(feriadosList));
+      setSalas(dedupeById(salasList));
 
       const pauList: Pauta[] = [];
       pauSnap.forEach(d => pauList.push({ ...d.data() as Pauta, id: d.id }));
-      setPautas(pauList);
+      setPautas(dedupeById(pauList));
 
       const prcList: ProcessoAluno[] = [];
       prcSnap.forEach(d => prcList.push({ ...d.data() as ProcessoAluno, id: d.id }));
-      setProcessos(prcList);
+      setProcessos(dedupeById(prcList));
 
       const prcDocList: ProcessoDocente[] = [];
       if (prcDocSnap) {
         prcDocSnap.forEach(d => prcDocList.push({ ...d.data() as ProcessoDocente, id: d.id }));
       }
-      setProcessosDocentes(prcDocList);
+      setProcessosDocentes(dedupeById(prcDocList));
 
       const ativList: ActividadePendente[] = [];
       if (ativSnap) {
         ativSnap.forEach(d => ativList.push({ ...d.data() as ActividadePendente, id: d.id }));
       }
-      setAtividades(ativList);
+      setAtividades(dedupeById(ativList));
 
       const examesList: AgendamentoExame[] = [];
       if (examesSnap) {
         examesSnap.forEach(d => examesList.push({ ...d.data() as AgendamentoExame, id: d.id }));
       }
-      setExames(examesList);
+      setExames(dedupeById(examesList));
 
       if (configDocObj) {
         setConfig(configDocObj);
       }
 
-      setClassesEscolares(escClsList);
-      setCursos(cursosList);
-      setCadeiras(cadeirasList);
+      setClassesEscolares(dedupeById(escClsList));
+      setCursos(dedupeById(cursosList));
+      setCadeiras(dedupeById(cadeirasList));
 
       const inscricoesList: InscricaoCadeira[] = [];
       if (inscricoesSnap) {
         inscricoesSnap.forEach(d => inscricoesList.push({ ...d.data() as InscricaoCadeira, id: d.id }));
       }
-      setInscricoes(inscricoesList);
+      setInscricoes(dedupeById(inscricoesList));
 
-      setCustomForms(formsList);
+      setCustomForms(dedupeById(formsList));
 
       portalCache.allPlans = allPlansList;
-      setAllPlans(allPlansList);
+      setAllPlans(dedupeById(allPlansList));
 
       portalCache.globalSmtpConfig = globalSmtpObj;
       setGlobalSmtpConfig(globalSmtpObj);
@@ -5032,21 +5044,21 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
       const pEmailsList: any[] = [];
       pEmailsSnap.forEach(d => pEmailsList.push({ ...d.data(), id: d.id }));
-      setPendingEmails(pEmailsList);
+      setPendingEmails(dedupeById(pEmailsList));
 
       const pendList: any[] = [];
       pendSnap.forEach(d => pendList.push({ ...d.data(), id: d.id }));
-      setPendingImports(pendList);
+      setPendingImports(dedupeById(pendList));
 
       const faturasList: FaturaEstudante[] = [];
       faturasSnap.forEach(d => faturasList.push({ ...d.data() as FaturaEstudante, id: d.id }));
-      setStudentFaturas(faturasList);
+      setStudentFaturas(dedupeById(faturasList));
 
       await checkIncompleteStudentsAndNotify(estList);
 
       const assList: any[] = [];
       assSnap.forEach(d => assList.push({ ...d.data(), id: d.id }));
-      setAssiduidadeLogs(assList);
+      setAssiduidadeLogs(dedupeById(assList));
 
       // Sincroniza agregado pré-calculado para Análise Administrativa em segundo plano
       recomputeAndPersistTenantAnalytics({
@@ -5132,6 +5144,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           nome: extraUserData.nome,
           email: extraUserData.email,
           tipo: 'docente',
+          ativo: true,
           tenant_id: currentTenantId,
           escola_id: cleanDocenteData.escola_id || schools[0]?.id || '',
           senha_temporaria: tempDocentePwd,
@@ -5243,10 +5256,28 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
 
   const handleSaveCadeira = async (cadeiraData: Partial<Cadeira>) => {
     try {
+      const resolvedCursoId = (cadeiraData as any).cursoId || cadeiraData.curso_id || '';
+      const resolvedCursoNome =
+        cadeiraData.curso_nome ||
+        rawCursos.find(cu => cu.id === resolvedCursoId)?.nome ||
+        '';
+      const resolvedPeriodo = cadeiraData.periodo_lectivo || cadeiraData.semestre || '1º Semestre';
+      const resolvedEscolaId =
+        (cadeiraData as any).institutionId ||
+        cadeiraData.escola_id ||
+        schools[0]?.id ||
+        '';
+      const resolvedCreditos = cadeiraData.creditos_ects ?? cadeiraData.creditos ?? 6;
+
       if (cadeiraData.id) {
         const ref = doc(db, 'cadeiras', cadeiraData.id);
         await updateDoc(ref, {
           ...cadeiraData,
+          cursoId: resolvedCursoId,
+          curso_id: resolvedCursoId,
+          curso_nome: resolvedCursoNome,
+          institutionId: resolvedEscolaId,
+          escola_id: resolvedEscolaId,
           tenant_id: currentTenantId,
           updated_at: new Date().toISOString()
         });
@@ -5257,20 +5288,26 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           await updateDoc(doc(db, 'classes', matchingClass.id), {
             nome: cadeiraData.nome,
             codigo: cadeiraData.codigo,
-            curso_id: cadeiraData.curso_id || '',
-            curso_nome: cadeiraData.curso_nome || '',
+            curso_id: resolvedCursoId,
+            curso_nome: resolvedCursoNome,
             ano_curricular: cadeiraData.ano_curricular ? `${cadeiraData.ano_curricular}º Ano` : '1º Ano',
-            periodo_lectivo: cadeiraData.semestre || '1º Semestre',
+            periodo_lectivo: resolvedPeriodo,
             docente_id: cadeiraData.docente_id || '',
-            creditos: cadeiraData.creditos || 6,
+            escola_id: resolvedEscolaId,
+            creditos: resolvedCreditos,
             updated_at: new Date().toISOString()
           });
         }
         showSystemNotification("Disciplina/Cadeira atualizada com sucesso!", "sucesso");
       } else {
         const { id, ...dataToSave } = cadeiraData;
-        const newDocRef = await addDoc(collection(db, 'cadeiras'), {
+        await addDoc(collection(db, 'cadeiras'), {
           ...dataToSave,
+          cursoId: resolvedCursoId,
+          curso_id: resolvedCursoId,
+          curso_nome: resolvedCursoNome,
+          institutionId: resolvedEscolaId,
+          escola_id: resolvedEscolaId,
           tenant_id: currentTenantId,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
@@ -5280,14 +5317,14 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
         await addDoc(collection(db, 'classes'), {
           nome: dataToSave.nome,
           codigo: dataToSave.codigo,
-          curso_id: dataToSave.curso_id || '',
-          curso_nome: dataToSave.curso_nome || '',
+          curso_id: resolvedCursoId,
+          curso_nome: resolvedCursoNome,
           ano_curricular: dataToSave.ano_curricular ? `${dataToSave.ano_curricular}º Ano` : '1º Ano',
-          periodo_lectivo: dataToSave.semestre || '1º Semestre',
+          periodo_lectivo: resolvedPeriodo,
           docente_id: dataToSave.docente_id || '',
-          creditos: dataToSave.creditos || 6,
+          creditos: resolvedCreditos,
           tenant_id: currentTenantId,
-          escola_id: dataToSave.escola_id || schools[0]?.id || '',
+          escola_id: resolvedEscolaId,
           status_aprovacao: 'aprovado',
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
@@ -6435,7 +6472,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       });
 
       list.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
-      setNotifications(list);
+      setNotifications(dedupeById(list));
     }, (error) => {
       console.warn("Notice listening to notifications:", error?.message || error);
     });
@@ -6456,7 +6493,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           list.push({ id: d.id, ...(d.data() as any) });
         });
         list.sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
-        setRawPlanoAulas(list);
+        setRawPlanoAulas(dedupeById(list));
       }, (err) => {
         console.warn("Notice listening to planoAulas:", err?.message || err);
       });
@@ -6848,7 +6885,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           };
           try {
             const docRef = await addDoc(collection(db, 'feriados'), payload);
-            setFeriados(prev => [...prev, { ...payload, id: docRef.id }]);
+            setFeriados(prev => dedupeById([...prev, { ...payload, id: docRef.id }]));
             count++;
           } catch (e) {
             console.error("Error saving feriado:", e);
@@ -7653,7 +7690,12 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
       
       else if (modalType === 'horario_aula') {
         if (!horarioForm.disciplina_nome) {
-          showSystemNotification("Erro: Selecione uma disciplina para agendar!", "erro");
+          showSystemNotification(
+            isHigherOrTech
+              ? "Erro: Selecione uma cadeira para agendar!"
+              : "Erro: Selecione uma disciplina para agendar!",
+            "erro"
+          );
           setIsSaving(false);
           return;
         }
@@ -7804,7 +7846,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           }
 
           await batch.commit();
-          setClasses(prev => [{ ...payload, id: newClassId }, ...prev]);
+          setClasses(prev => dedupeById([{ ...payload, id: newClassId }, ...prev]));
         }
 
         // Dispatch notifications to the assigned teacher, class students, and parents
@@ -7876,7 +7918,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           setFeriados(prev => prev.map(f => f.id === editingItem.id ? { ...f, ...payload } : f));
         } else {
           const docRef = await addDoc(collection(db, 'feriados'), payload);
-          setFeriados(prev => [{ ...payload, id: docRef.id }, ...prev]);
+          setFeriados(prev => dedupeById([{ ...payload, id: docRef.id }, ...prev]));
         }
       }
 
@@ -7935,7 +7977,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           showSystemNotification("Agendamento de exame/avaliação atualizado com sucesso!", "sucesso");
         } else {
           const docRef = await addDoc(collection(db, 'exames_agendamentos'), payload);
-          setExames(prev => [{ ...payload, id: docRef.id }, ...prev]);
+          setExames(prev => dedupeById([{ ...payload, id: docRef.id }, ...prev]));
           showSystemNotification("Exame/Avaliação agendado(a) com sucesso!", "sucesso");
         }
 
@@ -8503,7 +8545,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
           if (cleanedUserEmail) {
             await registerUserInFirebaseAuth(cleanedUserEmail, userPwd);
           }
-          setTenantUsers((prev: any) => [...prev, newUser]);
+          setTenantUsers((prev: any) => dedupeById([...prev, newUser]));
           try {
             window.dispatchEvent(new CustomEvent('sysedu:permissions_updated', { detail: { userId: userGenId } }));
           } catch (e) {}
@@ -9039,8 +9081,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 {hasPermission('biblioteca') && renderMenuItem('biblioteca', 'Biblioteca Digital', <Library className="w-4.5 h-4.5" />)}
                 {plan?.modulos_permitidos?.includes('processo') && hasPermission('processos') && renderMenuItem('processos', 'Processo Individual', <FolderOpen className="w-4.5 h-4.5" />)}
 
-                {showComunicacao && renderGroupHeader('Comunicação')}
+                {renderGroupHeader('Comunicação')}
                 {hasPermission('notificacoes') && renderMenuItem('notificacoes', 'Notificações', <Bell className="w-4.5 h-4.5" />)}
+                {renderMenuItem('faq_public', 'Centro de Ajuda (FAQ)', <HelpCircle className="w-4.5 h-4.5" />)}
+                {renderMenuItem('support_portal', 'Solicitações de Suporte', <MessageSquare className="w-4.5 h-4.5" />)}
 
                 {showAdministracao && renderGroupHeader('Administração')}
                 {hasPermission('utilizadores') && renderMenuItem('usuarios', 'Utilizadores', <UserPlus className="w-4.5 h-4.5" />)}
@@ -16973,8 +17017,9 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       if (usersRoleFilter !== 'todos' && u.tipo !== usersRoleFilter) {
                         return false;
                       }
-                      if (usersStatusFilter === 'ativo' && !u.ativo) return false;
-                      if (usersStatusFilter === 'suspenso' && u.ativo) return false;
+                      const isUserActive = u.ativo !== false;
+                      if (usersStatusFilter === 'ativo' && !isUserActive) return false;
+                      if (usersStatusFilter === 'suspenso' && isUserActive) return false;
                       return true;
                     });
 
@@ -17276,8 +17321,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                         </span>
                                       </td>
                                       <td className="px-6 py-4">
-                                        <span className={`text-xs font-bold px-2 py-0.5 rounded ${u.ativo ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50'}`}>
-                                          {u.ativo ? 'Ativo' : 'Suspenso'}
+                                        <span className={`text-xs font-bold px-2 py-0.5 rounded ${u.ativo !== false ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50'}`}>
+                                          {u.ativo !== false ? 'Ativo' : 'Suspenso'}
                                         </span>
                                       </td>
                                       <td className="px-6 py-4 text-right sticky right-0 bg-white dark:bg-slate-900 group-hover:bg-slate-50 dark:group-hover:bg-slate-850 transition-colors border-l border-slate-200/80 dark:border-slate-800 shadow-xs z-10">
@@ -17304,7 +17349,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                               ) : (
                                                 <button 
                                                   onClick={async () => {
-                                                    const nextStatus = !u.ativo;
+                                                    const nextStatus = !(u.ativo !== false);
                                                     try {
                                                       await setDoc(doc(db, 'users', u.id), {
                                                         ativo: nextStatus
@@ -17315,10 +17360,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                       showSystemNotification("Erro ao alterar estado: " + err.message, "erro");
                                                     }
                                                   }}
-                                                  className={`p-1.5 rounded-lg cursor-pointer transition-colors ${u.ativo ? 'hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400' : 'hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400'}`}
-                                                  title={u.ativo ? "Suspender Acesso" : "Reativar Acesso"}
+                                                  className={`p-1.5 rounded-lg cursor-pointer transition-colors ${u.ativo !== false ? 'hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400' : 'hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400'}`}
+                                                  title={u.ativo !== false ? "Suspender Acesso" : "Reativar Acesso"}
                                                 >
-                                                  {u.ativo ? <XCircle className="w-4 h-4" /> : <CheckCircle className="w-4 h-4" />}
+                                                  {u.ativo !== false ? <XCircle className="w-4 h-4" /> : <CheckCircle className="w-4 h-4" />}
                                                 </button>
                                               )}
 
@@ -17335,7 +17380,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                                                     nome: u.nome,
                                                     email: u.email,
                                                     tipo: u.tipo,
-                                                    ativo: isAdm ? true : u.ativo,
+                                                    ativo: isAdm ? true : u.ativo !== false,
                                                     modulo_acessos: currentAccess,
                                                     foto_url: u.foto_url || '',
                                                     senha_temporaria: u.senha_temporaria || ''
@@ -17702,6 +17747,30 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   </Suspense>
                 </ModuleErrorBoundary>
               )
+            )}
+
+            {/* TAB: CENTRO DE AJUDA PUBLICO (FAQ) */}
+            {activeTab === 'faq_public' && (
+              <ModuleErrorBoundary title="Centro de Ajuda (FAQ)">
+                <Suspense fallback={<ModuleSkeleton title="A carregar perguntas frequentes..." />}>
+                  <PublicFaqView
+                    tipoInstituicao={tenant?.tipoInstituicao}
+                    onOpenSupport={() => setActiveTab('support_portal')}
+                  />
+                </Suspense>
+              </ModuleErrorBoundary>
+            )}
+
+            {/* TAB: CENTRAL DE SOLICITAÇÕES DE SUPORTE (FASE 3) */}
+            {activeTab === 'support_portal' && (
+              <ModuleErrorBoundary title="Solicitações de Suporte">
+                <Suspense fallback={<ModuleSkeleton title="A carregar central de atendimento..." />}>
+                  <UserSupportPortal
+                    tipoInstituicao={tenant?.tipoInstituicao}
+                    showNotification={showSystemNotification}
+                  />
+                </Suspense>
+              </ModuleErrorBoundary>
             )}
 
           </div>
@@ -19032,17 +19101,17 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     const studentEvents = processos.filter(p => p.estudante_id === selectedProcessStudent.id);
                     
                     const activities = [
-                      ...studentEvents.map(p => ({
-                        id: p.id,
+                      ...studentEvents.map((p, idx) => ({
+                        id: `proc-${p.id || idx}-${idx}`,
                         tipo: p.tipo || 'Ocorrência',
                         descricao: p.observacao || p.detalhes || 'Nenhum detalhe informado',
                         data: p.data || p.criado_em,
                         autor: p.criador_nome || p.criado_por || 'Secretaria Escolar'
                       })),
-                      ...studentPautas.map(p => {
+                      ...studentPautas.map((p, idx) => {
                         const discName = classes.find(c => c.id === p.classe_id)?.nome || 'Cadeira Curricular';
                         return {
-                          id: p.id,
+                          id: `pauta-${p.id || idx}-${idx}`,
                           tipo: ' Lançamento de Nota',
                           descricao: `Nota publicada para a disciplina "${discName}" (${p.trimestre}). Média Final: ${p.nota_media} valores (${p.situacao}).`,
                           data: p.data_lancamento || p.criado_em || new Date().toISOString(),
@@ -21790,8 +21859,7 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                         setHorarioForm({
                           ...horarioForm,
                           turma_id: val,
-                          disciplina_id: '',
-                          disciplina_nome: ''
+                          ...(isHigherOrTech ? {} : { disciplina_id: '', disciplina_nome: '' })
                         });
                       }}
                       placeholder="-- Selecionar Turma --"
@@ -21799,34 +21867,62 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                   </div>
 
                   <div>
-                    <SearchableDropdown
-                      label="Disciplina"
-                      required
-                      theme={activeTheme === 'theme-dark' ? 'dark' : 'light'}
-                      options={(() => {
-                        const selectedTurma = turmas.find(t => t.id === horarioForm.turma_id);
-                        const turmaClasseEscolarId = selectedTurma?.classe_escolar_id;
-                        
-                        const filtered = classes.filter(isBaseDiscipline).filter(c => {
-                          if (!turmaClasseEscolarId) return true;
-                          if (c.classe_escolar_id === turmaClasseEscolarId) return true;
-                          if (c.classes_associadas_ids && c.classes_associadas_ids.includes(turmaClasseEscolarId)) return true;
-                          return false;
-                        });
+                    {(() => {
+                      const matchedCadeiraOption = isHigherOrTech
+                        ? allCadeirasOptions.find(
+                            c =>
+                              c.id === horarioForm.disciplina_id ||
+                              c.aliasedIds.includes(horarioForm.disciplina_id) ||
+                              (horarioForm.disciplina_nome &&
+                                c.nome.trim().toLowerCase() === horarioForm.disciplina_nome.trim().toLowerCase())
+                          )
+                        : undefined;
 
-                        return filtered.map(c => ({ value: c.id, label: c.nome }));
-                      })()}
-                      value={horarioForm.disciplina_id}
-                      onChange={(val) => {
-                        const sel = classes.find(c => c.id === val);
-                        setHorarioForm({
-                          ...horarioForm,
-                          disciplina_id: val,
-                          disciplina_nome: sel ? sel.nome : ''
-                        });
-                      }}
-                      placeholder="-- Selecionar Disciplina da Classe --"
-                    />
+                      const dropdownOptions = isHigherOrTech
+                        ? allCadeirasOptions.map(c => ({ value: c.id, label: c.label }))
+                        : (() => {
+                            const selectedTurma = turmas.find(t => t.id === horarioForm.turma_id);
+                            const turmaClasseEscolarId = selectedTurma?.classe_escolar_id;
+
+                            const filtered = classes.filter(isBaseDiscipline).filter(c => {
+                              if (!turmaClasseEscolarId) return true;
+                              if (c.classe_escolar_id === turmaClasseEscolarId) return true;
+                              if (c.classes_associadas_ids && c.classes_associadas_ids.includes(turmaClasseEscolarId)) return true;
+                              return false;
+                            });
+
+                            return filtered.map(c => ({ value: c.id, label: c.nome }));
+                          })();
+
+                      return (
+                        <SearchableDropdown
+                          label={isHigherOrTech ? 'Cadeiras' : 'Disciplina'}
+                          required
+                          theme={activeTheme === 'theme-dark' ? 'dark' : 'light'}
+                          options={dropdownOptions}
+                          value={isHigherOrTech ? (matchedCadeiraOption?.id || horarioForm.disciplina_id) : horarioForm.disciplina_id}
+                          onChange={(val) => {
+                            if (isHigherOrTech) {
+                              const sel = allCadeirasOptions.find(c => c.id === val || c.aliasedIds.includes(val));
+                              setHorarioForm({
+                                ...horarioForm,
+                                disciplina_id: sel ? sel.id : val,
+                                disciplina_nome: sel ? sel.nome : ''
+                              });
+                            } else {
+                              const sel = classes.find(c => c.id === val);
+                              setHorarioForm({
+                                ...horarioForm,
+                                disciplina_id: val,
+                                disciplina_nome: sel ? sel.nome : ''
+                              });
+                            }
+                          }}
+                          searchPlaceholder={isHigherOrTech ? 'Pesquisar cadeira...' : 'Pesquisar...'}
+                          placeholder={isHigherOrTech ? '-- Selecionar Cadeira --' : '-- Selecionar Disciplina da Classe --'}
+                        />
+                      );
+                    })()}
                   </div>
 
                   <div>
@@ -21889,11 +21985,23 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                     {!horarioForm.extraordinario ? (
                       <div>
                         {(() => {
+                          const matchedCadIds = isHigherOrTech
+                            ? allCadeirasOptions.find(
+                                c =>
+                                  c.id === horarioForm.disciplina_id ||
+                                  c.aliasedIds.includes(horarioForm.disciplina_id)
+                              )?.aliasedIds
+                            : undefined;
+
                           const availableTopics = rawPlanoAulas.filter(p => {
                             if (!horarioForm.docente_id) return false;
                             if (p.docenteId !== horarioForm.docente_id) return false;
-                            if (horarioForm.disciplina_id && p.disciplinaId && p.disciplinaId !== horarioForm.disciplina_id) {
-                              return false;
+                            if (horarioForm.disciplina_id && p.disciplinaId) {
+                              if (matchedCadIds) {
+                                if (!matchedCadIds.includes(p.disciplinaId)) return false;
+                              } else if (p.disciplinaId !== horarioForm.disciplina_id) {
+                                return false;
+                              }
                             }
                             return true;
                           });
@@ -22360,6 +22468,8 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                 { id: 'processos', label: 'Processo Individual', icon: <FolderOpen className="w-5 h-5 text-pink-500" />, allowed: plan?.modulos_permitidos?.includes('processo') && hasPermission('processos') },
                 { id: 'usuarios', label: 'Utilizadores', icon: <UserPlus className="w-5 h-5 text-teal-500" />, allowed: hasPermission('utilizadores') },
                 { id: 'permissoes_globais', label: 'Permissões Globais', icon: <ShieldCheck className="w-5 h-5 text-indigo-500" />, allowed: currentUserRole === 'admin' || currentUserRole === 'director' || hasPermission('utilizadores') },
+                { id: 'faq_public', label: 'Centro de Ajuda (FAQ)', icon: <HelpCircle className="w-5 h-5 text-indigo-500" />, allowed: true },
+                { id: 'support_portal', label: 'Solicitações de Suporte', icon: <MessageSquare className="w-5 h-5 text-emerald-500" />, allowed: true },
                 { id: 'configuracao', label: 'Configurações', icon: <Sliders className="w-5 h-5 text-slate-500" />, allowed: hasPermission('configuracoes') },
               ].filter(i => i.allowed).map((item) => (
                 <button
@@ -22632,6 +22742,10 @@ export default function TenantPortal({ currentTenantId, currentUserRole, current
                       return "Controle de usuários internos e permissões de acesso do sistema. Defina permissões granulares por módulo para garantir total segurança jurídica e isolamento de dados do seu inquilino SaaS.";
                     case 'configuracao':
                       return "Configure os dados principais da instituição, logotipo, SMTP personalizado de envio de e-mail integrado e credenciais para sincronização e recuperação automatizada.";
+                    case 'faq_public':
+                      return "Consulte as perguntas frequentes e artigos de orientação publicados para o seu perfil institucional.";
+                    case 'support_portal':
+                      return "Abra novas solicitações de suporte técnico ou administrativo, acompanhe as respostas da equipa e avalie a resolução.";
                     default:
                       return "Este módulo contém as funções específicas para controle acadêmico e financeiro do seu sistema. Utilize os botões do painel de controle para gerenciar registros e exportar relatórios.";
                   }

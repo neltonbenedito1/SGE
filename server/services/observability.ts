@@ -19,6 +19,7 @@ export const SLO_TARGETS = {
   MAIN_READ_P95_MS: Math.max(100, Number(process.env.SLO_READ_P95_TARGET_MS || 500)),
   MAIN_READ_WARN_P95_MS: Math.max(80, Number(process.env.SLO_READ_WARN_P95_MS || 400)),
   SLOW_QUERY_THRESHOLD_MS: Math.max(50, Number(process.env.SLOW_QUERY_THRESHOLD_MS || 350)),
+  EXTERNAL_HTTP_SLOW_THRESHOLD_MS: Math.max(500, Number(process.env.EXTERNAL_HTTP_SLOW_THRESHOLD_MS || 2000)),
   ERROR_RATE_5XX_WARN_PCT: 2,
   ERROR_RATE_5XX_CRIT_PCT: 5,
   QUEUE_BACKLOG_WARN: 50,
@@ -33,7 +34,8 @@ const MAX_ROUTE_SAMPLES = 300;
 const MAX_SLOW_QUERIES = 100;
 const MAX_TRACKED_TENANTS = 500;
 const MAX_TRACKED_ROUTES = 120;
-const ALERT_LOG_COOLDOWN_MS = 60_000;
+const ALERT_LOG_COOLDOWN_MS = 5 * 60_000;
+const RECENT_SLO_WINDOW_MS = 5 * 60_000;
 
 export interface LatencySummary {
   count: number;
@@ -122,6 +124,7 @@ interface MetricBucket {
   slowQueriesCount: number;
   durations: number[];
   readDurations: number[];
+  recentReadSamples: Array<{ ts: number; ms: number }>;
   lastActiveAt: string;
 }
 
@@ -136,6 +139,7 @@ function createBucket(): MetricBucket {
     slowQueriesCount: 0,
     durations: [],
     readDurations: [],
+    recentReadSamples: [],
     lastActiveAt: new Date().toISOString(),
   };
 }
@@ -145,6 +149,26 @@ function pushBounded(arr: number[], value: number, maxLen: number): void {
   if (arr.length > maxLen) {
     arr.shift();
   }
+}
+
+function pushBoundedTimestamped(
+  arr: Array<{ ts: number; ms: number }>,
+  ts: number,
+  ms: number,
+  maxLen: number
+): void {
+  arr.push({ ts, ms });
+  if (arr.length > maxLen) {
+    arr.shift();
+  }
+}
+
+function pruneAndSummarizeRecentReads(bucket: MetricBucket, nowMs: number): LatencySummary {
+  const cutoff = nowMs - RECENT_SLO_WINDOW_MS;
+  if (bucket.recentReadSamples.length > 0 && bucket.recentReadSamples[0].ts < cutoff) {
+    bucket.recentReadSamples = bucket.recentReadSamples.filter((s) => s.ts >= cutoff);
+  }
+  return summarizeLatencies(bucket.recentReadSamples.map((s) => s.ms));
 }
 
 export function computePercentile(sortedValues: number[], percentile: number): number {
@@ -193,6 +217,23 @@ export function isMainReadEndpoint(method: string, rawPath: string): boolean {
     clean === '/health' ||
     clean === '/ready'
   );
+}
+
+export function getHttpSlowThresholdMs(rawPath: string): number {
+  const clean = rawPath.split('?')[0] || '/';
+  if (
+    clean.startsWith('/api/auth/') ||
+    clean === '/api/login' ||
+    clean === '/api/send-email' ||
+    clean.startsWith('/api/stripe/') ||
+    clean.startsWith('/api/payments/') ||
+    clean.startsWith('/api/ai/') ||
+    clean === '/api/translate' ||
+    clean === '/api/generate-synopsis'
+  ) {
+    return SLO_TARGETS.EXTERNAL_HTTP_SLOW_THRESHOLD_MS;
+  }
+  return SLO_TARGETS.SLOW_QUERY_THRESHOLD_MS;
 }
 
 // Estado interno limitado (janela deslizante em memória por instância)
@@ -306,7 +347,7 @@ export function recordSlowQuery(params: {
     tenantBuckets.get(tenantId)!.slowQueriesCount += 1;
   }
 
-  logSecurityEvent(roundedMs >= 1000 ? 'ERROR' : 'WARN', 'slow_query_detected', {
+  logSecurityEvent('WARN', 'slow_query_detected', {
     tenantId,
     source: params.source,
     operation: entry.operation,
@@ -330,13 +371,15 @@ export function recordHttpMetric(params: {
   const durationMs = Math.max(0, Number(params.durationMs.toFixed(2)));
   const isRead = isMainReadEndpoint(params.method, params.path);
   const routeKey = normalizeRoutePath(params.method, params.path);
-  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
 
   const applyToBucket = (b: MetricBucket, maxSamples: number) => {
     b.requests += 1;
     if (isRead) {
       b.reads += 1;
       pushBounded(b.readDurations, durationMs, maxSamples);
+      pushBoundedTimestamped(b.recentReadSamples, nowMs, durationMs, maxSamples);
     } else {
       b.writes += 1;
     }
@@ -351,13 +394,14 @@ export function recordHttpMetric(params: {
   applyToBucket(getOrCreateTenantBucket(tenantId), MAX_TENANT_SAMPLES);
   applyToBucket(getOrCreateRouteBucket(routeKey), MAX_ROUTE_SAMPLES);
 
-  if (durationMs >= SLO_TARGETS.SLOW_QUERY_THRESHOLD_MS && !params.path.endsWith('/stream')) {
+  const slowThresholdMs = getHttpSlowThresholdMs(params.path);
+  if (durationMs >= slowThresholdMs && !params.path.endsWith('/stream')) {
     recordSlowQuery({
       tenantId,
       source: 'http',
       operation: routeKey,
       durationMs,
-      thresholdMs: SLO_TARGETS.SLOW_QUERY_THRESHOLD_MS,
+      thresholdMs: slowThresholdMs,
       requestId: params.requestId,
     });
   }
@@ -435,9 +479,11 @@ export function getSystemResourcesSnapshot() {
   };
 }
 
-function toTenantSummary(tenantId: string, b: MetricBucket): TenantMetricsSummary {
+function toTenantSummary(tenantId: string, b: MetricBucket, useRecentReadWindow = false): TenantMetricsSummary {
   const latency = summarizeLatencies(b.durations);
-  const mainReadsLatency = summarizeLatencies(b.readDurations);
+  const mainReadsLatency = useRecentReadWindow
+    ? pruneAndSummarizeRecentReads(b, Date.now())
+    : summarizeLatencies(b.readDurations);
   const errorRate5xxPct = b.requests > 0 ? Number(((b.errors5xx / b.requests) * 100).toFixed(2)) : 0;
   return {
     tenantId,
@@ -632,8 +678,12 @@ export function evaluateDegradationAlerts(params: {
       const last = alertLastLoggedAt.get(logKey) || 0;
       if (nowMs - last >= ALERT_LOG_COOLDOWN_MS) {
         alertLastLoggedAt.set(logKey, nowMs);
+        // Erros 5xx críticos ou circuit breakers abertos registam ERROR; degradações de latência/fila ficam em WARN
+        const isHardFailureAlert =
+          alert.severity === 'critico' &&
+          (alert.code === 'HIGH_5XX_ERROR_RATE' || alert.code === 'CIRCUIT_BREAKER_OPEN');
         logSecurityEvent(
-          alert.severity === 'critico' ? 'ERROR' : 'WARN',
+          isHardFailureAlert ? 'ERROR' : 'WARN',
           'observability_degradation_alert',
           {
             alertCode: alert.code,
@@ -666,15 +716,16 @@ export function getObservabilitySnapshot(options: {
   const fiveMinutesAgoMs = Date.now() - 5 * 60 * 1000;
 
   if (isSuper) {
+    const nowMs = Date.now();
     const globalLatency = summarizeLatencies(globalBucket.durations);
-    const globalMainReads = summarizeLatencies(globalBucket.readDurations);
+    const globalMainReads = pruneAndSummarizeRecentReads(globalBucket, nowMs);
     const globalErrorRate5xxPct =
       globalBucket.requests > 0
         ? Number(((globalBucket.errors5xx / globalBucket.requests) * 100).toFixed(2))
         : 0;
 
     const tenants = Array.from(tenantBuckets.entries())
-      .map(([tid, b]) => toTenantSummary(tid, b))
+      .map(([tid, b]) => toTenantSummary(tid, b, true))
       .sort((a, b) => b.requests - a.requests);
 
     const routes: RouteMetricsSummary[] = Array.from(routeBuckets.entries())
@@ -737,7 +788,7 @@ export function getObservabilitySnapshot(options: {
   // Escopo estritamente isolado por tenant (um tenant nunca vê métricas ou alertas de outro tenant)
   const scopedTenantId = options.callerTenantId;
   const tBucket = tenantBuckets.get(scopedTenantId) || createBucket();
-  const tenantSummary = toTenantSummary(scopedTenantId, tBucket);
+  const tenantSummary = toTenantSummary(scopedTenantId, tBucket, true);
   const tenantSlowQueries = slowQueriesRing.filter((q) => q.tenantId === scopedTenantId);
   const tenantSlowLast5Min = tenantSlowQueries.filter(
     (q) => new Date(q.timestamp).getTime() >= fiveMinutesAgoMs

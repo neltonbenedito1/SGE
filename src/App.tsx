@@ -133,7 +133,7 @@ export default function App() {
   const initialSession = getUserSessionCookie();
   const getInitialView = (): 'landing' | 'superadmin' | 'tenant' | 'brandbook' => {
     if (initialSession) {
-      return initialSession.tipo === 'super_admin' ? 'superadmin' : 'tenant';
+      return initialSession.tipo === 'super_admin' || initialSession.tipo === 'suporte' ? 'superadmin' : 'tenant';
     }
     const saved = getCurrentView();
     if (saved === 'brandbook' || saved === 'landing' || saved === 'superadmin' || saved === 'tenant') {
@@ -164,15 +164,130 @@ export default function App() {
     }
   }, [currentView]);
 
-  // Sync session strictly with onAuthStateChanged and custom claims
+  // Helper to resolve whether an authenticated Firebase user is currently an active Super Admin
+  const resolveClientSuperAdminProfile = async (
+    uid: string,
+    emailClean: string,
+    claims: Record<string, any>
+  ): Promise<{ isSuperAdmin: boolean; isRevoked: boolean; nome?: string }> => {
+    if (claims?.role === 'super_admin' || claims?.super_admin === true) {
+      return { isSuperAdmin: true, isRevoked: false };
+    }
+    try {
+      const [ownershipSnap, bootstrapSnap, superByUidSnap, superByEmailSnap, userByUidSnap, usersByEmailSnap] =
+        await Promise.all([
+          getDoc(doc(db, 'system_config', 'ownership')).catch(() => null),
+          getDoc(doc(db, 'system_config', 'bootstrap')).catch(() => null),
+          uid ? getDoc(doc(db, 'superusers', uid)).catch(() => null) : Promise.resolve(null),
+          emailClean
+            ? getDocs(query(collection(db, 'superusers'), where('email', '==', emailClean), limit(5))).catch(() => null)
+            : Promise.resolve(null),
+          uid ? getDoc(doc(db, 'users', uid)).catch(() => null) : Promise.resolve(null),
+          emailClean
+            ? getDocs(query(collection(db, 'users'), where('email', '==', emailClean), limit(5))).catch(() => null)
+            : Promise.resolve(null),
+        ]);
+
+      const ownerEmail = String(
+        ownershipSnap && ownershipSnap.exists() ? ownershipSnap.data()?.currentOwnerEmail || '' : ''
+      )
+        .trim()
+        .toLowerCase();
+      const bootstrapData = bootstrapSnap && bootstrapSnap.exists() ? bootstrapSnap.data() : null;
+      const bootstrapPrimaryEmail = String(bootstrapData?.primarySuperadminEmail || '')
+        .trim()
+        .toLowerCase();
+
+      if (superByUidSnap && superByUidSnap.exists()) {
+        const d = superByUidSnap.data();
+        if (d?.ativo !== false && d?.active !== false) {
+          return { isSuperAdmin: true, isRevoked: false, nome: d?.nome };
+        }
+      }
+
+      if (superByEmailSnap && !superByEmailSnap.empty) {
+        const activeSuper = superByEmailSnap.docs.find((d) => {
+          const data = d.data();
+          return data?.ativo !== false && data?.active !== false;
+        });
+        if (activeSuper) {
+          return { isSuperAdmin: true, isRevoked: false, nome: activeSuper.data()?.nome };
+        }
+      }
+
+      if (emailClean && ownerEmail && ownerEmail === emailClean) {
+        return { isSuperAdmin: true, isRevoked: false };
+      }
+
+      if (
+        emailClean &&
+        bootstrapData?.initialized &&
+        bootstrapPrimaryEmail === emailClean &&
+        (!ownerEmail || ownerEmail === emailClean)
+      ) {
+        return { isSuperAdmin: true, isRevoked: false };
+      }
+
+      const candidateUserDocs: any[] = [];
+      if (userByUidSnap && userByUidSnap.exists()) {
+        candidateUserDocs.push(userByUidSnap.data());
+      }
+      if (usersByEmailSnap && !usersByEmailSnap.empty) {
+        usersByEmailSnap.docs.forEach((d) => candidateUserDocs.push(d.data()));
+      }
+
+      const activeSuperUser = candidateUserDocs.find(
+        (u) => (u?.tipo === 'super_admin' || u?.role === 'super_admin' || u?.role === 'superadmin') && u?.ativo !== false
+      );
+      if (activeSuperUser) {
+        return { isSuperAdmin: true, isRevoked: false, nome: activeSuperUser?.nome };
+      }
+
+      const revokedSuperUser = candidateUserDocs.find(
+        (u) => u?.tipo === 'revoked_superadmin' || u?.role === 'revoked_superadmin'
+      );
+      if (revokedSuperUser) {
+        return { isSuperAdmin: false, isRevoked: true };
+      }
+    } catch {}
+
+    return { isSuperAdmin: false, isRevoked: false };
+  };
+
+  // Sync server-side stateless session + CSRF token using Firebase ID Token
+  const syncServerSessionWithIdToken = async (userObj: any) => {
+    try {
+      const idToken = await userObj.getIdToken(true);
+      const sessRes = await fetch('/api/auth/session/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ idToken }),
+      });
+      if (sessRes.ok) {
+        const sessData = await sessRes.json().catch(() => ({}));
+        if (sessData.sessionId) localStorage.setItem('sysedu_session_id', sessData.sessionId);
+        if (sessData.csrfToken) localStorage.setItem('sysedu_csrf_token', sessData.csrfToken);
+      }
+    } catch (e) {
+      console.warn('[Session Sync] Note:', e);
+    }
+  };
+
+  // Sync session strictly with onAuthStateChanged and Firestore/Claims resolution
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         try {
+          const existingSession = getUserSessionCookie();
           const tokenResult = await user.getIdTokenResult();
-          if (tokenResult.claims.role === 'super_admin' || tokenResult.claims.super_admin === true) {
+          const emailClean = (user.email || '').trim().toLowerCase();
+          const resolved = await resolveClientSuperAdminProfile(user.uid, emailClean, tokenResult.claims || {});
+          if (resolved.isSuperAdmin && (!existingSession || existingSession.tipo === 'super_admin')) {
             saveUserSessionCookie({
-              nome: user.displayName || 'Super Administrador',
+              id: user.uid,
+              createdAt: existingSession?.createdAt || Date.now(),
+              nome: resolved.nome || user.displayName || 'Super Administrador',
               email: user.email || '',
               tipo: 'super_admin',
               tenant_id: 'super-admin',
@@ -197,13 +312,25 @@ export default function App() {
     };
   }, []);
 
-  // Logout handler that clears client session cookies and calls server logout endpoint
+  // Logout handler that clears client session cookies, Firebase Auth state, and server session
   const handleLogout = async () => {
     try {
-      await fetch('/api/auth/session/logout', { method: 'POST' });
+      const sessId = getCookie('sysedu_session_id') || localStorage.getItem('sysedu_session_id') || '';
+      const csrfToken = getCookie('sysedu_csrf_token') || localStorage.getItem('sysedu_csrf_token') || '';
+      const headers: Record<string, string> = {};
+      if (sessId) headers['x-session-id'] = sessId;
+      if (csrfToken) headers['x-csrf-token'] = csrfToken;
+      await fetch('/api/auth/session/logout', { method: 'POST', headers, credentials: 'include' });
     } catch (e) {
       console.warn('[Logout] Server session logout failed or offline:', e);
     }
+    try {
+      await auth.signOut();
+    } catch {}
+    try {
+      localStorage.removeItem('sysedu_session_id');
+      localStorage.removeItem('sysedu_csrf_token');
+    } catch {}
     if (selectedTenantId) {
       clearTenantCaches(selectedTenantId).catch(() => {});
     }
@@ -488,8 +615,7 @@ export default function App() {
         label: 'Sair da Conta (Fazer Logoff)',
         icon: 'LogOut',
         action: () => {
-          deleteCookie('user_session');
-          setCurrentView('landing');
+          void handleLogout();
         }
       });
     }
@@ -837,26 +963,35 @@ export default function App() {
 
           const userCred = await signInWithEmailAndPassword(auth, emailClean, pwdClean);
           const tokenResult = await userCred.user.getIdTokenResult(true);
+          const hasSuperClaim = tokenResult.claims.role === 'super_admin' || tokenResult.claims.super_admin === true;
 
-          if (tokenResult.claims.role === 'super_admin' || tokenResult.claims.super_admin === true) {
-            saveUserSessionCookie({
-              nome: bootstrapNome || 'Super Administrador',
-              email: emailClean,
-              tipo: 'super_admin',
-              tenant_id: 'super-admin',
-            });
-            saveLastAction(`Bootstrap concluído com sucesso: ${emailClean}`);
-            localStorage.setItem('sysedu_bootstrap_completed', 'true');
-            setBootstrapStatus({ initialized: true, allowsBootstrap: false });
-            setIsBootstrapMode(false);
-            setLoginEmail('');
-            setLoginPassword('');
-            setBootstrapConfirmPassword('');
-            setIsLoginModalOpen(false);
-            setCurrentView('superadmin');
-            setLoginLoading(false);
-            return;
+          // On Starter Tier projects custom claims may be omitted when IdentityToolkit IAM is unavailable;
+          // bRes.ok already authoritatively created & verified the bootstrap superadmin on the backend.
+          if (bData?.sessionId) localStorage.setItem('sysedu_session_id', bData.sessionId);
+          if (bData?.csrfToken) localStorage.setItem('sysedu_csrf_token', bData.csrfToken);
+          if (!bData?.sessionId || !hasSuperClaim) {
+            await syncServerSessionWithIdToken(userCred.user);
           }
+
+          saveUserSessionCookie({
+            id: userCred.user.uid,
+            createdAt: Date.now(),
+            nome: bootstrapNome || 'Super Administrador',
+            email: emailClean,
+            tipo: 'super_admin',
+            tenant_id: 'super-admin',
+          });
+          saveLastAction(`Bootstrap concluído com sucesso: ${emailClean}`);
+          localStorage.setItem('sysedu_bootstrap_completed', 'true');
+          setBootstrapStatus({ initialized: true, allowsBootstrap: false });
+          setIsBootstrapMode(false);
+          setLoginEmail('');
+          setLoginPassword('');
+          setBootstrapConfirmPassword('');
+          setIsLoginModalOpen(false);
+          setCurrentView('superadmin');
+          setLoginLoading(false);
+          return;
         } catch (bErr: any) {
           setLoginError(bErr.message || 'Falha ao processar cadastro de superadministrador.');
           setLoginLoading(false);
@@ -908,24 +1043,23 @@ export default function App() {
       const tokenResult = await userCred.user.getIdTokenResult(true);
       const claims = tokenResult.claims;
 
-      let isSuperAdmin = claims.role === 'super_admin' || claims.super_admin === true;
-      if (!isSuperAdmin) {
+      const superResolution = await resolveClientSuperAdminProfile(userCred.user.uid, emailClean, claims || {});
+
+      if (superResolution.isRevoked && !superResolution.isSuperAdmin) {
         try {
-          const sDoc = await getDoc(doc(db, 'superusers', userCred.user.uid));
-          if (sDoc.exists() && sDoc.data()?.ativo !== false) {
-            isSuperAdmin = true;
-          } else {
-            const uDoc = await getDoc(doc(db, 'users', userCred.user.uid));
-            if (uDoc.exists() && (uDoc.data()?.tipo === 'super_admin' || uDoc.data()?.role === 'super_admin')) {
-              isSuperAdmin = true;
-            }
-          }
+          await auth.signOut();
         } catch {}
+        setLoginError('Acesso Revogado: Esta conta de Superadministrador foi revogada ou transferida.');
+        setLoginLoading(false);
+        return;
       }
 
-      if (isSuperAdmin) {
+      if (superResolution.isSuperAdmin) {
+        await syncServerSessionWithIdToken(userCred.user);
         saveUserSessionCookie({
-          nome: userCred.user.displayName || 'Super Administrador',
+          id: userCred.user.uid,
+          createdAt: Date.now(),
+          nome: superResolution.nome || userCred.user.displayName || 'Super Administrador',
           email: emailClean,
           tipo: 'super_admin',
           tenant_id: 'super-admin'
@@ -948,10 +1082,15 @@ export default function App() {
       let userDocData: any = null;
 
       for (const candidateEmail of emailCandidates) {
-        const q = query(usersRef, where('email', '==', candidateEmail), limit(1));
+        const q = query(usersRef, where('email', '==', candidateEmail), limit(5));
         const querySnap = await getDocs(q);
         if (!querySnap.empty) {
-          userDocData = { id: querySnap.docs[0].id, ...querySnap.docs[0].data() };
+          const activeDoc =
+            querySnap.docs.find((d) => {
+              const data = d.data();
+              return data?.ativo !== false && data?.tipo !== 'revoked_superadmin' && data?.role !== 'revoked_superadmin';
+            }) || querySnap.docs[0];
+          userDocData = { id: activeDoc.id, ...activeDoc.data() };
           break;
         }
       }
@@ -962,13 +1101,81 @@ export default function App() {
         return;
       }
 
+      if (userDocData.tipo === 'revoked_superadmin' || userDocData.role === 'revoked_superadmin') {
+        try {
+          await auth.signOut();
+        } catch {}
+        setLoginError('Acesso Revogado: Esta conta de Superadministrador foi revogada ou transferida.');
+        setLoginLoading(false);
+        return;
+      }
+
       if (userDocData.ativo === false) {
-        setLoginError(' Acesso Bloqueado: Esta conta de utilizador foi suspensa ou desativada no sistema.');
+        setLoginError('Acesso Bloqueado: Esta conta de utilizador foi suspensa ou desativada no sistema.');
         setLoginLoading(false);
         return;
       }
 
       const tenantId = userDocData.tenant_id;
+      if (tenantId === 'super-admin' || userDocData.tipo === 'super_admin' || userDocData.role === 'super_admin') {
+        setLoginError('Acesso Revogado: As permissões de Superadministrador desta conta não estão ativas.');
+        setLoginLoading(false);
+        return;
+      }
+
+      // 3.5. EQUIPA DE ATENDIMENTO / SUPORTE (FASE 2)
+      if (userDocData.tipo === 'suporte' || claims.role === 'suporte') {
+        let supportAgentActive = false;
+        try {
+          const byUidSnap = await getDocs(
+            query(collection(db, 'support_agents'), where('uid', '==', userCred.user.uid), limit(5))
+          );
+          const byEmailSnap =
+            byUidSnap.empty && emailClean
+              ? await getDocs(query(collection(db, 'support_agents'), where('email', '==', emailClean), limit(5)))
+              : null;
+          const docs = [...(byUidSnap?.docs || []), ...(byEmailSnap?.docs || [])];
+          supportAgentActive = docs.some((d) => {
+            const ag = d.data();
+            return ag?.tipo === 'humano' && ag?.estado === 'activo';
+          });
+        } catch {}
+
+        if (!supportAgentActive) {
+          try {
+            await auth.signOut();
+          } catch {}
+          setLoginError('Acesso Bloqueado: A sua conta de funcionário de atendimento não está activa.');
+          setLoginLoading(false);
+          return;
+        }
+
+        if (userDocData.requer_alteracao_senha || userDocData.mustChangePassword) {
+          setIsLoginModalOpen(false);
+          setFirstLoginResetUser(userDocData);
+          setFirstLoginResetCurrentPassword(pwdClean);
+          setLoginLoading(false);
+          return;
+        }
+
+        await syncServerSessionWithIdToken(userCred.user);
+        saveUserSessionCookie({
+          id: userDocData.id,
+          createdAt: Date.now(),
+          nome: userDocData.nome,
+          email: emailClean,
+          tipo: 'suporte',
+          tenant_id: tenantId || 'global',
+        });
+        saveLastAction(`Login realizado como Equipa de Atendimento: ${emailClean}`);
+        setLoginEmail('');
+        setLoginPassword('');
+        setIsLoginModalOpen(false);
+        setCurrentView('superadmin');
+        setLoginLoading(false);
+        return;
+      }
+
       let matchedTenant: Tenant | null = null;
       if (tenantId) {
         const directTenantSnap = await getDoc(doc(db, 'tenants', tenantId));
@@ -983,13 +1190,13 @@ export default function App() {
       }
 
       if (!matchedTenant || (matchedTenant as Tenant).status === 'cancelado' || (matchedTenant as any).deleted_at) {
-        setLoginError(' Acesso Revogado: Esta conta de instituição foi eliminada do sistema.');
+        setLoginError('Acesso Revogado: Esta conta de instituição foi eliminada do sistema.');
         setLoginLoading(false);
         return;
       }
 
       if ((matchedTenant as Tenant).status === 'suspenso') {
-        setLoginError(' Acesso Bloqueado: Esta instituição está suspensa pelo Administrador Geral.');
+        setLoginError('Acesso Bloqueado: Esta instituição está suspensa pelo Administrador Geral.');
         setLoginLoading(false);
         return;
       }
@@ -1004,25 +1211,15 @@ export default function App() {
 
       saveUserSessionCookie({
         id: userDocData.id,
+        createdAt: Date.now(),
         nome: userDocData.nome,
         email: userDocData.email,
         tipo: userDocData.tipo || (claims.role as any) || 'estudante',
         tenant_id: tenantId
       });
 
-      // Synchronize with server-side HttpOnly session cookie
-      try {
-        fetch('/api/auth/session/create', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId: userDocData.id,
-            role: userDocData.tipo,
-            tenantId: tenantId,
-            email: userDocData.email
-          })
-        }).catch(() => {});
-      } catch {}
+      // Synchronize with server-side HttpOnly session cookie using Firebase ID Token
+      await syncServerSessionWithIdToken(userCred.user);
 
       if (userDocData.language) {
         setSystemLanguage(userDocData.language);
@@ -1165,7 +1362,7 @@ export default function App() {
       // Restore session from cookie/localStorage if available
       const session = getUserSessionCookie();
       if (session) {
-        if (session.tipo === 'super_admin') {
+        if (session.tipo === 'super_admin' || session.tipo === 'suporte') {
           setCurrentView('superadmin');
         } else {
           // Verify if session's tenant still exists and is active
@@ -2491,6 +2688,7 @@ export default function App() {
               activeTheme={activeTheme}
               onChangeTheme={handleThemeChange}
               systemLang={systemLang}
+              isSupportStaffOnly={getUserSessionCookie()?.tipo === 'suporte'}
               onChangeLanguage={(lang) => {
                 setSystemLanguage(lang);
                 setSystemLang(lang);

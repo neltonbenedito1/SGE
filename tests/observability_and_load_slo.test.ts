@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   SLO_TARGETS,
+  getHttpSlowThresholdMs,
   recordHttpMetric,
   recordSlowQuery,
   recordJobExecutionMetric,
@@ -256,5 +257,89 @@ describe('Fase 7 — Observabilidade, Métricas por Tenant & Alertas SLO', () =>
     });
 
     expect(alerts.some((a) => a.code === 'HIGH_HEAP_USAGE')).toBe(false);
+  });
+
+  it('aplica limiar externo para rotas de auth/email e regista slow_query_detected em WARN em vez de ERROR', () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(getHttpSlowThresholdMs('/api/auth/session/create')).toBe(SLO_TARGETS.EXTERNAL_HTTP_SLOW_THRESHOLD_MS);
+    expect(getHttpSlowThresholdMs('/api/send-email')).toBe(SLO_TARGETS.EXTERNAL_HTTP_SLOW_THRESHOLD_MS);
+    expect(getHttpSlowThresholdMs('/api/notifications/bulk')).toBe(SLO_TARGETS.SLOW_QUERY_THRESHOLD_MS);
+
+    // 1500ms numa rota de sessão/email não deve gerar falso slow_query sob limiar DB de 350ms
+    recordHttpMetric({
+      method: 'POST',
+      path: '/api/auth/session/create',
+      tenantId: 'anonymous',
+      statusCode: 200,
+      durationMs: 1500,
+    });
+    recordHttpMetric({
+      method: 'POST',
+      path: '/api/send-email',
+      tenantId: 'super-admin',
+      statusCode: 202,
+      durationMs: 1400,
+    });
+
+    let snap = getObservabilitySnapshot({
+      callerRole: 'super_admin',
+      callerTenantId: 'global',
+      queue: { totalQueued: 0, pendente: 0, emProcessamento: 0, falhadoReintento: 0, deadLetterCount: 0 },
+    });
+    expect(snap.slowQueries.length).toBe(0);
+    expect(errSpy).not.toHaveBeenCalled();
+
+    // Acima de EXTERNAL_HTTP_SLOW_THRESHOLD_MS emite slow_query_detected como WARN (nunca ERROR)
+    recordHttpMetric({
+      method: 'POST',
+      path: '/api/send-email',
+      tenantId: 'super-admin',
+      statusCode: 202,
+      durationMs: SLO_TARGETS.EXTERNAL_HTTP_SLOW_THRESHOLD_MS + 250,
+    });
+
+    snap = getObservabilitySnapshot({
+      callerRole: 'super_admin',
+      callerTenantId: 'global',
+      queue: { totalQueued: 0, pendente: 0, emProcessamento: 0, falhadoReintento: 0, deadLetterCount: 0 },
+    });
+    expect(snap.slowQueries.some((q) => q.operation === 'POST /api/send-email')).toBe(true);
+    expect(errSpy).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalled();
+
+    errSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  it('regista alertas de degradação de latência em WARN (não ERROR) mesmo quando severidade é critico', () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    for (let i = 0; i < 6; i += 1) {
+      recordHttpMetric({
+        method: 'GET',
+        path: '/api/superadmin/assistant/overview',
+        tenantId: 'super-admin',
+        statusCode: 200,
+        durationMs: 780,
+      });
+    }
+
+    const snap = getObservabilitySnapshot({
+      callerRole: 'super_admin',
+      callerTenantId: 'global',
+      queue: { totalQueued: 0, pendente: 0, emProcessamento: 0, falhadoReintento: 0, deadLetterCount: 0 },
+      emitAlertLogs: true,
+    });
+
+    expect(snap.alerts.some((a) => a.code === 'SLO_READ_LATENCY_HIGH' && a.severity === 'critico')).toBe(true);
+    expect(snap.alerts.some((a) => a.code === 'TENANT_LATENCY_DEGRADATION' && a.severity === 'critico')).toBe(true);
+    expect(errSpy).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalled();
+
+    errSpy.mockRestore();
+    warnSpy.mockRestore();
   });
 });
